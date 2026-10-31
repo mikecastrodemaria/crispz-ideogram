@@ -35,6 +35,7 @@ Usage (Windows, from the repo root):
   --seed N         12345 by default
   --skip-2048      skips the 2048x2048 render
   --skip-raw       skips the 1024 render without the fast attention (A/B check)
+  --only-2048      loads, then the 2048 render alone (denoise vs VAE decode peak)
   --force          runs even if another process holds the GPU (you have been warned)
 """
 import json
@@ -308,8 +309,30 @@ def render(P, tag, size, steps, seed):
     import torch
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
+    # Splits the peak: denoise (everything before the VAE decode) vs the decode itself.
+    split = {}
+    vae = getattr(getattr(P._BASE_PIPE, "_pipe", P._BASE_PIPE), "vae", None)
+    real_decode = getattr(vae, "decode", None)
+    if real_decode is not None:
+        def decode(*a, **k):
+            torch.cuda.synchronize()
+            split["denoise_peak_reserved_gb"] = _gb(torch.cuda.max_memory_reserved())
+            split["before_decode_alloc_gb"] = _gb(torch.cuda.memory_allocated())
+            torch.cuda.reset_peak_memory_stats()
+            t = time.time()
+            out = real_decode(*a, **k)
+            torch.cuda.synchronize()
+            split["decode_peak_reserved_gb"] = _gb(torch.cuda.max_memory_reserved())
+            split["decode_peak_alloc_gb"] = _gb(torch.cuda.max_memory_allocated())
+            split["decode_seconds"] = round(time.time() - t, 1)
+            return out
+        vae.decode = decode
     t0 = time.time()
-    img = P.generate(PROMPT, size, size, steps, seed)
+    try:
+        img = P.generate(PROMPT, size, size, steps, seed)
+    finally:
+        if real_decode is not None:
+            del vae.decode
     torch.cuda.synchronize()
     import cz_ideogram
     dt = time.time() - t0
@@ -319,12 +342,16 @@ def render(P, tag, size, steps, seed):
     r = {"size": f"{img.width}x{img.height}", "steps": steps, "seconds": round(dt, 1),
          "s_per_step": round(dt / steps, 3),
          "peak_alloc_gb": _gb(torch.cuda.max_memory_allocated()),
-         "peak_reserved_gb": _gb(torch.cuda.max_memory_reserved()),
+         "peak_reserved_gb": max(_gb(torch.cuda.max_memory_reserved()),
+                                 split.get("denoise_peak_reserved_gb", 0)),
          "driver_used_after_gb": used, "driver_total_gb": total,
          "offload": P._effective_offload(), "fast_attention": cz_ideogram.FAST_ATTENTION,
-         "image": os.path.relpath(path, ROOT)}
+         "image": os.path.relpath(path, ROOT), **split}
     _say(f"{tag}: {r['size']} in {r['seconds']} s ({r['s_per_step']} s/step), "
          f"peak {r['peak_reserved_gb']} GB reserved")
+    if split:
+        _say(f"   denoise peak {split.get('denoise_peak_reserved_gb')} GB, VAE decode peak "
+             f"{split.get('decode_peak_reserved_gb')} GB in {split.get('decode_seconds')} s")
     return img, r
 
 
@@ -406,8 +433,9 @@ def main():
         sys.exit(1)
 
     # 2. 1024, cold then warm, with the preview frames on the warm one
+    only2048 = "--only-2048" in sys.argv
     keep = {1, steps // 4, steps // 2, (3 * steps) // 4, steps}
-    for tag, rec in (("gen1024_cold", False), ("gen1024_warm", True)):
+    for tag, rec in (() if only2048 else (("gen1024_cold", False), ("gen1024_warm", True))):
         try:
             if rec:
                 with FrameRecorder(P, keep) as fr:
@@ -441,7 +469,7 @@ def main():
 
     # 2b. The same warm 1024 WITHOUT the fast attention (the raw pipeline call): the
     # speed-up, and the proof that the image does not change.
-    if "--skip-raw" not in sys.argv:
+    if "--skip-raw" not in sys.argv and not only2048:
         import cz_ideogram
         import numpy as np
         from PIL import Image
@@ -481,10 +509,11 @@ def main():
 
     # 4. Stop, about a third of the way into a warm 1024 render
     warm = RESULTS["steps"].get("2_gen1024_warm", {}).get("seconds") or 30
-    try:
-        RESULTS["steps"]["4_stop"] = stop_test(P, steps, seed + 1, max(2.0, warm / 3))
-    except Exception as e:
-        RESULTS["steps"]["4_stop"] = {"error": f"{type(e).__name__}: {e}"}
+    if not only2048:
+        try:
+            RESULTS["steps"]["4_stop"] = stop_test(P, steps, seed + 1, max(2.0, warm / 3))
+        except Exception as e:
+            RESULTS["steps"]["4_stop"] = {"error": f"{type(e).__name__}: {e}"}
     RESULTS["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _save()
     _say(f"done: {os.path.relpath(os.path.join(OUT, 'report.md'), ROOT)}")
@@ -521,6 +550,11 @@ def _write_report():
                 L.append(f"| {k} | {v['size']} | {v['seconds']} | {v['s_per_step']} | "
                          f"{v['peak_alloc_gb']} | {v['peak_reserved_gb']} | "
                          f"{v['driver_used_after_gb']} | {v['offload']} |")
+        for k, v in rows:
+            if "decode_peak_reserved_gb" in v:
+                L.append(f"- {k}: denoise peak {v.get('denoise_peak_reserved_gb')} GB, VAE "
+                         f"decode peak {v['decode_peak_reserved_gb']} GB (alloc "
+                         f"{v.get('decode_peak_alloc_gb')}) in {v.get('decode_seconds')} s")
         raw = s.get("2_gen1024_raw_attention", {})
         if "vs_fast_mean_abs_diff" in raw:
             L.append(f"Fast attention vs raw call (1024, same seed): speed-up "

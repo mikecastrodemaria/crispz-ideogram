@@ -330,6 +330,22 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - À mesurer : 1024 et 2048 en 'model' nouvelle formule, puis 1024 en 'none' pour comparer.
   Pistes si le pic à 2048 reste à 30 Go : décodage VAE en tuiles au-delà d'un seuil.
 
+### Troisième passage sur la 5090 : 'model' encodeur seul (31/10/2026)
+
+- `--offload model --skip-raw`, `cache/hw_profile.json` supprimé avant. Chargement 20,2 s ;
+  au repos 9,92 Go alloués (transformers + VAE), 17,05 Go vus par le pilote.
+- 1024, 48 steps : **61,1 s à chaud (1,27 s/step)**, 62,1 s à froid ; pic 19,15 Go
+  réservés. Contre 134 s en 'model' de diffusers et 86 s en 'none' brut du 1er passage.
+- 2048, 48 steps : **400,9 s (8,35 s/step)**, pic 29,95 Go réservés sur 31,84 : trop
+  près du plafond (un navigateur ouvert suffirait à faire déborder). Le script sépare
+  désormais le pic du débruitage de celui du décodage VAE (`--only-2048`) pour
+  décider d'un décodage en tuiles.
+- Stop : arrêt au step 15 sur 48, image rendue 1,4 s après la demande.
+- Aperçu : erreur 44,6 corrigé contre 78,2 (sur 0-255) ; verdict CHECK (seuil 40 du
+  script), images à regarder avant de conclure.
+- **Critère d'acceptation du lot 1 atteint** (une 2048x2048 sur la 5090). Restent à juger
+  sur images : texte rendu, écart 8,7 accéléré contre brut, aperçu.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

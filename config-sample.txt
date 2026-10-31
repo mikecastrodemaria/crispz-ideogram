@@ -73,6 +73,10 @@
             7.0
         ]
     },
+    "_ideogram_base_repos_help": "The Ideogram 4 repos offered in the Models menu: HF repo ids (the gated official one needs its licence accepted ON THAT REPO and an HF token) or local diffusers folders. The first is the default.",
+    "ideogram_base_repos": [
+        "ideogram-ai/ideogram-4-nf4-diffusers"
+    ],
     "_model_profiles_help": "Auto steps/guidance when a model is selected, matched by substring on the name (FIRST match wins, in order). 'ideogram' covers the official repo and its mirrors.",
     "model_profiles": {
         "ideogram": {

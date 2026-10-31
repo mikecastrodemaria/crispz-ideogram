@@ -361,7 +361,9 @@ _VRAM_DOWNGRADE = False
 # to 8.0). The variable is kept because cz_ui / cz_cli / cz_protocol read and display it,
 # but _cfg() does NOT pass it to the pipeline any more: it has no effect.
 # Overridable through env KLEIN_CFG (no effect either, kept for symmetry).
-GUIDANCE = float(os.environ.get("KLEIN_CFG") or CONFIG.get("default_guidance") or 0) or 1.0
+# Ideogram 4: the PEAK of the guidance schedule; no value -> the official 7.0.
+GUIDANCE = (float(os.environ.get("KLEIN_CFG") or CONFIG.get("default_guidance") or 0)
+            or float(engine.SCHEDULE_PEAK))
 
 # Forced ratio (Fooocus-style) for upscale/img2img: when set, the INPUT image is
 # center-cropped to that ratio before processing (crop to fit). Empty = the native ratio is
@@ -3196,13 +3198,68 @@ def _latent_rgb_on(device, dtype):
     return hit
 
 
-def latent_preview_image(latents, width=0, height=0):
+# Ideogram 4 uses the very same VAE as FLUX.2 (every weight identical, bn statistics
+# included, checked on 2026-10-31) but packs its tokens differently: (p, p, c) where FLUX.2
+# packs (c, p, p), i.e. token channel j = (2*p1 + p2) * 32 + c instead of c * 4 + (2*p1 + p2).
+# Worse, it normalizes each token position with the bn statistics AS STORED, which are
+# indexed in the FLUX order: position j gets the mean/std of FLUX channel j, not of its
+# own channel. So a permutation alone is not enough; each input also needs an affine
+# correction. Both fold into the matrix, so the preview stays one matmul:
+#   flux_n[f(j)] = a_j * ideo_n[j] + c_j, with f(j) = c*4 + p, a_j = s[j] / s[f(j)],
+#   c_j = (m[j] - m[f(j)]) / s[f(j)]
+#   -> M_ideo[j] = a_j * M[f(j)],  b_ideo = b + sum_j c_j * M[f(j)]
+# Measured on the real VAE (CPU, 3 sample images, 512 px): mean error 52-61 / 255 with the
+# FLUX matrix applied as is, against 13-24 for FLUX itself; the folded matrix gives back
+# exactly the FLUX figures (tests/test_latent_preview.py pins the algebra).
+_IDEOGRAM_PROJ_CACHE = {}
+
+
+def _ideogram_preview_proj(vae):
+    """(M, b) for Ideogram's packed latents, derived from the loaded VAE's bn statistics.
+
+    Cached per VAE object: computed once at the first preview step, a few microseconds."""
+    key = id(vae)
+    hit = _IDEOGRAM_PROJ_CACHE.get(key)
+    if hit is not None and hit[0] is vae:
+        return hit[1]
+    bn = vae.bn
+    m = bn.running_mean.detach().float().cpu()
+    s = torch.sqrt(bn.running_var.detach().float().cpu() + float(vae.config.batch_norm_eps))
+    n = m.numel()
+    ch = n // 4                                   # ae channels, patch 2x2
+    j = torch.arange(n)
+    f = (j % ch) * 4 + j // ch
+    mat = torch.tensor(_LATENT_RGB, dtype=torch.float32)
+    bias = torch.tensor(_LATENT_RGB_BIAS, dtype=torch.float32)
+    a = s / s[f]
+    c = (m - m[f]) / s[f]
+    proj = (a[:, None] * mat[f], bias + (c[:, None] * mat[f]).sum(0))
+    _IDEOGRAM_PROJ_CACHE[key] = (vae, proj)
+    return proj
+
+
+def _preview_proj_for(pipe):
+    """The projection to use for `pipe` (the object the denoise hands its callback):
+    None = the FLUX.2 matrix as is; Ideogram 4 gets the folded one."""
+    pipe = getattr(pipe, "_pipe", pipe)          # cz_ideogram.IdeogramPipe -> the real one
+    if pipe is None or not type(pipe).__name__.startswith("Ideogram4"):
+        return None
+    vae = getattr(pipe, "vae", None)
+    if vae is None or getattr(vae, "bn", None) is None:
+        return None
+    if vae.bn.running_mean.numel() != len(_LATENT_RGB):
+        return None
+    return _ideogram_preview_proj(vae)
+
+
+def latent_preview_image(latents, width=0, height=0, proj=None):
     """Packed latents (B, h*w, 128) -> a small PIL image, through the linear projection.
 
     Runs on whatever device the latents are on (a 128x3 matmul on the GPU is instant) and
     only the HxWx3 uint8 result crosses back, so the denoise is not stalled by a transfer.
     The grid comes from the asked resolution: a packed token is a 16x16 block of pixels.
-    None when the two do not agree -- better no preview than a scrambled one."""
+    None when the two do not agree -- better no preview than a scrambled one.
+    `proj` = (M, b) replaces the FLUX.2 matrix (Ideogram 4, see _ideogram_preview_proj)."""
     z = latents[0].detach().float()
     if z.dim() != 2:
         return None
@@ -3213,8 +3270,11 @@ def latent_preview_image(latents, width=0, height=0):
         if side * side != seq:
             return None
         gh = gw = side
-    m, b = _latent_rgb_on(z.device, z.dtype)
-    rgb = ((z @ m + b).clamp(-1.0, 1.0) + 1.0).mul(127.5).round().byte().cpu().numpy()
+    if proj is None:
+        m, b = _latent_rgb_on(z.device, z.dtype)
+    else:
+        m, b = (t.to(device=z.device, dtype=z.dtype) for t in proj)
+    rgb =((z @ m + b).clamp(-1.0, 1.0) + 1.0).mul(127.5).round().byte().cpu().numpy()
     img = Image.fromarray(rgb.reshape(gh, gw, 3), mode="RGB")
     side = max(img.size)
     if side < LIVE_PREVIEW_MAX_SIDE:
@@ -3224,12 +3284,12 @@ def latent_preview_image(latents, width=0, height=0):
     return img
 
 
-def _store_preview(latents, step, total, width=0, height=0):
+def _store_preview(latents, step, total, width=0, height=0, pipe=None):
     """Never lets a preview failure touch the render: it is a courtesy, not a result."""
     if latents is None:
         return
     try:
-        img = latent_preview_image(latents, width, height)
+        img = latent_preview_image(latents, width, height, proj=_preview_proj_for(pipe))
     except Exception as e:
         _dbg(f"live preview skipped: {e}")
         return
@@ -3267,7 +3327,8 @@ def _step_end_kwargs(total_steps=0, width=0, height=0):
             pipe._interrupt = True
             return cb_kwargs
         if preview and (i % LIVE_PREVIEW_EVERY == 0):
-            _store_preview(cb_kwargs.get("latents"), i + 1, total_steps, width, height)
+            _store_preview(cb_kwargs.get("latents"), i + 1, total_steps, width, height,
+                           pipe=pipe)
         return cb_kwargs
     return {"callback_on_step_end": _cb}
 

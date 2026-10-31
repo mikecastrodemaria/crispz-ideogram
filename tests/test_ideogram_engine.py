@@ -129,3 +129,24 @@ def test_repo_detection():
 def test_single_file_transformer_is_refused_by_name():
     with pytest.raises(NotImplementedError):
         cz_ideogram.load_transformer("repo", torch.bfloat16, single_file="x.safetensors")
+
+
+def test_live_preview_uses_the_ideogram_projection():
+    """The app's real step-end callback, on the tiny pipe: a frame comes out and it went
+    through the (p, p, c) projection derived from this pipe's VAE, not the FLUX.2 one."""
+    import cz_pipeline as P
+    P._IDEOGRAM_PROJ_CACHE.clear()
+    was = P.LIVE_PREVIEW_ENABLED
+    P.LIVE_PREVIEW_ENABLED = True
+    P.preview_begin()
+    try:
+        kw = P._step_end_kwargs(3, 256, 256)
+        _pipe()(prompt="GRAND OPENING", width=256, height=256, num_inference_steps=3,
+                generator=_gen(), **kw)
+        snap = P.preview_snapshot()
+        assert snap["img"] is not None and snap["step"] == 3, snap
+        vae = _pipe()._pipe.vae
+        assert id(vae) in P._IDEOGRAM_PROJ_CACHE
+    finally:
+        P.preview_end()
+        P.LIVE_PREVIEW_ENABLED = was

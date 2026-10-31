@@ -224,6 +224,51 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
   Vérifier aussi l'aperçu live : la matrice latent vers RGB de flux3 suppose l'ordre de
   canaux FLUX (c, p, p), Ideogram range ses tokens en (p, p, c).
 
+### Validation du lot 1, partie sans GPU (31/10/2026, session cloud, ni GPU ni token HF)
+
+- **Quantizer** : `bitsandbytes`, nf4, `compute_dtype` bfloat16, sans double quant, sur
+  les TROIS composants (les deux transformers ET l'encodeur Qwen3VLModel). Lu sur le
+  miroir public `cocktailpeanut/ideogram-4-nf4` (le repo officiel répond 401 sans
+  token). `requirements.txt` (`bitsandbytes>=0.45`) est donc juste, inchangé. La fiche
+  officielle annonce « CUDA » comme seul matériel supporté.
+- **Accès au repo gated** : non vérifiable sans le token de Mike ;
+  `tools/gpu_lot1_check.py` le vérifie en premier (`auth_check`).
+- **Lot 2, à noter** : le magic prompt local demande un composant de plus,
+  `Ideogram4PromptEnhancerHead` depuis `diffusers/qwen3-vl-8b-instruct-lm-head` (déjà
+  prévu dans `cz_ideogram.load(prompt_enhancer=True)`), et `outlines` pour forcer le JSON.
+- **Aperçu live : couleurs fausses, corrigé.** Le VAE d'Ideogram 4 est identique bit pour
+  bit à celui de FLUX.2 (les 251 tenseurs, stats `bn` comprises ; seul
+  `num_batches_tracked` diffère). Mais Ideogram range ses tokens en (p, p, c) ET les
+  normalise avec les stats `bn` telles que stockées, donc indexées dans l'ordre FLUX
+  (c, p, p) : la position j reçoit la moyenne et l'écart type du canal FLUX j, pas les
+  siens. Une permutation seule ne suffit pas ; il faut aussi une correction affine par
+  entrée. Les deux se replient dans la matrice (`cz_pipeline._ideogram_preview_proj`,
+  dérivée du VAE chargé, en cache), l'aperçu reste un seul matmul. Mesuré avec le vrai VAE
+  sur CPU (3 images d'`assets/`, 512 px), erreur moyenne sur 0-255 : matrice FLUX telle
+  quelle 52 à 61, matrice corrigée 13 à 24, soit exactement les chiffres de FLUX.2.
+  Tests : `test_latent_preview.py` (algèbre contre les helpers FLUX.2 de diffusers et
+  l'inverse exact du décodage Ideogram, stats bn aléatoires) et
+  `test_ideogram_engine.py::test_live_preview_uses_the_ideogram_projection` (vrai callback
+  de l'app sur le pipeline miniature).
+- **Valeurs par défaut FLUX.3 restées dans l'app, corrigées** : `config-sample.txt`
+  démarrait sur `Distilled (16 steps)`, 16 steps et guidance 1,0 (soit un pic de planning
+  à 1,0, presque pas de CFG, tant qu'aucun preset n'était cliqué) ; le curseur de steps
+  plafonnait à 40 (48 inatteignable). Désormais `Ideogram (48 steps)`, 48, 7,0 ; curseur
+  steps 2 à 80, guidance 0 à 10 ; `GUIDANCE` vaut 7,0 si la config ne dit rien ;
+  largeur / hauteur 256 à 2048 ; formats au-delà de 2048 retirés du menu (lot 2 refera la
+  liste avec les presets de design) ; aides Performance, Aspect, Guidance réécrites.
+  ATTENTION : un `config.txt` local déjà écrit garde ses anciennes valeurs, à vérifier.
+- Suite CPU : **522 passent, 44 échouent (les mêmes 44 FLUX.3), 1 skip** ; smoke 22/22.
+- **Mesure GPU : `tools/gpu_lot1_check.py`**, à lancer par Mike, app crispz-flux3
+  FERMÉE (le script refuse de tourner si un autre processus tient la carte, `--force`
+  pour passer outre). Passe par le vrai chemin de l'app (`get_pipe`, `generate`,
+  `request_stop`, callback d'aperçu). Mesure : chargement, VRAM au repos (torch et
+  pilote), 1024 à froid puis à chaud, 2048, 48 steps, prompt d'affiche « GRAND OPENING »,
+  Stop depuis un autre thread (verdict : image rendue et arrêt avant le dernier step),
+  aperçu live (images aux steps 1, 12, 24, 36, 48 avec les deux matrices, erreur contre
+  l'image finale). Sortie : `bench/lot1/` (`report.md`, `results.json`, images).
+  Validé à blanc sur CPU avec un Ideogram miniature sauvé sur disque.
+
 ## 9. Sources
 
 - diffusers 0.42.1 : `pipelines/ideogram4/pipeline_ideogram4.py`, `prompt_enhancer.py`

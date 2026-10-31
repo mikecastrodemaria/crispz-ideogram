@@ -155,3 +155,21 @@ def test_a_flux3_checkpoint_is_refused_and_named():
     finally:
         os.unlink(path)
     assert why and "crispz-flux3" in why
+
+
+def test_shipped_defaults_are_ideogram_not_flux3():
+    """The app must START on the official recipe: config-sample.txt kept FLUX.3's
+    16 steps / guidance 1.0 / "Distilled" preset, i.e. a first render at peak 1.0
+    (almost no CFG) until a preset was clicked. The UI ranges must reach 48 steps and
+    stop at Ideogram's 2048 px."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "config-sample.txt"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert cfg["default_performance"] in cfg["performance_presets"]
+    assert cfg["default_gen_steps"] == 48
+    assert cfg["default_guidance"] == cz_ideogram.SCHEDULE_PEAK
+    import cz_ui
+    assert all(max(v) <= cz_ideogram.MAX_SIDE for v in cz_ui.ASPECT_RATIOS.values())
+    assert "2K  2048 x 2048  (1:1)" in cz_ui.ASPECT_RATIOS
+    src = open(os.path.join(here, "cz_ui.py"), encoding="utf-8").read()
+    assert "gen_steps = gr.Slider(2, 80," in src

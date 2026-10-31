@@ -162,6 +162,10 @@ ASPECT_RATIOS = {
     "4K  2304 x 3456  (2:3)":    (2304, 3456),
     "4K  4096 x 1760  (21:9)":   (4096, 1760),
 }
+# crispz-ideogram: Ideogram 4 renders 256 to 2048 px a side (cz_ideogram.fit_size). The
+# FLUX.3 2K/4K formats above 2048 would be shrunk silently-but-logged at every render, so
+# they are not offered. Lot 2 redoes this list with the design presets (6:1 banner...).
+ASPECT_RATIOS = {k: v for k, v in ASPECT_RATIOS.items() if max(v) <= 2048}
 # A list sorted from the squarest to the widest, each format followed by its portrait
 # counterpart. The 1536 entries (3:2, 16:9) and the 5:4 / 4:3 ones are EXACT ratios, the ones
 # read on CivitAI/ComfyUI recipes -- unlike the 832x1216 / 768x1344 / 1536x640 inherited from
@@ -4646,18 +4650,16 @@ def build_ui():
                                                # outside choices is refused by the frontend.
                                                value=_valid_performance(CONFIG.get("default_performance")),
                                                label="Performance",
-                                               info="Sets steps and CFG. Distilled = the 16-step flow map "
-                                                    "(guidance inert). Fast = 8 steps, a draft. Base = the "
-                                                    "flux-3-image-klein-base checkpoint, 50 steps with a "
-                                                    "real CFG of 3.5.")
+                                               info="Sets steps and guidance. Ideogram = the official "
+                                                    "48 steps, guidance schedule peaking at 7.0. Draft = 24 "
+                                                    "steps, a quick look.")
                         aspect = gr.Dropdown(list(ASPECT_RATIOS),
                                              value=CONFIG.get("default_aspect_ratio", "1024 x 1024  (1:1)"),
                                              label="Aspect ratio",
-                                             info="1 MP formats first (about 7 s on a 5090), then "
-                                                  "2K (about 4 MP, 35 to 50 s) and 4K (about 8 MP, "
-                                                  "2 min), all rendered natively by FLUX.3. Width / "
-                                                  "Height below take any custom size, a multiple of "
-                                                  "16, up to 4096 a side.")
+                                             info="1 MP formats first, then 2K (Ideogram 4 is "
+                                                  "native at 2048x2048). Width / Height below take any "
+                                                  "custom size, a multiple of 16, 256 to 2048 a side, "
+                                                  "ratio up to 6:1.")
                         force_ratio_cb = gr.Radio(
                             ["Off", "Crop to fit", "Extend (outpaint)"],
                             value=("Extend (outpaint)" if (cz_pipeline.FORCE_RATIO and
@@ -4670,21 +4672,19 @@ def build_ui():
                                  "missing bands are outpainted (nothing is lost). "
                                  "Off = keep the input's native ratio.")
                         with gr.Row():
-                            # Up to 4096 a side: FLUX.3 renders 2K and 4K natively (3840x2160
-                            # measured clean on a 5090 in 113 s); 4096 is diffusers' own cap on
-                            # a reference image, kept as the ceiling for the generation too.
-                            width = gr.Slider(256, 4096, value=int(CONFIG.get("default_width", 1024)),
+                            # 256 to 2048 a side: Ideogram 4's range (cz_ideogram.fit_size).
+                            width = gr.Slider(256, 2048, value=int(CONFIG.get("default_width", 1024)),
                                               step=16, label="Width")
-                            height = gr.Slider(256, 4096, value=int(CONFIG.get("default_height", 1024)),
+                            height = gr.Slider(256, 2048, value=int(CONFIG.get("default_height", 1024)),
                                                step=16, label="Height")
-                        gen_steps = gr.Slider(2, 40, value=int(CONFIG.get("default_gen_steps", 8)),
+                        gen_steps = gr.Slider(2, 80, value=int(CONFIG.get("default_gen_steps", 48)),
                                               step=1, label="Generation steps (txt2img)")
                         with gr.Row():
-                            guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
+                            guidance = gr.Slider(0.0, 10.0, value=float(CONFIG.get("default_guidance", 7.0)),
                                                  step=0.5, label="CFG guidance", scale=2,
-                                                 info="Inert on the distilled checkpoint (a flow map has no "
-                                                      "unconditional branch). A real CFG on flux-3-image-klein-base "
-                                                      "(3.5 advised).")
+                                                 info="The PEAK of Ideogram 4's per-step guidance "
+                                                      "schedule (official: 7.0, then 3.0 on the last "
+                                                      "steps; the shape is kept at any step count).")
                             # FLUX.3 runs its own FlowMatch Euler schedule (constant shift
                             # 6.93); the distilled checkpoint is a flow map that is told the
                             # next timestep at every step, so another sampler or a remapped

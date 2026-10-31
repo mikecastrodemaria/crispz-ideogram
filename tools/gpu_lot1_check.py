@@ -100,19 +100,57 @@ def _gpu_processes():
         return [f"(nvidia-smi unavailable: {e})"]
 
 
+# On Windows (WDDM) nvidia-smi lists EVERY process with a GPU context (explorer, the
+# browsers, the Start menu...) with "[N/A]" for the memory: listing them all as blockers
+# made the check useless (36 processes on Mike's desktop, none a model). What matters:
+# a process that runs models (python, ComfyUI, Ollama...), a process using more than
+# 1 GB when the driver tells, or more than BUSY_GB in use on the card overall.
+BUSY_GB = 4.0
+_MODEL_RUNTIMES = ("python", "comfy", "ollama", "crispz", "pinokio", "llama", "koboldcpp",
+                   "lmstudio", "lm studio", "invokeai", "forge", "fooocus")
+# A process whose name is hidden ("[Insufficient Permissions]", typically dwm.exe) is not
+# a suspect by itself: the overall BUSY_GB check covers a hidden one that holds a model.
+
+
+def _suspects(procs):
+    out = []
+    for p in procs:
+        low = p.lower()
+        mem = p.rsplit(",", 1)[-1].strip().lower()
+        heavy = False
+        if mem.endswith("mib"):
+            try:
+                heavy = float(mem[:-3]) > 1024
+            except ValueError:
+                pass
+        if heavy or any(k in low for k in _MODEL_RUNTIMES):
+            out.append(p)
+    return out
+
+
 # --- 0. Prechecks -----------------------------------------------------------------------
 def prechecks():
     import torch
     r = {}
     procs = _gpu_processes()
     r["gpu_processes"] = procs
-    if procs and "--force" not in sys.argv:
-        _say("ANOTHER PROCESS HOLDS THE GPU:")
-        for p in procs:
-            _say(f"   {p}")
-        _say("Close crispz-flux3 (and any other crispz / ComfyUI), then run again. "
-             "--force skips this check.")
+    suspects = _suspects(procs)
+    used, total = _smi_used_gb()
+    r["driver_used_at_start_gb"] = used
+    busy = used is not None and used > BUSY_GB
+    if (suspects or busy) and "--force" not in sys.argv:
+        if suspects:
+            _say("A MODEL PROCESS MAY HOLD THE GPU:")
+            for p in suspects:
+                _say(f"   {p}")
+        if busy:
+            _say(f"{used} GB of VRAM already in use (more than {BUSY_GB} GB): something "
+                 "has a model loaded.")
+        _say("Close crispz-flux3 (and any other crispz / ComfyUI / Ollama), then run "
+             "again. --force skips this check.")
         sys.exit(2)
+    _say(f"GPU free enough: {used} GB in use at start, {len(procs)} process(es) listed, "
+         "none of them a model runtime")
     if not torch.cuda.is_available():
         _say("CUDA is not available to this torch build: nothing to measure.")
         sys.exit(2)

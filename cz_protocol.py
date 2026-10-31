@@ -61,7 +61,10 @@ OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 # it). Static on purpose: `caps` must answer without importing the pipeline
 # (torch). Krea 2 has no img2img / inpaint pipeline -> variation (upscale
 # with factor 1) and inpaint are refused with exit 3, never faked.
-FAMILY_CAPS = {"img2img": True, "inpaint": True}
+# crispz-ideogram (lot 1): Ideogram 4.0 has neither img2img nor inpaint in diffusers.
+# Both come back in lot 3, EMULATED (SDEdit + latent blending); until then they are
+# refused with exit 3, never faked.
+FAMILY_CAPS = {"img2img": False, "inpaint": False}
 
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
@@ -72,7 +75,7 @@ SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
 
 _DEF_URL = "http://127.0.0.1:7860"
 
-MAX_REFS = 10                     # FLUX.3 references <ref_image_0>..<ref_image_9> (the UI shows 4 slots)
+MAX_REFS = 10                     # kept for the family contract; Ideogram 4 takes no reference (OMNI_SUPPORTED)
 
 # spec.fast (op edit) -> the mode name on the cz_pipeline.set_edit_speed side
 # klein has no speed preset: the model is already distilled to 4 steps and no FLUX.2
@@ -88,16 +91,20 @@ _FAST_ALIASES = {"off": "Off", "none": "Off", "auto": "Auto (model profile)",
 # crispz-krea / crispz-krea2 hard-set this to False (their _load_omni raises:
 # no instruction-edit model exists for Krea) - config can never turn refs on
 # there, and caps must say so instead of promising a capability that raises.
-OMNI_SUPPORTED = True
+# crispz-ideogram: Ideogram 4.0 is text to image only. Editing is local in crispz-flux3
+# and cloud (Ideogram 4.5 API, opt-in) in lot 4.
+OMNI_SUPPORTED = False
 # klein serves multi-reference editing from the BASE pipeline (`image` takes a list of
 # PIL images): there is no separate edit repo to configure, so refs are ALWAYS available.
-OMNI_DEFAULT = (os.environ.get("FLUX3_MODEL")
-                or "black-forest-labs/flux-3-image-klein")
+OMNI_DEFAULT = (os.environ.get("IDEOGRAM_MODEL")
+                or "ideogram-ai/ideogram-4-nf4-diffusers")
 
 # klein-4B is step-wise distilled: diffusers ignores `guidance_scale` (measured
 # bit-identical renders from 1.0 to 8.0, tests/test_klein_guidance.py) and the
 # Flux2Klein* pipelines expose no `negative_prompt`. A spec carrying `negative` is
 # therefore honoured with a WARNING, never silently - house rule.
+# crispz-ideogram: Ideogram 4's unconditional transformer takes NO text (asymmetric CFG):
+# there is nowhere to put a negative prompt. Announced, never silently dropped.
 SUPPORTS_NEGATIVE = False
 
 

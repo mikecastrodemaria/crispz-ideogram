@@ -1,6 +1,6 @@
 {
   "esrgan_dir": "./upscale_models",
-  "flux3_model": "black-forest-labs/flux-3-image-klein",
+  "ideogram_model": "ideogram-ai/ideogram-4-nf4-diffusers",
   "model": "4x-ClearRealityV1_Soft.safetensors",
   "factor": 2.0,
   "denoise": 0.3,

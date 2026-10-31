@@ -1,5 +1,5 @@
 {
-    "_hf_token_help": "Hugging Face token: the FLUX.3 Image Klein repos are GATED (FLUX Kommunity License: free, commercial use included, under 5 M USD of yearly revenue). Accept the licence on https://huggingface.co/black-forest-labs/flux-3-image-klein, create a READ token at https://huggingface.co/settings/tokens and put it here (or run 'huggingface-cli login' and leave it empty). Env HF_TOKEN also works. config.txt is gitignored -> never commit your token.",
+    "_hf_token_help": "Hugging Face token: the Ideogram 4 repo is GATED (Ideogram 4 NON-COMMERCIAL licence: personal and research use only, commercial use of the self-hosted weights needs a separate licence from Ideogram). Accept the conditions on https://huggingface.co/ideogram-ai/ideogram-4-nf4-diffusers, create a READ token at https://huggingface.co/settings/tokens and put it here (or run 'huggingface-cli login' and leave it empty). Env HF_TOKEN also works. config.txt is gitignored -> never commit your token.",
     "hf_token": "",
     "ollama_url": "http://127.0.0.1:11434",
     "_ollama_describe_prompt_help": "Empty = Describe uses the style picked in Prompt AI (Describe style + Length). Any text here adds a 'Custom (config.txt)' style. The pre-1.36 tag instruction counts as empty.",
@@ -14,7 +14,18 @@
     "ollama_vision_blocklist": [],
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
-    "ollama_improve": {"enabled": true, "endpoint": "", "model": "", "timeout": 120, "temperature": 0.7, "keep_alive": 0, "positive_instruction": "", "negative_instruction": "", "default_negative": "", "format": "auto"},
+    "ollama_improve": {
+        "enabled": true,
+        "endpoint": "",
+        "model": "",
+        "timeout": 120,
+        "temperature": 0.7,
+        "keep_alive": 0,
+        "positive_instruction": "",
+        "negative_instruction": "",
+        "default_negative": "",
+        "format": "auto"
+    },
     "_ollama_improve_help": "Improve prompt / Improve negative (Ollama, shared prompt_improve module). enabled=false hides the buttons. endpoint: '' = the Ollama URL above. model: '' = the model picked in Prompt AI, else the first installed. keep_alive 0 unloads the model right after the answer (the GPU is shared with image generation). positive_instruction / negative_instruction: '' = built-in (a custom ollama_improve_prompt is still honored). default_negative: what Improve negative starts from on an empty box ('' = built-in SDXL baseline). format: auto | tags | prose | off (input format stated to the model for the positive prompt).",
     "job_queue": {
         "enabled": true
@@ -43,42 +54,30 @@
         "heartbeat_s": 2.0
     },
     "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
-    "live_preview": {"enabled": true, "every_n_steps": 1, "max_side": 512},
+    "live_preview": {
+        "enabled": true,
+        "every_n_steps": 1,
+        "max_side": 512
+    },
     "_live_preview_help": "Show the image as it forms, during the denoise (Fooocus-style), in the Result gallery itself, where the finished image then replaces it. FLUX.2 hands its latents packed (128 channels, one token per 16x16 block) and they are projected straight to RGB through a 128x3 matrix fitted against THIS VAE -- a matmul on the token grid, where a real VAE decode would cost 0.2-0.5 s a step. It is an approximation (R2 0.88): the composition and the broad colours are right, the fine detail is not. every_n_steps=2 or 3 refreshes less often, max_side caps the image sent to the browser. enabled=false removes the whole thing: no callback on the denoise, no frames, zero cost. Advanced > Generation has the same switch, applied live.",
     "caption_model": "blip-large",
     "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
-    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. FLUX.3 Image Klein (distilled) is a 16-step flow map with NO CFG: guidance is ignored there, the presets keep it at 1.0. Fast (8 steps) is a draft mode, to be measured. The -base checkpoint is undistilled: 50 steps and a real CFG of 3.5 (BFL's model card), where the negative prompt works too.",
+    "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. Ideogram 4.0: 48 steps and a guidance schedule peaking at 7.0 (the official 7.0 x 45 + 3.0 x 3); the slider sets the PEAK, the schedule keeps its shape at any step count. Draft (24 steps) is a quick look, to be measured on the 5090.",
     "performance_presets": {
-        "Distilled (16 steps)": [
-            16,
-            1.0
+        "Ideogram (48 steps)": [
+            48,
+            7.0
         ],
-        "Fast (8 steps)": [
-            8,
-            1.0
-        ],
-        "Base (50 steps, CFG 3.5)": [
-            50,
-            3.5
+        "Draft (24 steps)": [
+            24,
+            7.0
         ]
     },
-    "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (FIRST match wins, in order: keep '-base' before the plain name). Do NOT add a 'klein' key: it is a substring of 'flux-3-image-klein' and would hand the FLUX.2 4-step profile to FLUX.3 (crispz-ideogram skips it and says so).",
+    "_model_profiles_help": "Auto steps/guidance when a model is selected, matched by substring on the name (FIRST match wins, in order). 'ideogram' covers the official repo and its mirrors.",
     "model_profiles": {
-        "flux-3-image-klein-base": {
-            "steps": 50,
-            "guidance": 3.5
-        },
-        "flux-3-image-klein": {
-            "steps": 16,
-            "guidance": 1.0
-        },
-        "flux-3": {
-            "steps": 16,
-            "guidance": 1.0
-        },
-        "flux3": {
-            "steps": 16,
-            "guidance": 1.0
+        "ideogram": {
+            "steps": 48,
+            "guidance": 7.0
         }
     },
     "default_model_profile": {
@@ -93,7 +92,7 @@
     "edit_loras_dir": "",
     "_edit_loras_enabled_help": "Initial state of the 'Edit LoRAs' checkbox (Models > LoRA). Off = the chosen preset is kept but not applied (quick with/without comparison).",
     "edit_loras_enabled": true,
-    "_default_guidance_help": "On the distilled FLUX.3 checkpoint (the default) guidance is inert: a flow map has no unconditional branch, and so is the negative prompt (the CLI protocol announces supports.negative = false). On black-forest-labs/flux-3-image-klein-base the slider is a real CFG (3.5 advised) and the negative prompt works.",
+    "_default_guidance_help": "Ideogram 4: the PEAK of the per-step guidance schedule (7.0 = official). Asymmetric CFG always runs (a second, text-free transformer), so there is no negative prompt; the CLI protocol announces supports.negative = false.",
     "_default_refine_help": "Upscale/refine pass OFF by default (txt2img only = fast startup). NB: the diffusion refine needs a non-quantized base; with a GGUF model it is skipped/limited. Enable per-run via the Upscale checkbox.",
     "default_prompt": "",
     "default_negative_prompt": "",
@@ -154,8 +153,6 @@
     "checkpoints_extra_dir": "",
     "_zimage_omni_model_help": "Edit / multi-reference (Omni) model. Empty = the base model itself: on FLUX.3 the base pipeline edits natively (cite the references as <ref_image_0>, <ref_image_1>... in the prompt), there is no separate edit checkpoint, and a repo other than the base is ignored with a warning. The field stays so every client of the family reads the same one.",
     "zimage_omni_model": "",
-    "_flux3_base_repos_help": "Base repos offered in the 'FLUX.3 checkpoint' dropdown. Absent or empty = the distilled one (the default, 16 steps) and the -base one (50 steps, real CFG). Both are gated under the same Kommunity licence and weigh the same (one 5.6B transformer, the Qwen3-VL-4B encoder, the VAE). A base picked in the UI or in preferences stays selectable even if you shorten this list.",
-    "flux3_base_repos": ["black-forest-labs/flux-3-image-klein", "black-forest-labs/flux-3-image-klein-base"],
     "_edit_fast_help": "Initial 'Edit speed'. FLUX.3 Image Klein is already distilled to 16 steps and no FLUX.3 Lightning LoRA exists, so Off is the only value and the UI hides the control; the field stays for family parity (on crispz-qwen-edit it also takes Lightning 4 / 8 steps).",
     "edit_fast": "Off",
     "loras_dir": "",
@@ -258,10 +255,10 @@
     "log_level": "info",
     "_default_negative_prompt_help": "Inert on the distilled FLUX.3 checkpoint (no CFG); honoured on the -base one. Kept empty on purpose.",
     "_omni_help": "FLUX.3 needs NO separate edit model: multi-reference editing is served by the base pipeline itself, the prompt cites the references as <ref_image_0>, <ref_image_1>... The keys 'zimage_omni_model' / 'zimage_omni_base' of crispz-qwen-edit are gone on purpose - do not re-add them at merge time.",
-    "flux3_model": "black-forest-labs/flux-3-image-klein",
-    "_flux3_model_help": "Base repo (HF) or a local diffusers folder / single-file FLUX.3 checkpoint (.safetensors in BFL, ComfyUI or diffusers layout, BFL fp8r / nvfp4, or .gguf). Default black-forest-labs/flux-3-image-klein (distilled, 16 steps). black-forest-labs/flux-3-image-klein-base is the undistilled one (50 steps, real CFG). Both gated: accept the licence + set hf_token. The UI writes your dropdown choice back here. Env FLUX3_MODEL. A FLUX.2 Klein file is refused: it runs in crispz-klein.",
-    "flux3_transformer": "",
-    "_flux3_transformer_help": "A single-file FLUX.3 transformer that replaces the base repo's (VAE and text encoder still come from flux3_model). Same formats as above. Empty = the repo's own at flux3_precision. Env FLUX3_TRANSFORMER.",
-    "flux3_precision": "bf16",
-    "_flux3_precision_help": "Which build of the official transformer to download and run when flux3_transformer is empty: bf16 (transformer/, about 11 GB, every card), fp8r (BFL's pre-quantized file under variants/, about 6.3 GB, fast from compute capability 8.9, i.e. RTX 40xx/50xx), nvfp4 (about 5.3 GB, Blackwell RTX 50xx + the flashinfer package). Also in the UI (lot C). Env FLUX3_PRECISION."
+    "ideogram_model": "ideogram-ai/ideogram-4-nf4-diffusers",
+    "_ideogram_model_help": "Base repo (HF) or a local diffusers folder of Ideogram 4.0. Default ideogram-ai/ideogram-4-nf4-diffusers (nf4, ~16 GB on disk), GATED and NON-COMMERCIAL: accept the licence + set hf_token. Env IDEOGRAM_MODEL. Single-file transformers are not supported (diffusers has no converter for Ideogram 4); FLUX files are refused (they run in crispz-flux3 / crispz-klein).",
+    "ideogram_transformer": "",
+    "_ideogram_transformer_help": "Reserved: single-file Ideogram 4 transformers are not supported yet. Leave empty. Env IDEOGRAM_TRANSFORMER.",
+    "ideogram_precision": "nf4",
+    "_ideogram_precision_help": "Build of the official transformers. Only 'nf4' is published (2026-10-31); an fp8 build exists for ComfyUI only. Env IDEOGRAM_PRECISION."
 }

@@ -111,13 +111,17 @@ DEFAULT_OUTPUT_FORMAT = CONFIG.get("default_output_format", DEFAULT_OUTPUT_FORMA
 # card) BEFORE 'flux-3-image-klein' (the flow map: 16 steps, no CFG, guidance left at 1.0
 # so the UI does not display a value suggesting an active CFG). 'flux-3' / 'flux3' catch
 # the mirrors and community files (unsloth/flux-3-image-klein-GGUF, flux3-xxx.safetensors).
+# crispz-ideogram: 'ideogram' first (48 steps, guidance schedule peaking at 7.0, the
+# official settings of Ideogram4Pipeline). The FLUX.3 entries stay for the family files
+# a shared models folder may hold; they never apply to the Ideogram base repo.
 MODEL_PROFILES = CONFIG.get("model_profiles") or {
+    "ideogram": {"steps": 48, "guidance": 7.0},
     "flux-3-image-klein-base": {"steps": 50, "guidance": 3.5},
     "flux-3-image-klein": {"steps": 16, "guidance": 1.0},
     "flux-3": {"steps": 16, "guidance": 1.0},
     "flux3": {"steps": 16, "guidance": 1.0},
 }
-DEFAULT_MODEL_PROFILE = CONFIG.get("default_model_profile") or {"steps": 16, "guidance": 1.0}
+DEFAULT_MODEL_PROFILE = CONFIG.get("default_model_profile") or {"steps": 48, "guidance": 7.0}
 
 # crispz-klein's profile keys, as every config.txt copied from its config-sample.txt
 # carries them. 'klein' is a substring of 'flux-3-image-klein': through such a config the

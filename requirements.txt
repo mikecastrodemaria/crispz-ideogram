@@ -61,3 +61,9 @@ uvicorn
 # version than yours (xformers for torch 2.9 while you have 2.8, say), diffusers
 # fails with "DLL load failed while importing _C" when loading the VAE. The simplest
 # solution: pip uninstall xformers. Torch 2.7+ has a native SDPA, which is enough.
+
+# crispz-ideogram: the official Ideogram 4 weights are published in nf4
+# (ideogram-ai/ideogram-4-nf4-diffusers), a 4-bit format diffusers loads through
+# bitsandbytes. Official Windows wheels exist since 0.43. To confirm on the 5090 at the
+# first load (lot 1): if the repo's config names another quantizer, this line changes.
+bitsandbytes>=0.45

@@ -1,14 +1,18 @@
-"""crispz-ideogram - the FLUX.3 Image Klein core (diffusers ModularPipeline, BF16): loading
-the pipeline (txt2img / img2img / inpaint / multi-reference edit, ONE object, see
-cz_flux3.Flux3Pipe) + LoRAs / checkpoints / transformer, generation and orchestration
-(generate / txt2img_run / process_one / outpaint / inpaint) + the mutable runtime state.
+"""crispz-ideogram - the Ideogram 4.0 core (diffusers Ideogram4Pipeline, nf4): loading the
+pipeline (cz_ideogram.IdeogramPipe, behind the same calling convention as crispz-flux3's
+Flux3Pipe) + LoRAs, generation and orchestration (generate / txt2img_run / process_one /
+outpaint / inpaint) + the mutable runtime state.
 
-FLUX.3 port (crispz-ideogram 0.1): the model is loaded by cz_flux3.load(), which wraps the
-modular pipeline behind the Flux2Klein calling convention this module was written
-against. So the call sites below did not change; what changed is listed in FORK.md
-(loading, guards by model FAMILY rather than hidden size, no text-encoder swap, Euler
-only). The FLUX.2 notes further down are crispz-klein's history and stay true of the
-calling convention, not of the model.
+Ideogram port (crispz-ideogram 0.1, lot 1): the model is loaded by cz_ideogram.load().
+Text to image only for now: img2img, inpaint and outpaint are emulated in lot 3 (the
+cz_flux3 techniques), editing goes through the Ideogram 4.5 API in lot 4. Until then
+the adapter raises a NAMED NotImplementedError on those paths. FLUX.3 code paths are
+kept, unreached, to merge from crispz-flux3 (remote `flux3`) with few conflicts.
+
+--- crispz-flux3's notes ---
+
+FLUX.3 port: the model was loaded by cz_flux3.load(), which wraps the modular pipeline
+behind the Flux2Klein calling convention this module was written against.
 
 --- crispz-klein's original notes ---
 
@@ -60,12 +64,13 @@ from cz_core import (
     _prefs, _is_single_file, _looks_single_file, _log, _dbg,
 )
 
-import cz_flux3
+import cz_flux3  # noqa: F401  (family markers; img2img / inpaint helpers for lot 3)
+import cz_ideogram as engine
 
-# The base FLUX.3 Image Klein model (txt2img/img2img/inpaint/edit). Overridden through env
-# FLUX3_MODEL or prefs/config 'flux3_model'. GATED repo, FLUX Kommunity License: accept
-# the conditions on the model page with your HF account and set `hf_token`. See FORK.md.
-DEFAULT_BASE_REPO = (os.environ.get("FLUX3_MODEL") or cz_flux3.FLUX3_DISTILLED)
+# The base Ideogram 4.0 model (text to image). Overridden through env IDEOGRAM_MODEL or
+# prefs/config 'ideogram_model'. GATED repo, Ideogram 4 NON-COMMERCIAL licence: accept the
+# conditions on the model page with your HF account and set `hf_token`. See README.
+DEFAULT_BASE_REPO = (os.environ.get("IDEOGRAM_MODEL") or engine.DEFAULT_REPO)
 # Multi-reference editing has NO separate model on klein: the base pipeline's `image`
 # takes a list of PIL images. The "omni" default is therefore the base model itself
 # (the symbol survives for cz_ui / cz_protocol, see the module docstring).
@@ -96,8 +101,8 @@ if DEVICE == "cuda":
 # cz_protocol import them, that is the module's API contract (see the docstring).
 # crispz-ideogram: its own keys. The klein_* ones are NOT read: they point at FLUX.2 repos and
 # checkpoints, which do not load in a FLUX.3 pipeline.
-CFG_MODEL_KEY = "flux3_model"
-CFG_TRANSFORMER_KEY = "flux3_transformer"
+CFG_MODEL_KEY = "ideogram_model"
+CFG_TRANSFORMER_KEY = "ideogram_transformer"
 
 
 def _cfg_first(*keys, env=()):
@@ -118,31 +123,33 @@ def _cfg_first(*keys, env=()):
     return None
 
 
-_zmodel = _cfg_first(CFG_MODEL_KEY, env=("FLUX3_MODEL",)) or DEFAULT_BASE_REPO
-ZIMAGE_TRANSFORMER = _cfg_first(CFG_TRANSFORMER_KEY, env=("FLUX3_TRANSFORMER",))
+_zmodel = _cfg_first(CFG_MODEL_KEY, env=("IDEOGRAM_MODEL",)) or DEFAULT_BASE_REPO
+ZIMAGE_TRANSFORMER = _cfg_first(CFG_TRANSFORMER_KEY, env=("IDEOGRAM_TRANSFORMER",))
 if _is_single_file(_zmodel):
     ZIMAGE_TRANSFORMER = _zmodel
     BASE_REPO = DEFAULT_BASE_REPO
 else:
     BASE_REPO = _zmodel
-if not cz_flux3.is_flux3_repo(BASE_REPO):
-    _log(f"config: '{BASE_REPO}' is not a FLUX.3 repo (crispz-ideogram only runs FLUX.3 Image "
-         f"Klein) -> using {DEFAULT_BASE_REPO}")
+if not engine.is_engine_repo(BASE_REPO):
+    _log(f"config: '{BASE_REPO}' is not an Ideogram 4 repo (crispz-ideogram only runs "
+         f"Ideogram 4.0) -> using {DEFAULT_BASE_REPO}")
     BASE_REPO = DEFAULT_BASE_REPO
 
 # Transformer precision for the official repos: bf16 (transformer/, ~11 GB), or BFL's
 # pre-quantized fp8r (~6.3 GB, fast from compute capability 8.9) / nvfp4 (~5.3 GB,
 # Blackwell + flashinfer). Ignored when a single-file transformer is set.
-PRECISION = str(os.environ.get("FLUX3_PRECISION") or _prefs.get("flux3_precision")
-                or CONFIG.get("flux3_precision") or "bf16").strip().lower()
-if PRECISION not in cz_flux3.PRECISIONS:
-    _log(f"config: flux3_precision '{PRECISION}' unknown "
-         f"({'/'.join(cz_flux3.PRECISIONS)}) -> bf16")
-    PRECISION = "bf16"
+# crispz-ideogram: the only public build is nf4 (the repo carries its quantization
+# config); the key stays so a future bf16 / fp8 build is one entry in engine.PRECISIONS.
+PRECISION = str(os.environ.get("IDEOGRAM_PRECISION") or _prefs.get("ideogram_precision")
+                or CONFIG.get("ideogram_precision") or engine.PRECISIONS[0]).strip().lower()
+if PRECISION not in engine.PRECISIONS:
+    _log(f"config: ideogram_precision '{PRECISION}' unknown "
+         f"({'/'.join(engine.PRECISIONS)}) -> {engine.PRECISIONS[0]}")
+    PRECISION = engine.PRECISIONS[0]
 
 
 def _hf_token():
-    """The HF token for the gated FLUX.3 repos: env HF_TOKEN, else config `hf_token`."""
+    """The HF token for the gated Ideogram 4 repo: env HF_TOKEN, else config `hf_token`."""
     return (os.environ.get("HF_TOKEN") or CONFIG.get("hf_token") or _prefs.get("hf_token")
             or None)
 
@@ -155,7 +162,7 @@ def is_base_variant(repo=None):
         v = _file_variant(ZIMAGE_TRANSFORMER)
         if v:
             return v == "base"
-    return cz_flux3.is_base_repo(repo or BASE_REPO)
+    return engine.is_base_repo(repo or BASE_REPO)
 
 
 def _file_variant(path):
@@ -167,16 +174,15 @@ def _file_variant(path):
     except OSError:
         return None
     if key not in _FAMILY_CACHE:
-        _FAMILY_CACHE[key] = cz_flux3.variant_from_keys(_file_tensor_names(path))
+        _FAMILY_CACHE[key] = engine.variant_from_keys(_file_tensor_names(path))
     return _FAMILY_CACHE[key]
 
 
 def _variant_repo_for(variant):
     """The official repo whose config matches `variant`, keeping a local or mirror base
     repo when it already is of that variant."""
-    if cz_flux3.variant_of(BASE_REPO) == variant:
-        return BASE_REPO
-    return cz_flux3.FLUX3_BASE if variant == "base" else cz_flux3.FLUX3_DISTILLED
+    # One Ideogram 4 checkpoint: whatever the variant asked, the base repo answers.
+    return BASE_REPO if engine.is_engine_repo(BASE_REPO) else engine.DEFAULT_REPO
 
 # Replacement text encoder (Models > Checkpoints > Text encoder). Empty = the one from
 # the base repo, as before. Otherwise a FOLDER in transformers format (config.json +
@@ -517,11 +523,10 @@ def _cfg(negative=None, guidance=None):
     a warning on a spec that carries one) -- house rule: degradation announced,
     never silent.
 """
-    # FLUX.3 base checkpoint: real CFG, so the negative prompt is real too.
-    if is_base_variant():
-        return {"negative_prompt": negative} if negative else {}
+    # Ideogram 4: the unconditional branch takes no text at all, so there is NO negative
+    # prompt to pass (cz_protocol announces supports.negative = False).
     if negative:
-        _dbg("negative prompt ignored: the distilled FLUX.3 checkpoint has no CFG")
+        _dbg("negative prompt ignored: Ideogram 4's unconditional branch takes no text")
     return {}
 
 
@@ -621,6 +626,11 @@ def _qwen_call(pipe, **kw):
     # silence the noise. Should an UNdistilled FLUX.2 checkpoint ever be loaded,
     # is_distilled is false and the UI slider is passed through, becoming a real CFG again.
     need_cfg = False
+    if "guidance_scale" not in kw and isinstance(pipe, engine.IdeogramPipe):
+        # Ideogram 4: the slider is the PEAK of the per-step schedule (7.0 = the official
+        # 7.0 x 45 + 3.0 x 3 at 48 steps); the adapter keeps the schedule's shape for any
+        # step count. Asymmetric CFG always runs (two transformers), whatever the value.
+        kw["guidance_scale"] = float(GUIDANCE)
     if "guidance_scale" not in kw and isinstance(pipe, cz_flux3.Flux3Pipe):
         # FLUX.3: the distilled checkpoint is a FLOW MAP (each step also tells the
         # transformer which timestep it jumps to): there is no unconditional branch to
@@ -798,6 +808,16 @@ def _apply_sampler(pipe):
     (custom sigmas) and falls back to Euler/sgm_uniform when it fails -> never a crash at
     generation time."""
     if _BASE_SCHED_CONFIG is None:
+        return
+    if isinstance(pipe, engine.IdeogramPipe):
+        # Ideogram 4 sets its own resolution-aware logit-normal sigmas at every call, on a
+        # FlowMatch Euler scheduler: a swapped scheduler or remapped schedule would be
+        # overwritten or fed sigmas it was not trained on. Kept as is, said once.
+        if (SAMPLER, SCHEDULE) != ("euler", "sgm_uniform") and \
+                (SAMPLER, SCHEDULE) not in _SAMPLER_IGNORED_SAID:
+            _SAMPLER_IGNORED_SAID.add((SAMPLER, SCHEDULE))
+            _log(f"sampler '{SAMPLER}/{SCHEDULE}' not applied: Ideogram 4 runs its native "
+                 f"FlowMatch Euler with a logit-normal schedule.")
         return
     if isinstance(pipe, cz_flux3.Flux3Pipe):
         # FLUX.3 runs its own FlowMatch Euler (constant shift 6.93). The distilled
@@ -1349,7 +1369,7 @@ _FLUX2_DIM_SIGS = (("double_stream_modulation_img.lin.weight", 6),
 # the 4096 lane is FLUX.2-klein-9B and nothing else. So the width tells FLUX.3 and the 4B
 # apart from NOTHING: the family is read from the tensor names first (_file_family,
 # _flux3_file_refusal), and the width only serves to NAME a 9B file in a message.
-FLUX3_HIDDEN_DIM = cz_flux3.HIDDEN_SIZE
+FLUX3_HIDDEN_DIM = engine.HIDDEN_SIZE   # crispz-ideogram: Ideogram 4 is 4608 wide
 _FLUX2_VARIANTS = {3072: "4B", 4096: "9B"}
 _BASE_DIM_CACHE = {}
 
@@ -1462,7 +1482,7 @@ def _base_hidden_dim(base=None):
         return None
     if base in _BASE_DIM_CACHE:
         return _BASE_DIM_CACHE[base]
-    if cz_flux3.is_flux3_repo(base):
+    if engine.is_engine_repo(base):
         # Known without reading anything: every FLUX.3 Image Klein repo (distilled, base,
         # a mirror) is 3072 wide. It also spares the gated repo a config fetch that fails
         # without a token and would switch the filter off for the session.
@@ -1498,7 +1518,7 @@ def _variant_name(dim):
     FLUX.2-klein-4B file has the same width and is told apart by _file_family BEFORE this
     is ever asked), 4096 is FLUX.2-klein-9B, anything else is named by its number."""
     if dim == FLUX3_HIDDEN_DIM:
-        return "FLUX.3 Image Klein"
+        return engine.MODEL_LABEL
     v = _FLUX2_VARIANTS.get(dim)
     return f"FLUX.2-klein-{v}" if v else f"hidden dim {dim}"
 
@@ -1524,7 +1544,7 @@ def _variant_repo(dim):
     dropdown, word for word. 3072 names the FLUX.3 distilled repo: in this build a
     3072-wide file that got this far has passed the family check."""
     if dim == FLUX3_HIDDEN_DIM:
-        return cz_flux3.FLUX3_DISTILLED
+        return engine.DEFAULT_REPO
     v = _FLUX2_VARIANTS.get(dim)
     return f"black-forest-labs/FLUX.2-klein-{v}" if v else None
 
@@ -1617,12 +1637,13 @@ def _lora_unsupported(path):
     # Wrong family: a FLUX.2 LoRA on FLUX.3. Read from the tensor NAMES (the hidden size
     # is the same 3072 on FLUX.2-klein-4B and FLUX.3, see _flux3_file_refusal).
     try:
-        fam = cz_flux3.family_from_keys(_safetensors_header(path).keys())
+        fam = engine.family_from_header(_safetensors_header(path))
     except Exception:
         fam = None
-    if fam == "flux2":
-        return ("FLUX.2 Klein LoRA - its layers (double_blocks / transformer_blocks) do "
-                "not exist in FLUX.3, peft would match nothing. It works in crispz-klein")
+    if fam and fam != engine.FAMILY:
+        home = {"flux2": "crispz-klein", "flux3": "crispz-flux3"}.get(fam, "its own app")
+        return (f"{_FAMILY_LABEL.get(fam, fam)} LoRA - its layers do not exist in "
+                f"Ideogram 4, peft would match nothing. It works in {home}")
     algo = _lycoris_algo(path)
     if algo and algo != "LoKr":
         return (f"LyCORIS {algo} - only LoKr is supported here; peft recognises none "
@@ -2072,7 +2093,7 @@ def _load_dequant_state_dict(path):
     # Architecture guard: a quantized checkpoint of ANOTHER model would load incoherent
     # weights -> a clear refusal. The family is read from the block names, the same
     # reading as the checkpoint menu (cz_flux3.family_from_keys).
-    if cz_flux3.family_from_keys(k[len(prefix):] for k, _ in entries) != "flux3":
+    if engine.family_from_keys(k[len(prefix):] for k, _ in entries) != engine.FAMILY:
         raise RuntimeError(
             f"{os.path.basename(path)}: quantized checkpoint does not look like a "
             "FLUX.3 Image Klein transformer (different architecture); this build only "
@@ -2291,8 +2312,9 @@ def _gguf_layout(path):
             return "unknown"
         # crispz-ideogram: a FLUX.3 file is told by its block names (the same reading as
         # the .safetensors family guard), whatever 'general.architecture' says.
-        if cz_flux3.family_from_keys(names) == "flux3":
-            return "flux3"
+        fam = engine.family_from_keys(names)
+        if fam in (engine.FAMILY, "flux3"):
+            return fam
         if all(any(n == sig for n in names) for sig in _QWEN_GGUF_SIGNATURE):
             return "flux2"
         if any(n.startswith(_GGUF_OK_PREFIXES) for n in names):
@@ -2385,7 +2407,7 @@ def _file_family(path):
     except OSError:
         return None
     if key not in _FAMILY_CACHE:
-        _FAMILY_CACHE[key] = cz_flux3.family_from_keys(_file_tensor_names(path))
+        _FAMILY_CACHE[key] = engine.family_from_keys(_file_tensor_names(path))
     return _FAMILY_CACHE[key]
 
 
@@ -2393,9 +2415,13 @@ def _family_refusal(path):
     """The one-line refusal of a FLUX.2 Klein single file, else None. Only a POSITIVE
     FLUX.2 reading refuses: a file with no family marker at all (a VAE, a fixture) is
     left to the other checks."""
-    if _file_family(path) == "flux2":
-        return ("it is a FLUX.2 Klein checkpoint, which runs in crispz-klein: FLUX.2 and "
-                "FLUX.3 share neither layers nor weights")
+    fam = _file_family(path)
+    if fam == "flux2":
+        return ("it is a FLUX.2 Klein checkpoint, which runs in crispz-klein: it shares "
+                "neither layers nor weights with Ideogram 4")
+    if fam == "flux3":
+        return ("it is a FLUX.3 Image Klein checkpoint, which runs in crispz-flux3: it "
+                "shares neither layers nor weights with Ideogram 4")
     return None
 
 
@@ -2409,12 +2435,15 @@ def _flux3_file_refusal(path):
     if any(_lora_side(n) for n in names[:200]):
         return "it is a LoRA, not a checkpoint: put it in the LoRA folder"
     fam = _file_family(path)
-    if fam == "flux2":
+    if fam in ("flux2", "flux3"):
         return _family_refusal(path)
-    if fam != "flux3":
-        return ("no FLUX.3 transformer tensor in it (a VAE, a text encoder, or "
-                "another model family); crispz-ideogram only loads FLUX.3 Image Klein "
-                "transformers")
+    if fam != engine.FAMILY:
+        return ("no Ideogram 4 transformer tensor in it (a VAE, a text encoder, or "
+                "another model family); crispz-ideogram only runs Ideogram 4.0")
+    # An Ideogram 4 transformer in ONE file: diffusers 0.42.1 has no single-file
+    # converter for it. Said in the listing rather than at load time.
+    return ("single-file Ideogram 4 transformers are not supported yet (diffusers has no "
+            "converter for them); use a diffusers folder as the base model")
     if not _is_gguf_path(path):
         # A comfy-quant format with no dequant here (w6a8_int8 = 6-bit weights with group
         # scales, the "INT6" builds of CivitAI's FLUX.3 pages): said in the listing, with
@@ -2506,7 +2535,7 @@ def resolve_checkpoint(name):
 
 
 _FILE_INFO_CACHE = {}
-_FAMILY_LABEL = {"flux3": "FLUX.3", "flux2": "FLUX.2"}
+_FAMILY_LABEL = {"ideogram": "Ideogram", "flux3": "FLUX.3", "flux2": "FLUX.2"}
 _DTYPE_LABEL = {"BF16": "bf16", "F16": "fp16", "F32": "fp32", "F8_E4M3": "FP8",
                 "F8_E5M2": "FP8", "I8": "INT8", "I16": "INT16"}
 # `general.file_type` is llama.cpp's LlamaFileType enum ("MOSTLY_Q4_K_M"...), NOT the
@@ -2599,7 +2628,7 @@ def model_info(path, kind="checkpoint"):
             info["format"] = "GGUF " + (_gguf_ftype(path) or "")
         else:
             hdr = _safetensors_header(path)
-            info["variant"] = _FAMILY_LABEL.get(cz_flux3.family_from_keys(hdr.keys()))
+            info["variant"] = _FAMILY_LABEL.get(engine.family_from_header(hdr))
             if kind != "lora":
                 fmts = _quant_metadata_formats(hdr)
                 counts = {}
@@ -2855,10 +2884,11 @@ def set_precision(precision):
     a single-file transformer is set (that file IS the precision), and said. An unknown
     value falls back to bf16, the build every card runs."""
     global PRECISION
-    want = str(precision or "bf16").strip().lower()
-    if want not in cz_flux3.PRECISIONS:
-        _log(f"precision '{precision}' unknown ({'/'.join(cz_flux3.PRECISIONS)}) -> bf16")
-        want = "bf16"
+    want = str(precision or engine.PRECISIONS[0]).strip().lower()
+    if want not in engine.PRECISIONS:
+        _log(f"precision '{precision}' unknown ({'/'.join(engine.PRECISIONS)}) -> "
+             f"{engine.PRECISIONS[0]}")
+        want = engine.PRECISIONS[0]
     if want == PRECISION:
         return PRECISION
     PRECISION = want
@@ -3527,8 +3557,11 @@ _TRANSFORMER_VRAM_GB = {"4B": 7.2, "9B": 18.2}
 # 8.27 + the VAE 0.31, plus the transformer at its precision. The sums match the
 # "peak after load" of the diffusers blog (18.8 bf16 / 14.35 fp8r / 13.4 nvfp4), which is
 # what 'none' offload keeps resident.
-_FLUX3_REST_GB = 8.6
-_FLUX3_TRANSFORMER_GB = {"bf16": 10.3, "fp8r": 5.85, "nvfp4": 4.95}
+# crispz-ideogram: Ideogram 4 nf4, from the repo's file sizes (GiB): Qwen3-VL-8B encoder
+# 5.1 + VAE 0.16 = the "rest", and the PAIR of transformers (conditional +
+# unconditional, 4.86 each) as the "transformer". To be replaced by the 5090 measures.
+_FLUX3_REST_GB = 5.3
+_FLUX3_TRANSFORMER_GB = {"nf4": 9.7, "bf16": 9.7}
 
 
 def _base_vram_need_gb(base=None):
@@ -3540,8 +3573,8 @@ def _base_vram_need_gb(base=None):
 """
     t = ZIMAGE_TRANSFORMER
     if not t:
-        return _FLUX3_REST_GB + _FLUX3_TRANSFORMER_GB.get(PRECISION, 10.3)
-    if _is_gguf_path(t) or cz_flux3._bfl_quant_of(t):
+        return _FLUX3_REST_GB + _FLUX3_TRANSFORMER_GB.get(PRECISION, 9.7)
+    if _is_gguf_path(t) or engine._bfl_quant_of(t):
         try:
             return _FLUX3_REST_GB + os.path.getsize(t) / 1024 ** 3
         except OSError:
@@ -3621,6 +3654,12 @@ def _trim_text_encoder(pipe):
     global _ENCODER_TRIMMED
     _ENCODER_TRIMMED = False        # a new encoder: nothing pruned until we have acted
     if not TRIM_TEXT_ENCODER:
+        return
+    if isinstance(pipe, engine.IdeogramPipe):
+        # Ideogram 4 taps 13 hidden states of Qwen3-VL-8B, the last one at layer 35 of
+        # 36: there is nothing to prune. Said, so the setting is not believed to act.
+        _log("text encoder NOT trimmed: Ideogram 4 reads Qwen3-VL-8B down to its last "
+             "layer, there is nothing to remove.")
         return
     if isinstance(pipe, cz_flux3.Flux3Pipe):
         # FLUX.3 reads 8 hidden states of Qwen3-VL-4B, the last one at layer 32 of 36:
@@ -3729,6 +3768,15 @@ def _load_transformer(path=None, base=None):
 """
     path = ZIMAGE_TRANSFORMER if path is None else path
     base = BASE_REPO if base is None else base
+    # crispz-ideogram: the base repo's conditional transformer, or a named refusal for a
+    # single file (no diffusers converter for Ideogram 4). The FLUX.3 path below stays for
+    # merges from crispz-flux3 and is not reached.
+    if path and _is_single_file(path):
+        raise RuntimeError(f"{os.path.basename(path)}: "
+                           f"{_flux3_file_refusal(path) or 'not loadable here'}")
+    return _load_monitor(f"transformer {base} ({PRECISION})",
+                         lambda: engine.load_transformer(base, DTYPE, precision=PRECISION,
+                                                         token=_hf_token()))
     src = path or None
     if path and _is_single_file(path):
         why = _flux3_file_refusal(path)
@@ -4373,31 +4421,29 @@ def _ensure_base():
         free_vram()
     t0 = time.time()
     tr = None
-    if ZIMAGE_TRANSFORMER or PRECISION != "bf16":
+    if ZIMAGE_TRANSFORMER:
         tr = _load_transformer()
-    # A replacement text encoder is a FLUX.2 feature (a Qwen3 of the same width): FLUX.3
-    # reads 8 hidden states of a Qwen3-VL-4B and nothing else fits that slot yet. The
-    # setting is kept (prefs stay valid) but not applied, and that is said.
+    # A replacement text encoder is not supported: Ideogram 4 reads 13 hidden states of
+    # its Qwen3-VL-8B. The setting is kept (prefs stay valid) but not applied, and said.
     _TEXT_ENCODER_ACTIVE = ""
     if TEXT_ENCODER:
         _log(f"text encoder {_encoder_label(TEXT_ENCODER)} NOT used: replacing the encoder "
-             f"is not supported on FLUX.3 yet. {BASE_REPO}'s own Qwen3-VL-4B runs; the "
+             f"is not supported on Ideogram 4. {BASE_REPO}'s own Qwen3-VL-8B runs; the "
              f"image metadata says so (text_encoder_not_applied).")
     _need = _base_vram_need_gb()
     _off_label = (f"auto->{_resolve_auto()}" if OFFLOAD_MODE == "auto" else OFFLOAD_MODE)
-    _log(f"loading FLUX.3 Image Klein ({cz_flux3.variant_of(BASE_REPO)}): {BASE_REPO} "
-         f"(offload={_off_label}, dtype=bf16, transformer="
-         f"{'single-file' if ZIMAGE_TRANSFORMER else PRECISION}"
+    _log(f"loading {engine.MODEL_LABEL}: {BASE_REPO} "
+         f"(offload={_off_label}, dtype=bf16, transformers={PRECISION}"
          + (f", ~{_need:.0f} GB of weights" if _need else "")
          + ") ... first run downloads it from HF, then cached")
     try:
         # A single-file transformer of the OTHER variant than the repo's (CivitAI's INT8 is
         # the base model under the distilled repo): the block chain, the CFG policy and the
         # defaults follow the FILE; the repo only lends its VAE and text encoder.
-        _variant = "base" if is_base_variant() else "distilled"
-        pipe = _load_monitor(f"FLUX.3 Image Klein {BASE_REPO}",  # noqa: E128
-                             lambda: cz_flux3.load(BASE_REPO, dtype=DTYPE, precision=PRECISION,
-                                                   transformer=tr, variant=_variant))
+        _variant = engine.variant_of(BASE_REPO)
+        pipe = _load_monitor(f"{engine.MODEL_LABEL} {BASE_REPO}",  # noqa: E128
+                             lambda: engine.load(BASE_REPO, dtype=DTYPE, precision=PRECISION,
+                                                 transformer=tr, token=_hf_token()))
     except Exception as e:
         hint = _hf_access_hint(BASE_REPO, e)
         if hint:
@@ -4460,8 +4506,9 @@ def _ensure_base():
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
     _LOADED_KEY = key
-    _log(f"FLUX.3 Image Klein ready in {time.time() - t0:.1f}s ({_variant}, "
-         f"{cz_flux3.DEFAULTS[_variant]['steps']} steps advised)")
+    _log(f"{engine.MODEL_LABEL} ready in {time.time() - t0:.1f}s "
+         f"({engine.DEFAULTS[_variant]['steps']} steps and "
+         f"{engine.DEFAULTS[_variant]['size']} px advised)")
     return pipe
 
 
@@ -4483,7 +4530,7 @@ def get_pipe(kind="img2img"):
     if kind in _DERIVED:
         _dbg(f"get_pipe('{kind}'): reuse derived")
         return _DERIVED[kind]
-    if isinstance(base, cz_flux3.Flux3Pipe):
+    if isinstance(base, (engine.IdeogramPipe, cz_flux3.Flux3Pipe)):
         # FLUX.3: ONE object does everything -- img2img (strength = SDEdit on the flow
         # path) and inpaint (mask = per-step latent blending) live in the adapter. No
         # derived pipeline, no second copy of anything.

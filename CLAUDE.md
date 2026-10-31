@@ -1,7 +1,7 @@
 # crispz-ideogram : cahier des charges pour Claude Code
 
-Ce fichier est destiné à devenir le `CLAUDE.md` du futur repo
-`mikecastrodemaria/crispz-ideogram`. Claude Code le lit à l'ouverture du projet.
+`CLAUDE.md` du repo `mikecastrodemaria/crispz-ideogram`. Claude Code le lit à
+l'ouverture du projet.
 Rédigé le 28/10/2026, à partir du code de diffusers 0.42.1 et des fiches Hugging Face.
 
 ## 1. Objectif
@@ -188,7 +188,43 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - Ideogram 4.5 en local : impossible tant que les poids ne sont pas publiés ; à
   surveiller (une rumeur parle d'une sortie ouverte, non confirmée).
 
-## 8. Sources
+## 8. État au 31/10/2026
+
+- `main` (2272b08) : crispz-flux3 0.1.0 importé avec son historique (8117fb2), renommé
+  crispz-ideogram, `APP_VERSION` 0.1.0-dev. Notes de flux3 gardées dans `FORK-flux3.md`
+  et `FORK-flux3-CLAUDE.md` (pièges d'environnement : à lire avant tout test GPU).
+- **Lot 1 livré sur `wip/ideogram-engine`, à valider sur la 5090** :
+  - `cz_ideogram.py` : `IdeogramPipe` autour d'`Ideogram4Pipeline` (même convention
+    d'appel que `Flux3Pipe`), planning de guidance officiel conservé en forme pour tout
+    nombre de steps (le curseur = le pic, 7,0 par défaut), taille ramenée à la grille
+    (16 px, 256 à 2048, ratio 6:1), négatif ignoré et dit une fois, `encode_prompt` masqué
+    (le cache d'embeddings de cz_pipeline ne doit pas l'appeler), refus NOMMÉS pour
+    img2img / inpaint (lot 3) et édition (lot 4), détection de famille (marqueurs forts
+    `llm_cond_proj`... ; pour un LoRA, la largeur 4608 tranche avec Z-Image).
+  - `cz_pipeline.py` : moteur `engine = cz_ideogram`, clés `ideogram_model`,
+    `ideogram_transformer`, `ideogram_precision` (nf4), env `IDEOGRAM_*`, guidance = pic
+    du planning, pas de négatif, sampler laissé tel quel, VRAM estimée 15 Go (fichiers),
+    single-file refusé avec raison, LoRA FLUX.2 / FLUX.3 refusé en nommant leur studio.
+    Le code FLUX.3 reste, non atteint, pour fusionner depuis crispz-flux3.
+  - `cz_protocol` : `negative`, `img2img`, `inpaint`, `edit`, `refs` à False.
+  - `cz_core` / `config-sample.txt` : profil `ideogram` 48 / 7,0, presets Ideogram (48)
+    et Draft (24), aides réécrites. `cz_ui` : un seul repo, sélecteurs Distilled/Base et
+    Precision masqués, champ négatif grisé avec la raison.
+  - `requirements.txt` : `bitsandbytes>=0.45` (nf4), à confirmer au premier chargement.
+  - Tests : `tests/test_ideogram_engine.py` (14) et `tests/test_ideogram_wiring.py` (10)
+    sur un Ideogram 4 miniature aléatoire (`tests/ideogram_tiny.py`, vrai tokenizer
+    Qwen3-VL-8B). Encodeur : `Qwen3VLModel`, pas `...ForConditionalGeneration`.
+- Suite CPU : **518 passent, 44 échouent, 1 skip** ; smoke test 22/22. Les 44 échecs
+  testent le comportement FLUX.3 (profils 16 / 50, Distilled/Base, dequant ComfyUI FLUX.3,
+  fixtures de LoRA aux noms FLUX.3 désormais refusées) : à réécrire avec des fixtures
+  Ideogram ou à retirer au lot 6, jamais à désactiver en silence.
+- **À faire sur la 5090 avant de valider le lot 1** (app de Mike fermée, voir
+  FORK-flux3-CLAUDE.md §3) : premier chargement du repo gated (quantizer nf4,
+  bitsandbytes), une image 1024 et une 2048 à 48 steps, VRAM au repos et en pic, temps.
+  Vérifier aussi l'aperçu live : la matrice latent vers RGB de flux3 suppose l'ordre de
+  canaux FLUX (c, p, p), Ideogram range ses tokens en (p, p, c).
+
+## 9. Sources
 
 - diffusers 0.42.1 : `pipelines/ideogram4/pipeline_ideogram4.py`, `prompt_enhancer.py`
 - https://huggingface.co/ideogram-ai/ideogram-4-nf4-diffusers

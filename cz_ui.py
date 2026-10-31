@@ -597,11 +597,14 @@ def _refresh_models(new_dir):
 # DEFAULT_BASE_REPO points at), the base one when a project wants a real CFG.
 # Overridable through config `flux3_base_repos`. crispz-klein's `klein_base_repos` is NOT
 # read: its values are FLUX.2 repos, which this build refuses anyway.
-import cz_flux3
-FLUX3_DISTILLED = cz_flux3.FLUX3_DISTILLED
-FLUX3_BASE = cz_flux3.FLUX3_BASE
-ZIMAGE_BASE_REPOS = [r for r in (CONFIG.get("flux3_base_repos")
-                                 or [FLUX3_DISTILLED, FLUX3_BASE])
+# crispz-ideogram: ONE Ideogram 4 checkpoint. The two names stay (the selector code and
+# merges from crispz-flux3 use them) and point at the same repo; the Distilled/Base
+# selector is hidden. Config `ideogram_base_repos` can list mirrors or local folders.
+import cz_ideogram
+FLUX3_DISTILLED = cz_ideogram.DEFAULT_REPO
+FLUX3_BASE = cz_ideogram.DEFAULT_REPO
+ZIMAGE_BASE_REPOS = [r for r in (CONFIG.get("ideogram_base_repos")
+                                 or [cz_ideogram.DEFAULT_REPO])
                      if isinstance(r, str) and r.strip()]
 # A base repo coming from the config/prefs must stay selectable even when it is absent
 # from the list: otherwise the dropdown shows one model while the pipeline uses another (and
@@ -617,13 +620,14 @@ _KOMMUNITY = ("**FLUX Kommunity License**: free, commercial use included, under 
               "READ token (config `hf_token` or env HF_TOKEN). VRAM, BFL's figures to be "
               "measured here: about 19 GB all-in in bf16, 14.4 in fp8r, 13.5 in nvfp4 "
               "(the Precision selector); below that, set CPU offload to `model`.")
-BASE_REPO_NOTES = {
-    FLUX3_DISTILLED: ("Distilled checkpoint: a 16-step flow map, no CFG (the guidance slider "
-                      "and the negative prompt are inert). " + _KOMMUNITY.format(repo=FLUX3_DISTILLED)),
-    FLUX3_BASE: ("Base checkpoint: undistilled, about 50 steps with a REAL CFG (3.5 advised) "
-                 "and a working negative prompt; three times slower per image. "
-                 + _KOMMUNITY.format(repo=FLUX3_BASE)),
-}
+_IDEOGRAM_NOTE = ("**Ideogram 4 NON-COMMERCIAL licence**: personal and research use only; "
+                  "commercial use of these self-hosted weights needs a separate licence from "
+                  "Ideogram. The repo is **gated**: accept the conditions at "
+                  "https://huggingface.co/{repo} with your HF account, then set a READ token "
+                  "(config `hf_token` or env HF_TOKEN). 48 steps, guidance schedule peaking "
+                  "at 7.0, no negative prompt. nf4 weights about 16 GB on disk; VRAM to be "
+                  "measured on the 5090, set CPU offload to `model` below 24 GB.")
+BASE_REPO_NOTES = {cz_ideogram.DEFAULT_REPO: _IDEOGRAM_NOTE.format(repo=cz_ideogram.DEFAULT_REPO)}
 # The default Performance preset for each official base repo. Empty: profile_for_model()
 # decides from the name (flux-3-image-klein-base -> 50 / 3.5, flux-3-image-klein -> 16 /
 # 1.0, see cz_core) and _perf_update picks the matching preset. NB: do NOT put a preset
@@ -859,7 +863,8 @@ def _apply_variant(v):
     the menu used to do -- transformer, VAE and text encoder all change. Already on that
     checkpoint -> nothing moves, so clicking the current one never costs a reload."""
     repo = FLUX3_BASE if str(v).strip().lower().startswith("base") else FLUX3_DISTILLED
-    if repo == cz_pipeline.BASE_REPO:
+    if repo == cz_pipeline.BASE_REPO or repo == cz_ideogram.DEFAULT_REPO:
+        # crispz-ideogram: one checkpoint, the (hidden) selector never swaps anything.
         return (gr.update(),) * 6
     return _apply_checkpoint(repo)
 
@@ -4211,9 +4216,12 @@ def build_ui():
                     btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
 
                 with gr.Row(equal_height=True):
-                    negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
+                    # crispz-ideogram: kept (the handlers and the queue carry it) but greyed
+                    # out, with the reason in its placeholder: Ideogram 4's unconditional
+                    # transformer takes no text, there is nowhere to put a negative prompt.
+                    negative = gr.Textbox(show_label=False, value="", interactive=False,
                                           elem_id="cz_neg", lines=1, max_lines=6, container=False, scale=4,
-                                          placeholder="Negative prompt - inert on the distilled FLUX.3 checkpoint (no CFG); works on flux-3-image-klein-base")
+                                          placeholder="No negative prompt on Ideogram 4: its unconditional branch takes no text (asymmetric CFG)")
                     stop_btn = gr.Button("Stop", variant="stop", scale=1, min_width=150)
 
                 with gr.Row():
@@ -4820,19 +4828,18 @@ def build_ui():
                                 with gr.Row():
                                     variant_rb = gr.Radio(
                                         list(VARIANT_CHOICES), value=_variant_of_repo(),
-                                        label="FLUX.3 checkpoint", scale=2,
+                                        label="FLUX.3 checkpoint", scale=2, visible=False,
                                         info="A complete base swap, same licence and same "
                                              "weight. Distilled: 16 steps, no CFG, the "
                                              "default. Base: undistilled, about 50 steps "
                                              "with a real CFG and a working negative prompt, "
                                              "three times slower.")
                                     precision_rb = gr.Radio(
-                                        list(cz_flux3.PRECISIONS), value=cz_pipeline.PRECISION,
+                                        list(cz_ideogram.PRECISIONS), value=cz_pipeline.PRECISION,
                                         label="Precision", scale=2,
-                                        info="The official transformer's build: bf16 (11 GB, "
-                                             "every card), fp8r (6.3 GB, fast from RTX 40xx), "
-                                             "nvfp4 (5.3 GB, RTX 50xx Blackwell + flashinfer). "
-                                             "Ignored while a single-file checkpoint is picked.")
+                                        visible=len(cz_ideogram.PRECISIONS) > 1,
+                                        info="The official transformers' build. Ideogram 4 is "
+                                             "published in nf4 only (2026-10-31).")
                                 precision_status = gr.Markdown("")
                                 _choices0 = _ckpt_choices()
                                 _vals0 = [v for _lab, v in _choices0]

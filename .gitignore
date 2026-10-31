@@ -1,0 +1,101 @@
+# --- Claude Code / local tools ---
+.claude/
+CLAUDE.local.md
+*.local.json
+settings.local.json
+
+# --- Local preferences (they hold machine-specific paths) ---
+preferences.json
+
+# --- Local config (model paths, personal settings). ONLY config-sample.txt is
+#     versioned; config.txt stays local (copied and edited by the user). ---
+config.txt
+
+# --- Personal Cloudflare settings (tunnel name / domain). ONLY
+#     cloudflare.local.bat.example is versioned; the real .bat stays local. ---
+cloudflare.local.bat
+
+# --- Internal / personal docs (kept out of the repo, never sent to GitHub) ---
+# The files live one level up (../). These patterns prevent an accidental
+# re-inclusion if an internal .md is recreated inside the repo.
+PROJECT_BRIEF.md
+BRIEF_*.md
+PLAN_*.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv*/
+venv/
+env/
+.env
+
+# --- ESRGAN models (heavy, dropped in locally) ---
+upscale_models/*
+!upscale_models/.gitkeep
+checkpoints/
+loras/
+faceswap/
+*.pth
+*.safetensors
+*.onnx
+*.pt
+*.ckpt
+*.onnx
+*.bin
+
+# --- Local wildcards (the Fooocus set, ~218 files). ONLY wildcards/example.txt
+#     is versioned; the rest stays local. ---
+wildcards/*.txt
+!wildcards/example.txt
+
+# --- Local presets (they reference your models). Only the example is versioned. ---
+presets/*.json
+!presets/example.json
+
+# --- Outputs + logs ---
+out/
+output/
+*.tsv
+
+# --- Local-only working files: kept on disk, never on GitHub (2026-10-28) ---
+REFACTOR.md
+VALIDATION.md
+run_quality_rtx5090.bat
+tools/ab_refine_guards.py
+tools/check_klein_extras.py
+
+# --- Local test images (experiments, not versioned) ---
+tests/*
+# ... but the test SUITE is versioned (new test files were lost to a bare 'tests/' once:
+# a directory rule cannot be negated file by file, 'tests/*' can).
+!tests/*.py
+# ... except crispz-klein's GPU test, local only (replaced by test_flux3_e2e.py)
+tests/test_klein_e2e.py
+
+# --- Style thumbnails (Fooocus samples, local, ~8 MB, not versioned) ---
+styles/samples/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+tags/
+
+# --- Local Asset Browser thumbnail cache (rebuildable) ---
+cache/
+
+# Local wildcard backups (dated), never versioned
+wildcards/_backup-*/
+bench/
+# Announcement drafts (posts), local only
+PINOKIO_POST.md
+REDNOTE_POST.md

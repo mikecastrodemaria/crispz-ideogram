@@ -1,0 +1,63 @@
+# DO NOT reinstall torch: keep your existing PyTorch build (2.7+ with CUDA 12.8 on the
+# RTX 50xx). requirements-lock.txt pins the validated cu128 torch for an ISOLATED venv.
+
+# diffusers 0.42.1 is the first PyPI release with FLUX.3 Image Klein
+# (diffusers.modular_pipelines.Flux3DistilledAutoBlocks / Flux3AutoBlocks,
+# Flux3Transformer2DModel, BFLQuantizationConfig for BFL's fp8r / nvfp4 files). No more
+# git+commit: crispz-klein needed one because the FLUX.2 pipelines were unreleased, and
+# that pin cost an install breakage the day diffusers main moved its huggingface-hub
+# bound. An exact pin, not a lower bound: the modular API is young and this fork wires
+# into its block chain (cz_flux3 removes blocks and inserts a hook); a newer diffusers
+# is tried on purpose, with the tests, not inherited.
+diffusers==0.42.1
+
+# transformers 5.x is REQUIRED, not merely allowed: diffusers 0.42.1 wants
+# huggingface-hub>=1.32 and transformers 4.x pins huggingface-hub<1.0, so the two
+# cannot be resolved together (ResolutionImpossible at install time, seen 2026-10-27).
+# FLUX.3's text encoder is Qwen3-VL-4B (Qwen3VLForConditionalGeneration), present in 5.x.
+# The <6 bound: a major that does not exist yet is not something to inherit overnight.
+transformers>=5,<6
+huggingface-hub>=1.32
+accelerate
+sentencepiece
+spandrel
+
+# Required by diffusers to load LoRA weights (load_lora_weights / set_adapters).
+# Without it: "PEFT backend is required for this method" -> LoRA silently skipped.
+peft
+
+# GGUF quantized single-file transformers (GGUFQuantizationConfig): a quantized .gguf
+# FLUX.3 transformer (e.g. unsloth/flux-3-image-klein-GGUF) fits in consumer VRAM and
+# stays quantized at run time. BFL's own fp8r / nvfp4 files need nothing extra.
+gguf
+
+# Hugging Face downloads (the edit LoRA presets, Lightning, the models): the recent
+# repos are on Xet Storage; without this package huggingface_hub falls back to plain
+# HTTP (~30 min per 17 GB GGUF, and a warning on every file).
+hf_xet
+
+# The before/after comparer = an internal HTML+JS component (see _make_compare_html in app.py).
+# No external dep -> a stable stack.
+# The <6 bound: Gradio 6 has a Brotli middleware buggy with h11 ("Too little data for
+# declared Content-Length") that spams the console when a response is interrupted.
+gradio>=4.44,<6
+
+pillow
+numpy
+
+# scipy: required by the `beta` sigma schedule offered in the Schedule dropdown.
+# FlowMatchEulerDiscreteScheduler raises ImportError on use_beta_sigmas without it, and
+# _apply_sampler then falls back to Euler/sgm_uniform -- so choosing beta silently gave
+# something else, with one line in the console. karras and exponential are pure numpy and
+# were never affected. requirements-lock.txt already pinned scipy==1.14.0, so an ISOLATED
+# install had it and an install.bat one did not; that is the gap this line closes.
+scipy
+
+# Optional: only for the persistent server mode (--serve, stage 3).
+fastapi
+uvicorn
+
+# A note on xformers: when a version is already installed but built for another torch
+# version than yours (xformers for torch 2.9 while you have 2.8, say), diffusers
+# fails with "DLL load failed while importing _C" when loading the VAE. The simplest
+# solution: pip uninstall xformers. Torch 2.7+ has a native SDPA, which is enough.

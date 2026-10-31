@@ -1,0 +1,75 @@
+"""A detailer pass ran at 12 steps on a model distilled for 4.
+
+The "Refine steps" slider (12 by default) comes from crispz-studio / Z-Image. On klein
+it tripled the cost of EVERY hand and EVERY face without changing anything in the image.
+Measured (RTX 5090, 2 hands): 4B 2.0 -> 0.9 s/hand, 9B GGUF 12.2 -> 6.4 s/hand, for
+an image difference of MAE 0.7.
+
+Run:  .venv/Scripts/python tests/test_detailer_steps.py
+
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cz_detailer as D
+import cz_pipeline as P
+
+
+def _with_model(base, transformer, fn):
+    old = (P.BASE_REPO, P.ZIMAGE_TRANSFORMER, D.CONFIG.get("detailer_steps"))
+    P.BASE_REPO, P.ZIMAGE_TRANSFORMER = base, transformer
+    try:
+        return fn()
+    finally:
+        P.BASE_REPO, P.ZIMAGE_TRANSFORMER = old[0], old[1]
+        if old[2] is None:
+            D.CONFIG.pop("detailer_steps", None)
+        else:
+            D.CONFIG["detailer_steps"] = old[2]
+
+
+def test_follows_the_model_profile_by_default():
+    def check():
+        D.CONFIG.pop("detailer_steps", None)
+        assert D._detailer_steps(40) == 16, "FLUX.3 distilled runs 16 steps"
+    _with_model("black-forest-labs/flux-3-image-klein", None, check)
+    # a single-file transformer decides the profile too
+    _with_model("black-forest-labs/flux-3-image-klein-base",
+                r"F:\x\flux3-image-klein-Q4_K_M.gguf", check)
+
+    def check_base():
+        D.CONFIG.pop("detailer_steps", None)
+        assert D._detailer_steps(60) == 50, "the base checkpoint wants 50"
+    _with_model("black-forest-labs/flux-3-image-klein-base", None, check_base)
+    print("OK test_follows_the_model_profile_by_default")
+
+
+def test_never_raises_the_slider():
+    """Taking the slider below the profile stays the user's choice."""
+    def check():
+        D.CONFIG.pop("detailer_steps", None)
+        assert D._detailer_steps(3) == 3
+        assert D._detailer_steps(1) == 1
+    _with_model("black-forest-labs/flux-3-image-klein", None, check)
+    print("OK test_never_raises_the_slider")
+
+
+def test_config_overrides():
+    def check():
+        D.CONFIG["detailer_steps"] = 8
+        assert D._detailer_steps(12) == 8, "un entier positif force la valeur"
+        D.CONFIG["detailer_steps"] = -1
+        assert D._detailer_steps(12) == 12, "-1 hands control back to the slider"
+        D.CONFIG["detailer_steps"] = "anything at all"
+        assert D._detailer_steps(40) == 16, "an unreadable value falls back on the profile"
+    _with_model("black-forest-labs/flux-3-image-klein", None, check)
+    print("OK test_config_overrides")
+
+
+if __name__ == "__main__":
+    test_follows_the_model_profile_by_default()
+    test_never_raises_the_slider()
+    test_config_overrides()
+    print("ALL OK")

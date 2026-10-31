@@ -1,0 +1,539 @@
+"""The registry of the FLUX.3 Image Klein EDIT LoRAs (one entry so far: the CivitAI
+Outpaint LoRA, see EDIT_LORA_SPECS).
+
+The upstream catalogue (crispz-qwen-edit) lists LoRAs trained for
+Qwen-Image-Edit 2509/2511. They are INCOMPATIBLE with FLUX.2 Klein: a different
+architecture, different keys, and loading them would produce an error at best,
+incoherent weights at worst. Announcing them in `caps.edit_loras` would amount
+to promising a capability that breaks -- exactly what the house rule forbids
+(degradation announced, never silent).
+
+So `EDIT_LORA_SPECS` holds ONLY LoRAs verified as loadable on FLUX.2 Klein; the
+upstream catalogue is kept just below, commented out, as a merge reference.
+
+All the machinery (the lazy download, the path resolution, the local index, the
+config overrides) is UNCHANGED and works as soon as an entry is added.
+`speed_names()` / `resolve_speed()` (the Lightning presets) return nothing any
+more either: klein is already distilled to 4 steps, there is no acceleration
+LoRA to stack.
+
+Can be overridden in config.txt (the same format as upstream):
+    "edit_loras_dir": "",
+    "edit_loras": {"My-Preset": {"repo": "...", "weights": "x.safetensors",
+                                 "adapter_name": "my-preset", "prompt": "...",
+                                 "inputs": 1}}
+
+"""
+import os
+
+from cz_core import CONFIG, _log, _dbg
+
+# The order = the dropdown's order. inputs = the number of images expected (2 = the input + a reference).
+# A preset is either a Hugging Face file ('repo' + 'weights', hf_hub_download) or a CivitAI
+# file ('civitai': the search_loras() candidate shape, downloaded by
+# cz_civitai.download_model_file with its SHA256 checked). 'repo' stays a string in both
+# cases (caps / the UI show it); 'weights' is the file name the libraries may already hold.
+# crispz-klein's two Consistence-Edit entries are kept below as a merge reference: they are
+# FLUX.2-klein files (double_blocks keys) and cz_pipeline._lora_unsupported refuses them
+# here by family.
+OUTPAINT_PRESET = "Outpaint"
+OUTPAINT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless "
+                   "continuation of the scene, keeping the existing picture unchanged.")
+EDIT_LORA_SPECS = {
+    OUTPAINT_PRESET: {
+        # "FLUX 3 Image Klein Outpaint LoRA" v1.0, CivitAI models/3003865 version 3407881
+        # (2026-10-28, the first edit-task LoRA published for FLUX.3 Image Klein, 13 days
+        # after the model). bf16, 153 MB. The author: "Step 1,000 of a 2,000-step run. Use
+        # it on the distilled model at strength 1.5." The input is the image enlarged with
+        # SOLID GRAY where the scene has to continue; the prompt is the trigger sentence.
+        # cz_pipeline.outpaint_lora builds that canvas from the Inpaint / Outpaint tab
+        # (mode "Expand sides (outpaint LoRA)"); the Edit tab can also take a hand-made one.
+        "repo": "civitai.com/models/3003865",
+        "weights": "flux-3-image-klein-outpaint.safetensors",
+        "civitai": {"versionId": 3407881,
+                    "fileName": "flux-3-image-klein-outpaint.safetensors",
+                    "sizeKB": 156930.765625,
+                    "sha256": "25385da7f6bfac0c18513e52729dc29f96cda543f0d086df9e5dda3842dede83",
+                    "downloadUrl": "https://civitai.com/api/download/models/3407881?fileId=3299567"},
+        "adapter_name": "flux3-outpaint",
+        "prompt": OUTPAINT_PROMPT,
+        "inputs": 1, "base": "flux3-distilled",
+        "weight": 1.5,          # the author's figure; 1.0 leaves gray patches (his examples)
+        "local_names": ["flux-3-image-klein-outpaint.safetensors",
+                        "flux3_outpaint.safetensors"]},
+}
+
+# --- crispz-klein's catalogue (FLUX.2), a MERGE REFERENCE: does not load on FLUX.3.
+# EDIT_LORA_SPECS = {
+#     "Consistence-Edit": {
+#         # The author: xiaozhijason / lrzjason (the same one as the upstream catalogue's
+#         # Anything2Real). Apache-2.0, rank 128, 200 bf16 tensors (~368 MB), it targets
+#         # FLUX.2-klein-4B.
+#         # The CivitAI origin: models/1939453 version 2771678 "Flux2 Klein 4B 20260314".
+#         # NB: the file MIXES two key dialects (160 PEFT + 40 lora.down/up).
+#         # cz_pipeline._load_lora_normalized brings them back to the PEFT dialect before
+#         # loading, otherwise peft applies only a part of it SILENTLY (see FORK.md).
+#         "repo": "lrzjason/Consistance_Edit_Lora",
+#         "weights": "f2k_4B_consist_20260314.safetensors",
+#         "adapter_name": "consistence-edit",
+#         "prompt": ("Add realistic details to the image. Restore high frequency details "
+#                    "from the corrupted image."),
+#         "inputs": 1, "base": "klein-4B",
+#         "weight": 0.6,          # the author advises 0.5-0.7
+#         "local_names": ["f2k_4B_consist_20260314.safetensors",
+#                         "consistence_edit_flux2_klein_4b.safetensors"]},
+#     "Consistence-Edit 9B": {
+#         # The same author, the same repo, the most recent 9B version: CivitAI
+#         # models/1939453 "Klein 9B lcs 20260416" (a file from 2026-04-15, the LCS method:
+#         # a frame-aware corrupted latent + a loss on the colour statistics). Rank 64, 288
+#         # bf16 tensors (~332 MB), hidden dimension 4096 = FLUX.2-klein-9B. That file mixes
+#         # two dialects as well (224 lora_A/B + 64 lora.down/up), brought back to the PEFT
+#         # dialect by cz_pipeline._load_lora_normalized: 144 modules of the 9B transformer
+#         # after the diffusers conversion, no key lost (checked on 2026-09-19).
+#         # On the 4B, the variant guard refuses it with a sentence (_lora_unsupported).
+#         "repo": "lrzjason/Consistance_Edit_Lora",
+#         "weights": "f2k_9B_lcs_consist_20260415.safetensors",
+#         "adapter_name": "consistence-edit-9b",
+#         "prompt": ("Add realistic details to the image. Restore high frequency details "
+#                    "from the corrupted image."),
+#         "inputs": 1, "base": "klein-9B",
+#         "weight": 0.6,          # the author advises 0.5-0.7
+#         "local_names": ["f2k_9B_lcs_consist_20260415.safetensors"]},
+# }
+
+# --- The upstream Qwen-Image-Edit catalogue, kept as a MERGE REFERENCE.
+# --- (none of these entries loads on FLUX.2: a different architecture and keys)
+# --- Do NOT re-enable it as it is: these weights do not load on FLUX.2.
+# EDIT_LORA_SPECS = {
+#     "Multiple-Angles": {
+#         "repo": "dx8152/Qwen-Edit-2509-Multiple-angles",
+#         "weights": "镜头转换.safetensors",
+#         "adapter_name": "multiple-angles",
+#         "prompt": "Rotate the camera 45 degrees to the right.",
+#         "inputs": 1, "base": "2509",
+#         # the same file as Civitai names it (the existing libraries)
+#         "local_names": ["Qwen-Edit-2509-Multiple-angles.safetensors"]},
+#     "Photo-to-Anime": {
+#         "repo": "autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
+#         "weights": "Qwen-Image-Edit-2509-Photo-to-Anime_000001000.safetensors",
+#         "adapter_name": "photo-to-anime",
+#         "prompt": "Transform into anime.",
+#         "inputs": 1, "base": "2509"},
+#     "Anime-V2": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Anime",
+#         "weights": "Qwen-Image-Edit-2511-Anime-2000.safetensors",
+#         "adapter_name": "anime-v2",
+#         "prompt": "Transform into anime (while preserving the background and remaining "
+#                   "elements maintaining realism and original details.)",
+#         "inputs": 1, "base": "2511"},
+#     "Light-Migration": {
+#         "repo": "dx8152/Qwen-Edit-2509-Light-Migration",
+#         "weights": "参考色调.safetensors",
+#         "adapter_name": "light-migration",
+#         "prompt": "Refer to the color tone, remove the original lighting from Image 1, "
+#                   "and relight Image 1 based on the lighting and color tone of Image 2.",
+#         "inputs": 2, "base": "2509"},
+#     "Upscaler": {
+#         "repo": "starsfriday/Qwen-Image-Edit-2511-Upscale2K",
+#         "weights": "qwen_image_edit_2511_upscale.safetensors",
+#         "adapter_name": "upscale-2k",
+#         "prompt": "Upscale this picture to 4K resolution.",
+#         "inputs": 1, "base": "2511"},
+#     "Style-Transfer": {
+#         "repo": "zooeyy/Style-Transfer",
+#         "weights": "Style Transfer-Alpha-V0.1.safetensors",
+#         "adapter_name": "style-transfer",
+#         "prompt": "Convert Image 1 to the style of Image 2.",
+#         "inputs": 2, "base": "2511"},
+#     "Manga-Tone": {
+#         "repo": "nappa114514/Qwen-Image-Edit-2509-Manga-Tone",
+#         "weights": "tone001.safetensors",
+#         "adapter_name": "manga-tone",
+#         "prompt": "Paint with manga tone.",
+#         "inputs": 1, "base": "2509"},
+#     "Anything2Real": {
+#         "repo": "lrzjason/Anything2Real_2601",
+#         "weights": "anything2real_2601.safetensors",
+#         "adapter_name": "anything2real",
+#         "prompt": "Change the picture to realistic photograph.",
+#         "inputs": 1, "base": "2511"},
+#     "Fal-Multiple-Angles": {
+#         "repo": "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+#         "weights": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+#         "adapter_name": "fal-multiple-angles",
+#         "prompt": "Front-right quarter view.",
+#         "inputs": 1, "base": "2511"},
+#     "Polaroid-Photo": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Polaroid-Photo",
+#         "weights": "Qwen-Image-Edit-2511-Polaroid-Photo.safetensors",
+#         "adapter_name": "polaroid-photo",
+#         "prompt": "cinematic polaroid with soft grain subtle vignette gentle lighting white "
+#                   "frame handwritten photographed preserving realistic texture and details.",
+#         "inputs": 1, "base": "2511"},
+#     "Unblur-Anything": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale",
+#         "weights": "Qwen-Image-Edit-Unblur-Upscale_15.safetensors",
+#         "adapter_name": "unblur-anything",
+#         "prompt": "Unblur and upscale.",
+#         "inputs": 1, "base": "2511"},
+#     "Midnight-Noir-Eyes-Spotlight": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight",
+#         "weights": "Qwen-Image-Edit-2511-Midnight-Noir-Eyes-Spotlight.safetensors",
+#         "adapter_name": "midnight-noir-eyes-spotlight",
+#         "prompt": "Transform into Midnight Noir Eyes Spotlight.",
+#         "inputs": 1, "base": "2511"},
+#     "Hyper-Realistic-Portrait": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Hyper-Realistic-Portrait",
+#         "weights": "HRP_20.safetensors",
+#         "adapter_name": "hyper-realistic-portrait",
+#         "prompt": "Transform into a hyper-realistic face portrait.",
+#         "inputs": 1, "base": "2511"},
+#     "Ultra-Realistic-Portrait": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Ultra-Realistic-Portrait",
+#         "weights": "URP_20.safetensors",
+#         "adapter_name": "ultra-realistic-portrait",
+#         "prompt": "Ultra-realistic portrait.",
+#         "inputs": 1, "base": "2511"},
+#     "Pixar-Inspired-3D": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Pixar-Inspired-3D",
+#         "weights": "PI3_20.safetensors",
+#         "adapter_name": "pixar-inspired-3d",
+#         "prompt": "Transform it into Pixar-inspired 3D.",
+#         "inputs": 1, "base": "2511"},
+#     "Noir-Comic-Book": {
+#         "repo": "prithivMLmods/Qwen-Image-Edit-2511-Noir-Comic-Book-Panel",
+#         "weights": "Noir-Comic-Book-Panel_20.safetensors",
+#         "adapter_name": "noir-comic-book",
+#         "prompt": "Transform into a noir comic book style.",
+#         "inputs": 1, "base": "2511"},
+#     "Any-Light": {
+#         "repo": "lilylilith/QIE-2511-MP-AnyLight",
+#         "weights": "QIE-2511-AnyLight_.safetensors",
+#         "adapter_name": "any-light",
+#         "prompt": "Apply the lighting from image 2 to image 1.",
+#         "inputs": 2, "base": "2511"},
+#     "Studio-DeLight": {
+#         "repo": "prithivMLmods/QIE-2511-Studio-DeLight",
+#         "weights": "QIE-2511-Studio-DeLight-5000.safetensors",
+#         "adapter_name": "studio-delight",
+#         "prompt": "Neutral uniform lighting. Preserve identity and composition.",
+#         "inputs": 1, "base": "2511"},
+#     "Cinematic-FlatLog": {
+#         "repo": "prithivMLmods/QIE-2511-Cinematic-FlatLog-Control",
+#         "weights": "QIE-2511-Cinematic-FlatLog-Control-3200.safetensors",
+#         "adapter_name": "flat-log",
+#         "prompt": "Transform into a cinematic flat log.",
+#         "inputs": 1, "base": "2511"},
+# }
+
+SUBDIR = "_hf-edit"
+
+
+def _apply_config_overrides(specs):
+    """config 'edit_loras': a dict name -> spec (an addition/replacement) or null (a removal)."""
+    extra = CONFIG.get("edit_loras")
+    if not isinstance(extra, dict):
+        return specs
+    out = dict(specs)
+    for name, spec in extra.items():
+        if spec is None:
+            out.pop(name, None)
+        elif isinstance(spec, dict) and spec.get("repo") and spec.get("weights"):
+            s = dict(spec)
+            s.setdefault("adapter_name", name.lower().replace(" ", "-"))
+            s.setdefault("prompt", "")
+            s.setdefault("inputs", 1)
+            out[name] = s
+        else:
+            _log(f"edit_loras['{name}'] ignored: needs 'repo' and 'weights'")
+    return out
+
+
+SPECS = _apply_config_overrides(EDIT_LORA_SPECS)
+
+
+def names():
+    """The presets' names, in the registry's order."""
+    return list(SPECS)
+
+
+def spec(name):
+    """A preset's spec (None when unknown). It tolerates the adapter_name and the case."""
+    if not name:
+        return None
+    if name in SPECS:
+        return SPECS[name]
+    low = str(name).strip().lower()
+    for n, s in SPECS.items():
+        if n.lower() == low or s.get("adapter_name", "").lower() == low:
+            return s
+    return None
+
+
+def canonical_name(name):
+    """The registry name for a name/adapter_name (None when unknown)."""
+    s = spec(name)
+    if s is None:
+        return None
+    for n, v in SPECS.items():
+        if v is s:
+            return n
+    return None
+
+
+def edit_loras_dir():
+    """The folder of the downloaded edit LoRAs: the 'edit_loras_dir' config, otherwise
+    <LORAS_DIR>/_hf-edit (LORAS_DIR read at call time: the UI can change it)."""
+    d = (CONFIG.get("edit_loras_dir") or "").strip()
+    if d:
+        return d
+    # LORAS_DIR WITHOUT importing cz_pipeline (torch): the protocol's caps must stay
+    # light. When the pipeline is already loaded (the UI), its current value wins.
+    import sys
+    cp = sys.modules.get("cz_pipeline")
+    base = getattr(cp, "LORAS_DIR", None) if cp is not None else None
+    if not base:
+        from cz_core import HERE, _prefs
+        base = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
+                or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
+    return os.path.join(base, SUBDIR)
+
+
+def local_path(name):
+    """The expected local path of the preset (whether it exists or not)."""
+    s = spec(name)
+    if s is None:
+        return None
+    return os.path.join(edit_loras_dir(), s["adapter_name"] + ".safetensors")
+
+
+def _candidates(s):
+    """The file names under which a preset may already exist in a library."""
+    return ([s["adapter_name"] + ".safetensors", os.path.basename(s["weights"])]
+            + list(s.get("local_names") or []))
+
+
+def available_path(name, index=None):
+    """The local path of the preset when it is already on disk (the _hf-edit folder OR a
+    LoRA library, a Civitai copy say), otherwise None. It never downloads."""
+    s = spec(name)
+    if s is None:
+        return None
+    p = local_path(name)
+    if os.path.isfile(p):
+        return p
+    return find_local(_candidates(s), index=index)
+
+
+def is_downloaded(name, index=None):
+    return available_path(name, index=index) is not None
+
+
+def resolve(name, download=True, progress=None):
+    """The local path of the preset's LoRA; it downloads it from the hub when absent (and
+    download=True). Raises FileNotFoundError when absent and download=False,
+    RuntimeError when the download fails."""
+    s = spec(name)
+    if s is None:
+        raise KeyError(f"unknown edit LoRA preset: {name!r} (known: {', '.join(SPECS)})")
+    dst = local_path(name)
+    if os.path.isfile(dst):
+        return dst
+    # Already in a LoRA library (the main one or the extras, a Civitai copy say) ?
+    # -> we use it without downloading anything.
+    found = find_local(_candidates(s))
+    if found:
+        _dbg(f"edit LoRA {name}: using existing file {found}")
+        return found
+    if not download:
+        raise FileNotFoundError(dst)
+    return _download(s, dst, progress)
+
+
+def lora_dirs():
+    """The LoRA folders (the main one + the extras) WITHOUT importing cz_pipeline when it
+    is absent (torch): the same priorities env > preferences > config as cz_pipeline."""
+    import sys
+    cp = sys.modules.get("cz_pipeline")
+    if cp is not None and hasattr(cp, "_lora_dirs"):
+        return cp._lora_dirs()
+    from cz_core import HERE, _prefs
+    main = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
+            or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
+    extra = (os.environ["LORAS_EXTRA_DIRS"] if "LORAS_EXTRA_DIRS" in os.environ
+             else (_prefs.get("loras_extra_dirs") or CONFIG.get("loras_extra_dirs") or []))
+    if isinstance(extra, str):
+        extra = [p for chunk in extra.split(os.pathsep) for p in chunk.split(";")]
+    dirs = [main]
+    for d in extra:
+        d = str(d or "").strip()
+        if d and d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
+def local_index():
+    """{lowercase_file_name: path} of every .safetensors of the LoRA folders (the main one
+    first: it wins on an equal name). A single disk walk, to be passed to find_local /
+    is_downloaded / catalog when several presets are queried."""
+    idx = {}
+    for d in lora_dirs():
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                k = f.lower()
+                if k.endswith(".safetensors") and k not in idx:
+                    idx[k] = os.path.join(root, f)
+    return idx
+
+
+def find_local(filenames, index=None):
+    """The first file whose name (case-insensitive) is in `filenames`, looked for in the
+    LoRA folders (index = a local_index() already built). None when absent."""
+    if index is None:
+        index = local_index()
+    for f in filenames:
+        p = index.get(str(f).lower()) if f else None
+        if p:
+            return p
+    return None
+
+
+# ----------------------------------------------------------------------------
+# The fast mode: a Lightning LoRA (distillation) for editing, 4 or 8 steps, CFG off.
+# The file depends on the edit model's revision (2509 / 2511): chosen from the omni
+# model's name. Looked for in the LoRA folders first (the Civitai libraries often have
+# the 8-step one already), otherwise downloaded (the lightx2v repo, 2509 = gated: an
+# hf_token is needed).
+# ----------------------------------------------------------------------------
+AUTO_SPEED = "Auto (model profile)"
+# The Lightning presets: EMPTY on klein. Those LoRAs are accelerators for
+# Qwen-Image-Edit (a different architecture) AND klein is ALREADY distilled to 4 steps:
+# there is nothing to accelerate. So 'Edit speed' comes down to 'Off'.
+SPEED_SPECS = {}
+
+# --- A merge reference (upstream Qwen). Do NOT re-enable: incompatible with FLUX.2.
+# SPEED_SPECS = {
+#     "Lightning 4 steps": {
+#         "steps": 4, "guidance": 1.0,
+#         "files": {
+#             "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
+#                      "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"),
+#             "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
+#                      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")}},
+#     "Lightning 8 steps": {
+#         "steps": 8, "guidance": 1.0,
+#         "files": {
+#             "2509": ("lightx2v/Qwen-Image-Edit-2509-Lightning",
+#                      "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"),
+#             "2511": ("lightx2v/Qwen-Image-Edit-2511-Lightning",
+#                      "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors")}},
+# }
+
+
+def speed_names():
+    """The choices of the 'Edit speed' dropdown (without 'Off', added by cz_pipeline).
+
+    Empty on klein: the model is already distilled to 4 steps and there exists no FLUX.2
+    Lightning LoRA to stack. So the dropdown comes down to 'Off' on the cz_pipeline side,
+    and caps.edit_fast no longer announces a mode that would fail."""
+    return []
+
+
+def edit_base_revision(omni_model):
+    """'2511' when the edit model is a 2511, otherwise '2509' (Plus)."""
+    return "2511" if "2511" in str(omni_model or "") else "2509"
+
+
+def resolve_speed(name, omni_model, download=True):
+    """{"name", "steps", "guidance", "path", "base"} for a Lightning mode: the LoRA is
+    taken from the LoRA folders when present, otherwise downloaded into edit_loras_dir.
+    KeyError when the name is unknown."""
+    key = None
+    for k in SPEED_SPECS:
+        if k.lower() == str(name or "").strip().lower():
+            key = k
+    if key is None:
+        raise KeyError(f"unknown edit speed: {name!r} (known: {', '.join(SPEED_SPECS)})")
+    sp = SPEED_SPECS[key]
+    base = edit_base_revision(omni_model)
+    repo, fname = sp["files"][base]
+    path = find_local([fname])
+    if path is None:
+        dst = os.path.join(edit_loras_dir(), fname)
+        if os.path.isfile(dst):
+            path = dst
+        elif download:
+            path = _download({"repo": repo, "weights": fname}, dst)
+        else:
+            raise FileNotFoundError(dst)
+    return {"name": key, "steps": int(sp["steps"]), "guidance": float(sp["guidance"]),
+            "path": path, "base": base}
+
+
+def _download(s, dst, progress=None):
+    """hf_hub_download -> an atomic copy to dst (a stable ASCII name). A 'civitai' spec
+    goes through cz_civitai.download_model_file instead (streamed, SHA256 checked against
+    the one the spec carries, the API key of the config added when there is one), then is
+    renamed to dst so that local_path() finds it next time."""
+    import shutil
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    if s.get("civitai"):
+        import cz_civitai
+        cand = dict(s["civitai"])
+        _log(f"edit LoRA: downloading {s['repo']} ({cand.get('fileName')}) -> {dst}")
+        if progress:
+            progress(0.0, f"Downloading {s['repo']} ...")
+        res = cz_civitai.download_model_file(
+            cand, os.path.dirname(dst),
+            progress=(lambda _k, f, t: progress(f, t)) if progress else None)
+        if not res.get("success"):
+            raise RuntimeError(f"download failed for {s['repo']}: {res.get('message')}")
+        got = res.get("path")
+        if got and os.path.abspath(got) != os.path.abspath(dst):
+            os.replace(got, dst)
+        _dbg(f"edit LoRA stored: {dst} ({os.path.getsize(dst) / 1024**2:.0f} MB)")
+        if progress:
+            progress(1.0, "Downloaded.")
+        return dst
+    from huggingface_hub import hf_hub_download
+    from cz_core import _apply_hf_token
+    _apply_hf_token(CONFIG.get("hf_token"))
+    _log(f"edit LoRA: downloading {s['repo']}/{s['weights']} -> {dst}")
+    if progress:
+        progress(0.0, f"Downloading {s['repo']} ...")
+    try:
+        src = hf_hub_download(s["repo"], s["weights"])
+    except Exception as e:
+        raise RuntimeError(f"download failed for {s['repo']}/{s['weights']}: {e}") from e
+    tmp = dst + ".tmp"
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, dst)
+    _dbg(f"edit LoRA stored: {dst} ({os.path.getsize(dst) / 1024**2:.0f} MB)")
+    if progress:
+        progress(1.0, "Downloaded.")
+    return dst
+
+
+def status_label(name, index=None):
+    """The label for the UI: 'Name ✓' when it is on disk already (the _hf-edit folder or a
+    LoRA library), 'Name ⬇' otherwise."""
+    return f"{name} {'✓' if is_downloaded(name, index=index) else '⬇'}"
+
+
+def strip_label(label):
+    """The inverse of status_label (the dropdown returns the label)."""
+    if not label:
+        return ""
+    return str(label).rstrip(" ✓⬇").strip()
+
+
+def catalog():
+    """A light list for caps / the UI: [{name, adapter_name, repo, prompt, inputs,
+    base, downloaded}] - without downloading anything."""
+    idx = local_index()
+    return [{"name": n, "adapter_name": s["adapter_name"], "repo": s["repo"],
+             "prompt": s.get("prompt", ""), "inputs": int(s.get("inputs", 1)),
+             "base": s.get("base", ""), "downloaded": is_downloaded(n, index=idx)}
+            for n, s in SPECS.items()]

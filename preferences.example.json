@@ -1,0 +1,16 @@
+{
+  "esrgan_dir": "./upscale_models",
+  "flux3_model": "black-forest-labs/flux-3-image-klein",
+  "model": "4x-ClearRealityV1_Soft.safetensors",
+  "factor": 2.0,
+  "denoise": 0.3,
+  "steps": 16,
+  "prompt": "",
+  "seed": -1,
+  "tile": 760,
+  "overlap": 32,
+  "save_mode": "display",
+  "output_dir": "out",
+  "output_format": "png",
+  "time_log": ""
+}

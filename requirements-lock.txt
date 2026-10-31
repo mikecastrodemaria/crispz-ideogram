@@ -1,0 +1,116 @@
+# crispz-flux3 : a locked environment, an ISOLATED venv.
+#
+# WHY THIS FILE
+# requirements.txt gives the bounds ("what has to work"). This file gives the
+# exact versions of an environment really resolved and imported (`import app`,
+# the FLUX.3 modular blocks) on Windows, Python 3.13, CUDA 12.8 wheels, on
+# 2026-10-28, to reinstall it identically. The GPU validation on the RTX 5090
+# (tests/test_flux3_e2e.py) is Mike's, see CLAUDE.md section 7.
+#
+# HOW TO USE IT (an ISOLATED venv, without --system-site-packages)
+#   py -3.13 -m venv .venv
+#   .venv\Scripts\python -m pip install --upgrade pip setuptools wheel
+#   set PYTHONUTF8=1
+#   .venv\Scripts\python -m pip install -r requirements-lock.txt
+# Python 3.11 or newer: diffusers 0.42.1 and Pillow 13 are not published for 3.10.
+# PYTHONUTF8=1: trustmark builds from an sdist whose setup.py is not cp1252-safe.
+#
+# CAREFUL: install.bat --shared creates the venv with --system-site-packages (it
+# inherits the global torch). That mode also inherits diffusers, accelerate, numpy
+# and pillow from the global one, so versions nobody chose and shared with the other
+# forks. For a reproducible venv, use the default isolated mode of install.bat, or
+# the lines above.
+#
+# DO NOT regenerate this file from a `pip freeze` of a --system-site-packages venv:
+# it captures the whole global site-packages (comfy-cli, yt-dlp...), a set pip
+# cannot resolve. Regenerate it from a CLEAN venv: torch/torchvision/torchaudio from
+# the cu128 index first, then requirements.txt + requirements-extra.txt +
+# requirements-faceswap.txt, then pillow apart with --no-deps, then note the
+# versions of the DIRECT deps below.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# diffusers: 0.42.1 is the first PyPI release with FLUX.3 (no more git+commit, see
+# requirements.txt for why the pin is exact)
+diffusers==0.42.1
+
+# the torch base (deliberately outside requirements.txt, indispensable here). 2.11 is
+# the newest build on the cu128 index on 2026-10-28; Dependabot's torch alerts (< 2.13)
+# wait for a cu128 build of 2.13, the CPU wheels of PyPI are not an option on a 5090.
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+
+# the diffusion stack. transformers 5.x is REQUIRED by diffusers 0.42.1 (see
+# requirements.txt); 5.21 is past every transformers Dependabot alert (< 5.10).
+transformers==5.21.0
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface-hub==1.33.0
+peft==0.21.2
+sentencepiece==0.2.2
+spandrel==0.4.2
+# gguf: the .gguf FLUX.3 transformers (from_single_file + GGUFQuantizationConfig).
+gguf==0.19.0
+# hf_xet: the HF repos are on Xet Storage; without it, huggingface_hub falls back to
+# plain HTTP (very slow on the big files) and warns on every download.
+hf_xet==1.7.0
+
+# UI / service. gradio stays on 5.50 on purpose: the <6 bound of requirements.txt (the
+# Brotli/h11 bug of gradio 6 that spams the console on an interrupted response); the
+# gradio Dependabot alerts (< 6.16) are therefore OPEN and known, see CLAUDE.md lot D.
+gradio==5.50.0
+fastapi==0.162.0
+uvicorn==0.54.0
+
+# imaging / utilities
+# A NOTE on pillow: the version below is the REAL one wanted (and the one
+# Dependabot must see), but install.bat/.sh FILTER it out of this file at
+# pip install time, then install it apart with --no-deps.
+# The reason: the Pillow CVEs (every open alert on 2026-10-28 says < 13.0.0) are
+# only fixed in 13.0, while gradio 5.50 declares pillow<12.0 -> resolving both
+# together gives ResolutionImpossible. Gradio's bound is conservative: checked
+# against this code base (smoke test with build_ui, thumbnails, metadata, crop,
+# XYZ, the FLUX.3 wiring tests), Pillow 13 works.
+pillow==13.0.0
+pillow-avif-plugin==1.6.0
+numpy==2.5.2
+scipy==1.18.1
+opencv-python==5.0.0.93
+einops==0.8.2
+omegaconf==2.4.0
+protobuf==7.36.2
+requests==2.34.2
+tqdm==4.70.1
+psutil==7.2.2
+
+# the optional tabs (Remove BG, Face Swap). rembg 2.0.82+ closes its Dependabot alerts.
+# rembg is FILTERED OUT of the lock install by install.bat/.sh, like pillow, and installed
+# after Pillow 13: it requires pillow>=12.1 and gradio 5.50 pillow<12, an impossible
+# resolution when the three are asked together (seen 2026-10-28). The pin stays here
+# so that Dependabot sees it.
+rembg==2.0.86
+insightface==2.1
+onnxruntime==1.31.1
+onnxruntime-gpu==1.31.1
+
+# AI provenance (EU AI Act art. 50): reads the C2PA manifests + the invisible
+# TrustMark watermark, in PNG Info and through --provenance. CPU only (~0.1 s per
+# image, the GPU is never touched); the TrustMark model (~40 MB) downloads on the
+# first use. Windows: pip has to build trustmark's sdist, whose setup.py crashes on
+# cp1252 -> install.bat sets PYTHONUTF8=1. Without these two, the Provenance section
+# says "check unavailable" and no watermark can be written or read.
+trustmark==0.9.2
+c2pa-python==0.38.0
+
+# Detail hands: ultralytics and onnx are used ONCE, in a SUBPROCESS, to export the
+# YOLOv8 hand detector (~6 MB, pulled from Bingsu/adetailer) to ONNX in cache/. They are
+# never imported inside the app process: loading the torch YOLO model there corrupts the
+# shared model weights during the offload transfers (renders turn to mosaic then NaN,
+# proven by checksum - see cz_detailer._ensure_hand_onnx). At run time the detection uses
+# onnxruntime only, pinned above. Without these two the hands pass stays unavailable and
+# says so. torchvision, which ultralytics needs, is already pinned from the cu128 index
+# next to torch: resolved from PyPI it comes built against a stock torch and every vision
+# import dies on "operator torchvision::nms does not exist".
+ultralytics==8.4.191
+onnx==1.23.2

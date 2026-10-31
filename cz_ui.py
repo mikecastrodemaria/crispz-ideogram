@@ -1,0 +1,5404 @@
+"""crispz-flux3 - the Gradio interface (build_ui) + the UI handlers + the shared
+orchestration (run / _editor_* / presets / timing) pulled out of app.py (step 8).
+
+This module wires all the cz_* modules together (core/pipeline/esrgan/face/prompt/ollama/
+imageio/assets/assetbrowser). It must NEVER import app nor cz_cli (the anti-circular rule:
+the UI imports the rest, the rest does not import the UI). The CLI/server live in
+cz_cli.py and import this module.
+
+"""
+
+import os
+import sys
+import gc
+import io
+import random
+import threading
+import contextvars
+import functools
+import warnings
+
+# Silences the Gradio DeprecationWarnings "pass theme/css/js to launch() instead":
+# launch() does NOT accept them yet in Gradio 5.x (an early warning for Gradio 6), so they
+# stay in Blocks(...) and only the startup noise is cut.
+warnings.filterwarnings(
+    "ignore", category=DeprecationWarning,
+    message=r"The '(theme|css|js)' parameter in the Blocks constructor will be removed")
+import base64
+import csv
+import glob
+import time
+import uuid
+import datetime
+import numpy as np
+import torch
+from PIL import Image, ImageChops
+import gradio as gr
+
+# AVIF/HEIC input support (without it, the .avif: PIL.UnidentifiedImageError).
+try:
+    import pillow_avif  # noqa: F401  registers the AVIF opener in PIL
+except Exception:
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+# A gr.ImageEditor keeps its background in %TEMP%\gradio\...\background.png. Should that
+# file become unreadable (a Windows Temp cleanup / an antivirus during a long session),
+# Gradio blows up with PIL.UnidentifiedImageError in the event's PRE-PROCESSING -- before our
+# handlers, so it cannot be caught app-side: EVERY Generate click fails until the user drops
+# the image again. We degrade to 'no image' + a clear log.
+try:
+    from gradio.components import image_editor as _cz_ge
+    _cz_orig_cafi = _cz_ge.ImageEditor.convert_and_format_image
+
+    def _cz_safe_cafi(self, file):
+        try:
+            return _cz_orig_cafi(self, file)
+        except Exception as _e:
+            print(f"[crispz] image input dropped (stale/unreadable Gradio temp file: {_e}) "
+                  "- re-drop the image in the editor", flush=True)
+            return None
+
+    _cz_ge.ImageEditor.convert_and_format_image = _cz_safe_cafi
+except Exception:
+    pass
+
+
+# _disable_brotli -> cz_cli.py (used only when launching the UI).
+
+# The foundation (config, paths, defaults, logging, device) -> cz_core.py
+import cz_core
+from cz_core import (  # noqa: E402,F401
+    APP_VERSION,
+    HERE, PREFS_PATH, CONFIG_PATH, CONFIG_SAMPLE_PATH,
+    DEFAULT_MODEL, DEFAULT_FACTOR, DEFAULT_DENOISE, DEFAULT_STEPS, DEFAULT_TILE,
+    DEFAULT_OVERLAP, DEFAULT_REFINE_TILE, DEFAULT_REFINE_OVERLAP, DEFAULT_SAVE_MODE,
+    REFINE_TILE_CHOICES,
+    DEFAULT_OUTPUT_DIR, DEFAULT_OUTPUT_FORMAT, SUPPORTED_FORMATS, IMG_EXTS,
+    DEFAULT_BASE_REPO, DEFAULT_ESRGAN_DIR,
+    CONFIG, MODEL_PROFILES, DEFAULT_MODEL_PROFILE, profile_for_model,
+    DESCRIBE_INSTRUCTION, IMPROVE_INSTRUCTION, COMPOSE_INSTRUCTION,
+    DEVICE, DTYPE, VERBOSE,
+    _load_config, _load_prefs_raw, _save_prefs_keys, _prefs, _is_single_file,
+    _parse_log_level, _LOG_NAMES, set_log_level, _log, _dbg, _pil_to_b64_jpeg,
+    set_hf_token, hf_token_is_set,
+)
+
+# "Use case" presets -> automatic settings. Only the keys present are applied, the rest
+# is left as it is. Used by the UI (_apply_preset) and by the CLI (--preset).
+PRESETS = {
+    "Custom": {},
+    # ComfyUI Ultimate SD Upscale style settings (x2, 1024 tiles, a low denoise). The
+    # presets do NOT touch the offload any more (except Low VRAM): forcing 'none' overrode
+    # the 'auto' VRAM test's verdict and froze tight cards (a spill into shared RAM).
+    "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 12, "tile": 1024, "overlap": 32,
+                            "refine_tile": 1024, "refine_overlap": 64},
+    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 12, "refine_tile": 0},
+    "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 16, "refine_tile": 0},
+    "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 16},
+    "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 14},
+    "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 12, "tile": 1024, "overlap": 32,
+                            "refine_tile": 1024, "refine_overlap": 64},
+    "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 12, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
+}
+# an internal param -> a CLI flag, to apply a preset without overriding an explicit flag.
+PRESET_FLAGMAP = {
+    "factor": "--factor", "denoise": "--denoise", "steps": "--steps", "tile": "--tile",
+    "overlap": "--overlap", "refine_tile": "--refine-tile", "refine_overlap": "--refine-overlap",
+    "cpu_offload": "--cpu-offload",
+}
+
+# The visible name of the multi-reference editing mode. "Omni" was crispz-qwen-edit's
+# vocabulary (the Qwen-Image-Edit "Omni" model); on FLUX.3 it is plain editing from
+# references cited as <ref_image_N>. The INTERNAL names stay (generate_omni, OMNI_MODEL,
+# the 'omni' mode in the metadata, the protocol's op 'edit'): cz_cli, cz_protocol and the
+# other crispz apps import them. Only the words a user reads change (2026-10-28).
+EDIT_MODE = "Edit (references)"
+
+# Fooocus-style aspect ratios. label -> (width, height) in multiples of 16.
+ASPECT_RATIOS = {
+    "1024 x 1024  (1:1)":  (1024, 1024),
+    "1280 x 1024  (5:4)":  (1280, 1024),
+    "1024 x 1280  (4:5)":  (1024, 1280),
+    "1152 x 896  (9:7)":   (1152, 896),
+    "896 x 1152  (7:9)":   (896, 1152),
+    "1280 x 960  (4:3)":   (1280, 960),
+    "960 x 1280  (3:4)":   (960, 1280),
+    "1216 x 832  (3:2)":   (1216, 832),
+    "832 x 1216  (2:3)":   (832, 1216),
+    "1536 x 1024  (3:2)":  (1536, 1024),
+    "1024 x 1536  (2:3)":  (1024, 1536),
+    "1344 x 768  (16:9)":  (1344, 768),
+    "768 x 1344  (9:16)":  (768, 1344),
+    "1536 x 864  (16:9)":  (1536, 864),
+    "864 x 1536  (9:16)":  (864, 1536),
+    "1536 x 640  (21:9)":  (1536, 640),
+    "640 x 1536  (9:21)":  (640, 1536),
+    # --- 2K and 4K: FLUX.3 renders them NATIVELY, no tiling, no upscale. Measured on an
+    # RTX 5090 in bf16 on 2026-10-28 (16 steps, CPU offload 'model', see FORK.md):
+    # 2048x2048 in 52 s, 2560x1440 in 34 s, 3840x2160 in 113 s, the 4K as clean as the
+    # 1 MP renders (no duplicated subject, coherent composition). diffusers caps a
+    # REFERENCE image at 4 MP / 4096 px a side, which is also the slider ceiling here. The
+    # cost follows the token count (1 MP = 4096 tokens, 4 MP = 16384, 8.3 MP = 32400).
+    # Exact ratios, multiples of 16.
+    "2K  2048 x 2048  (1:1)":    (2048, 2048),
+    "2K  2304 x 1728  (4:3)":    (2304, 1728),
+    "2K  1728 x 2304  (3:4)":    (1728, 2304),
+    "2K  2432 x 1600  (3:2)":    (2432, 1600),
+    "2K  1600 x 2432  (2:3)":    (1600, 2432),
+    "2K  2560 x 1600  (16:10)":  (2560, 1600),
+    "2K  1600 x 2560  (10:16)":  (1600, 2560),
+    "2K  2560 x 1440  (16:9)":   (2560, 1440),
+    "2K  1440 x 2560  (9:16)":   (1440, 2560),
+    "2K  2944 x 1264  (21:9)":   (2944, 1264),
+    "FHD  1920 x 1088  (16:9)":  (1920, 1088),
+    "4K  3840 x 2160  (16:9)":   (3840, 2160),
+    "4K  2160 x 3840  (9:16)":   (2160, 3840),
+    "4K  2880 x 2880  (1:1)":    (2880, 2880),
+    "4K  3456 x 2304  (3:2)":    (3456, 2304),
+    "4K  2304 x 3456  (2:3)":    (2304, 3456),
+    "4K  4096 x 1760  (21:9)":   (4096, 1760),
+}
+# A list sorted from the squarest to the widest, each format followed by its portrait
+# counterpart. The 1536 entries (3:2, 16:9) and the 5:4 / 4:3 ones are EXACT ratios, the ones
+# read on CivitAI/ComfyUI recipes -- unlike the 832x1216 / 768x1344 / 1536x640 inherited from
+# Fooocus, which are only approximations (kept as they are: existing presets and seeds rely
+# on them; 640x1536 follows the same convention as its landscape counterpart rather than
+# introducing a second label). Everything is a multiple of 16.
+# Cost: 1.0 to 1.6 Mpix. Beyond ~1.3 Mpix it is slower, and a model trained around a million
+# pixels can drift in composition there (a duplicated subject) -- to be chosen when the
+# recipe you follow asks for it, not by default.
+# Live preview: how often the Generate handler looks at the denoise's slot for a new
+# frame. No ceiling is needed -- the loop ends when the render thread does.
+_LIVE_PREVIEW_POLL = 0.25
+
+# Fooocus-style Performance -> (gen_steps, guidance) for the loaded model.
+# FLUX.3: the distilled checkpoint is a 16-step flow map (BFL's recipe, no CFG); 8 steps is
+# a draft mode to be measured on the 5090; the undistilled -base checkpoint wants 50 steps
+# and a real CFG of 3.5 (model card). The same three live in config-sample.txt.
+PERFORMANCE = {
+    "Distilled (16 steps)": (16, 1.0),
+    "Fast (8 steps)":       (8, 1.0),
+    "Base (50 steps, CFG 3.5)": (50, 3.5),
+}
+# Styles. Fooocus format: name -> {"prompt": a template with {prompt} (or None),
+# "negative_prompt": str}. The real library is loaded from styles/*.json (see _load_styles
+# below). This is only a fallback should the folder be missing.
+# Styles (Fooocus) + wildcards (__name__) -> cz_prompt.py. The UI handlers stay here.
+import cz_prompt
+from cz_prompt import (  # noqa: E402,F401
+    STYLES, _seed_rng, list_wildcards, _apply_wildcards, _pick_styles, _apply_styles,
+    set_wildcards_dir, set_wildcards_in_order,
+    resolve_seed, expand_prompt_pair,
+)
+
+# Real-ESRGAN (spandrel) + tiled/overlap-add upscale -> cz_esrgan.py. The mutable state
+# (ESRGAN_DIR + the cache) lives in that module; app reads the folder through
+# cz_esrgan.ESRGAN_DIR.
+import cz_esrgan
+from cz_esrgan import (  # noqa: E402,F401
+    set_esrgan_dir, list_esrgan_models, load_esrgan, esrgan_upscale,
+)
+
+
+def _style_sample(name):
+    """Path of a style's thumbnail (styles/samples/<name>.jpg) or None."""
+    try:
+        fn = name.lower().replace(" ", "_").replace("-", "_") + ".jpg"
+        p = os.path.join(HERE, "styles", "samples", fn)
+        return p if os.path.isfile(p) else None
+    except Exception:
+        return None
+
+
+def _filter_styles(query, selected):
+    """Filters the style list by search. Keeps the styles already ticked."""
+    q = (query or "").strip().lower()
+    matches = [n for n in STYLES if q in n.lower()] if q else list(STYLES)
+    selected = [s for s in (selected or []) if s in STYLES]
+    # choices = the results + the ticked styles (so the selection is not lost)
+    choices = list(dict.fromkeys(matches + selected))
+    return gr.update(choices=choices, value=selected)
+
+
+# _seed_rng / list_wildcards / _apply_wildcards / _pick_styles / _apply_styles -> cz_prompt.py
+
+
+# ----------------------------------------------------------------------------
+# Ollama (Describe image -> prompt, Improve prompt). + a local BLIP fallback.
+# ----------------------------------------------------------------------------
+# The Ollama functions -> cz_ollama.py (the _ui_* UI handlers stay here, further down).
+import cz_ollama  # noqa: E402
+from cz_ollama import (  # noqa: E402,F401
+    OLLAMA_URL, OLLAMA_KEEP_ALIVE, OLLAMA_CPU, _ollama_gen_opts, _ollama_http,
+    _ollama_vision_models, _ollama_describe, _ollama_improve, _ollama_compose,
+    improve_prompt, improve_negative, list_text_models, IMPROVE_ENABLED, OllamaError,
+    set_describe_style, describe_style_choices,
+)
+from cz_core import DESCRIBE_LENGTHS, describe_instruction  # noqa: E402
+
+
+# Local BLIP captioning (an Ollama fallback), FaceSwap (InsightFace/inswapper) + GFPGAN
+# restore, rembg background removal -> cz_face.py. The mutable state (model caches + restore
+# settings) lives in that module.
+import cz_face
+from cz_face import (  # noqa: E402,F401
+    _local_caption, _remove_bg, set_faceswap_restore, set_faceswap_quality,
+    set_caption_model, _current_caption_kind, OLLAMA_CAPTION_PREFIX,
+)
+
+
+def _faceswap(target_img, source_img):
+    """Wrapper: hands the current checkpoints folder (cz_pipeline) to cz_face._faceswap,
+    which adds it to the search locations for the inswapper model."""
+    return cz_face._faceswap(target_img, source_img, cz_pipeline.CHECKPOINTS_DIR)
+
+
+def _dl_path(pil, path):
+    """For the gallery: returns the PATH of the saved file (-> a download with the real
+    unique name instead of 'image') when it exists UNDER the output folder Gradio allows;
+    otherwise the PIL image (a preview). A guard rail: never a broken preview when the file
+    is outside allowed_paths (a non-default output folder)."""
+    if path:
+        try:
+            ap = os.path.abspath(path)
+            root = os.path.abspath(_ab_resolve_dir(DEFAULT_OUTPUT_DIR))
+            if os.path.isfile(ap) and (ap == root or ap.startswith(root + os.sep)):
+                return ap
+        except Exception:
+            pass
+    return pil
+
+# ----------------------------------------------------------------------------
+# Config (persisted in preferences.json next to app.py)
+# Priority order for ESRGAN_DIR and BASE_REPO:
+#   1) the environment variable (ESRGAN_DIR / ZIMAGE_MODEL)
+#   2) preferences.json
+#   3) the default: ./upscale_models  and  black-forest-labs/FLUX.2-klein-4B
+# ----------------------------------------------------------------------------
+import json  # noqa: F811 (utilise par _load_styles ci-dessous)
+
+
+# _load_styles / STYLES -> cz_prompt.py (imported at the top).
+
+
+# CONFIG + the defaults driven by config.txt -> cz_core.py (imported at the top).
+
+# Performance presets, editable through config.txt (performance_presets: name ->
+# [steps, guidance] or [steps, guidance, lora_filename] to tie a LoRA to the preset, e.g.
+# Lightning 8-step).
+PERFORMANCE_LORA = {}
+if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_presets"]:
+    try:
+        PERFORMANCE = {k: (int(v[0]), float(v[1])) for k, v in CONFIG["performance_presets"].items()}
+        PERFORMANCE_LORA = {k: str(v[2]) for k, v in CONFIG["performance_presets"].items()
+                            if isinstance(v, (list, tuple)) and len(v) > 2 and v[2]}
+    except Exception:
+        pass
+
+# MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
+
+
+# DESCRIBE/IMPROVE/COMPOSE_INSTRUCTION -> cz_core.py (imported at the top).
+
+
+# _load_prefs_raw / _save_prefs_keys / _is_single_file / _prefs -> cz_core.py.
+# The FLUX.2 Klein core -> cz_pipeline.py: the current model (BASE_REPO/ZIMAGE_TRANSFORMER),
+# the checkpoints/loras folders, the active LoRAs, Omni, the pipe caches, the offload, the
+# guidance, stop/progress + generation/orchestration. app reads the state through
+# cz_pipeline.NAME and sets cz_pipeline._PROGRESS / cz_pipeline._STOP from the UI handlers.
+import cz_pipeline
+import cz_civitai
+import cz_detailer
+from cz_pipeline import (  # noqa: E402,F401
+    set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
+    list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
+    resolve_checkpoint, checkpoint_refusal, set_loras_dir, lora_keywords,
+    set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
+    set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES, SCHEDULE_INPUTS,
+    _norm_schedule, set_force_ratio,
+    generate, generate_omni, inpaint_run, outpaint, outpaint_directions, outpaint_lora, reframe,
+    txt2img_run, process_one, round_to_multiple, _reframe_canvas, _gen_meta,
+    source_meta,
+)
+
+# Mutable state read live from cz_pipeline.* / cz_face.* (LORAS, FACESWAP_RESTORE,
+# CHECKPOINTS_DIR, GUIDANCE, _PROGRESS, _STOP, ...). app.py exposes these names as proxies
+# (__getattr__) for the smoke test; here we always read cz_pipeline.NAME / cz_face.NAME.
+
+
+# Logging (LOG_LEVEL / _log / _dbg / set_log_level) -> cz_core.py (imported at the top).
+# Note: direct reads of LOG_LEVEL outside cz_core use cz_core.LOG_LEVEL.
+
+
+# Progress/stop, setters (model/transformer/checkpoints/loras/omni/offload/guidance),
+# list_checkpoints/list_loras, lora_keywords, check_omni_available, free_vram +
+# generation/orchestration -> cz_pipeline.py (imported at the top). The UI sets
+# cz_pipeline._PROGRESS / cz_pipeline._STOP and reads cz_pipeline.NAME for the state.
+
+
+def apply_preset_to_args(args, raw_argv):
+    """Applies a preset to the args fields that were NOT passed explicitly on the CLI
+    (an explicit flag always wins over the preset)."""
+    preset = PRESETS.get(getattr(args, "preset", None) or "Custom") or {}
+    raw = list(raw_argv or [])
+    for key, val in preset.items():
+        flag = PRESET_FLAGMAP[key]
+        if not any(tok == flag or tok.startswith(flag + "=") for tok in raw):
+            setattr(args, key, val)
+
+
+# ----------------------------------------------------------------------------
+# Stage 1: Real-ESRGAN through spandrel
+# ----------------------------------------------------------------------------
+# list_esrgan_models / load_esrgan / _pil_to_tensor / _tensor_to_pil /
+# esrgan_upscale -> cz_esrgan.py (imported at the top). ESRGAN_DIR is read there.
+
+
+# ----------------------------------------------------------------------------
+# FLUX.2 Klein (diffusers, BF16) -> cz_pipeline.py: _ensure_base / get_pipe /
+# generate / generate_omni / inpaint_run / outpaint / process_one / txt2img_run +
+# round_to_multiple / _reframe_canvas / _make_generator / _refine_* / _gen_meta.
+# (imported at the top). _editor_to_image_mask / _editor_img / _crop_input stay here
+# (gr.ImageEditor helpers, no pipeline state).
+# ----------------------------------------------------------------------------
+def _editor_to_image_mask(editor_value):
+    """Extracts (image, mask) from a gr.ImageEditor. Mask = the painted area (the
+    composite/background diff), white = to be regenerated."""
+    if not editor_value:
+        return None, None
+    bg = editor_value.get("background")
+    comp = editor_value.get("composite")
+    if bg is None:
+        return None, None
+    bg = bg.convert("RGB")
+    mask = Image.new("L", bg.size, 0)
+    if comp is not None:
+        diff = ImageChops.difference(comp.convert("RGB"), bg).convert("L")
+        mask = diff.point(lambda p: 255 if p > 8 else 0)
+    # fallback: the alpha of the painted layers
+    for ly in (editor_value.get("layers") or []):
+        if ly is not None:
+            a = ly.convert("RGBA").split()[-1]
+            mask = ImageChops.lighter(mask, a.point(lambda p: 255 if p > 8 else 0))
+    return bg, mask
+
+
+def _editor_img(v):
+    """Extracts the PIL image from a gr.ImageEditor (a dict {background,composite,layers})
+    or returns the PIL as it is (backward compatibility). Returns the cropped image."""
+    if isinstance(v, dict):
+        return v.get("composite") or v.get("background")
+    return v
+
+
+def _crop_input(label, height=280):
+    """An image input with a Fooocus-style crop, no brush and no layers."""
+    return gr.ImageEditor(type="pil", label=label, height=height,
+                          sources=["upload", "clipboard"], brush=False, eraser=False,
+                          layers=False, transforms=["crop"])
+
+
+# outpaint / _make_generator / _refine_whole / _feather_mask_np / _refine_tiled /
+# process_one / txt2img_run -> cz_pipeline.py (imported at the top).
+
+
+# I/O image (noms, sauvegarde, metadonnees) -> cz_imageio.py (_gen_meta -> cz_pipeline).
+from cz_imageio import (  # noqa: E402,F401
+    _now_stamp, _unique_path, _format_filename, build_output_path, _exif_bytes,
+    save_image, _list_output_files, _read_image_meta, set_metadata_scheme,
+)
+
+
+# _gen_meta -> cz_pipeline.py (imported at the top; reads the current model/LoRAs).
+
+
+def _list_folder_images(folder):
+    return sorted(
+        os.path.join(folder, f)
+        for f in os.listdir(folder)
+        if f.lower().endswith(IMG_EXTS)
+    )
+
+
+def _format_timings(t, src_path=None, dst_path=None):
+    total = t.get("esrgan", 0.0) + t.get("refine", 0.0)
+    parts = []
+    if src_path:
+        parts.append(f"Source: `{src_path}`")
+    parts.append(f"ESRGAN: **{t.get('esrgan', 0.0):.1f}s**  |  Qwen refine: **{t.get('refine', 0.0):.1f}s**  |  Total: **{total:.1f}s**")
+    if dst_path:
+        parts.append(f"Saved: `{dst_path}`")
+    return "  \n".join(parts)
+
+
+def _reset_vram_peak():
+    """Resets the VRAM peak counter before a run."""
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+
+def _report_vram():
+    """Prints the run's VRAM peak on stderr. A no-op outside CUDA.
+
+    A stable, parsable format: the line starts with '[VRAM]'.
+    allocated = the peak of the PyTorch tensors (max_memory_allocated).
+    reserved  = the peak of the PyTorch allocator cache (max_memory_reserved), closer
+                to what nvidia-smi sees for this process.
+    """
+    if DEVICE != "cuda":
+        print("[VRAM] no CUDA GPU, measurement skipped.", file=sys.stderr)
+        return
+    alloc = torch.cuda.max_memory_allocated() / 1024**3
+    reserved = torch.cuda.max_memory_reserved() / 1024**3
+    print(f"[VRAM] peak allocated: {alloc:.2f} GB | peak reserved: {reserved:.2f} GB",
+          file=sys.stderr)
+
+
+# The last file saved by run() (img2img/upscale). run() keeps its 3-tuple return (used
+# by the CLI) -> so the path is exposed here for the UI to offer the real name at download
+# time (otherwise Gradio names the PIL preview "image").
+_LAST_RUN_DST = None
+
+
+def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed,
+        tile, overlap, save_mode=DEFAULT_SAVE_MODE, output_dir=DEFAULT_OUTPUT_DIR,
+        output_format=DEFAULT_OUTPUT_FORMAT, time_log_path=None, print_output=False,
+        refine_tile=DEFAULT_REFINE_TILE, refine_overlap=DEFAULT_REFINE_OVERLAP,
+        do_esrgan=True, refine_first=False, styles=None):
+    """A shared entry point for the UI and the CLI.
+    Returns (last_result_PIL, last_source_PIL, report_markdown).
+    - When source_folder is an existing folder -> a batch over its images.
+    - Otherwise, image is used (a PIL or a str path).
+    - print_output: prints the absolute path of every saved image on stdout.
+    - refine_tile > 0: a tiled refine pass (4K+, caps the VRAM peak).
+    - do_esrgan=False: pure img2img (no ESRGAN, just the diffusion refine).
+    - refine_first=True: refine THEN ESRGAN (diffusion at the native resolution = fast).
+    """
+    global _LAST_RUN_DST
+    _LAST_RUN_DST = None
+    if do_esrgan and not esrgan_model:
+        raise gr.Error(f"No ESRGAN model found in {cz_esrgan.ESRGAN_DIR}.")
+
+    # Mode batch
+    if source_folder and os.path.isdir(source_folder):
+        paths = _list_folder_images(source_folder)
+        if not paths:
+            raise gr.Error(f"No image in {source_folder}")
+        last_result = last_source = None
+        lines = [f"### Batch: {len(paths)} image(s) from `{source_folder}`"]
+        t_batch = time.time()
+        for p in paths:
+            try:
+                src = Image.open(p)
+                result, t = process_one(src, esrgan_model, factor, denoise, steps,
+                                        prompt, seed, tile, overlap,
+                                        refine_tile=refine_tile, refine_overlap=refine_overlap,
+                                        do_esrgan=do_esrgan, refine_first=refine_first,
+                                        apply_force_ratio=True)
+                _srcbase = os.path.splitext(os.path.basename(p))[0]
+                _tag = f"{_srcbase}_" + ("upscaled" if do_esrgan else "img2img")
+                dst = build_output_path(p, save_mode, output_dir, output_format,
+                                        tag=_tag, seed=seed, size=result.size)
+                if dst:
+                    save_image(result, dst, output_format, meta=_gen_meta(
+                        "upscale" if do_esrgan else "img2img", prompt, seed=seed,
+                        steps=steps, guidance=cz_pipeline.GUIDANCE, size=result.size,
+                        styles=styles,
+                        extra={"factor": factor, "denoise": denoise,
+                               "esrgan": esrgan_model if do_esrgan else None,
+                               **source_meta(p)}))
+                    if print_output:
+                        print(os.path.abspath(dst))
+                _LAST_RUN_DST = dst
+                _append_time_log(time_log_path, p, dst, t, save_mode, output_format)
+                lines.append(f"- `{os.path.basename(p)}` {result.size[0]}x{result.size[1]} "
+                             f"esrgan {t['esrgan']:.1f}s + refine {t['refine']:.1f}s"
+                             + (f" -> `{dst}`" if dst else " (display)"))
+                last_result, last_source = result, src.convert("RGB")
+            except Exception as e:
+                lines.append(f"- `{os.path.basename(p)}` FAILED: {e}")
+        lines.append(f"**Batch total: {time.time()-t_batch:.1f}s**")
+        return last_result, last_source, "  \n".join(lines)
+
+    # Mode image unique
+    if image is None:
+        raise gr.Error("Load an image (or specify a source folder for batch mode).")
+    if isinstance(image, str):
+        source_path = image
+        src_img = Image.open(source_path)
+    else:
+        source_path = None
+        src_img = image
+
+    result, t = process_one(src_img, esrgan_model, factor, denoise, steps,
+                            prompt, seed, tile, overlap,
+                            refine_tile=refine_tile, refine_overlap=refine_overlap,
+                            do_esrgan=do_esrgan, refine_first=refine_first,
+                            apply_force_ratio=True)
+    dst = None
+    _srcbase = os.path.splitext(os.path.basename(source_path))[0] if source_path else None
+    _tag = (f"{_srcbase}_" if _srcbase else "") + ("upscaled" if do_esrgan else "img2img")
+    try:
+        dst = build_output_path(source_path, save_mode, output_dir, output_format,
+                                tag=_tag, seed=seed, size=result.size)
+    except ValueError as e:
+        dst = None
+        save_warning = f"  \n[WARN] {e}"
+    else:
+        save_warning = ""
+    if dst:
+        save_image(result, dst, output_format, meta=_gen_meta(
+            "upscale" if do_esrgan else "img2img", prompt, seed=seed, steps=steps,
+            guidance=cz_pipeline.GUIDANCE, size=result.size, styles=styles,
+            extra={"factor": factor, "denoise": denoise,
+                   "esrgan": esrgan_model if do_esrgan else None,
+                   **source_meta(source_path)}))
+        if print_output:
+            print(os.path.abspath(dst))
+    _LAST_RUN_DST = dst
+    _append_time_log(time_log_path, source_path, dst, t, save_mode, output_format)
+    report = _format_timings(t, src_path=source_path, dst_path=dst) + save_warning
+    return result, src_img.convert("RGB"), report
+
+
+def _append_time_log(path, src, dst, t, save_mode, output_format):
+    if not path:
+        return
+    try:
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        line = (f"{ts}\t{src or ''}\t{dst or ''}\t"
+                f"esrgan={t.get('esrgan', 0):.2f}s\trefine={t.get('refine', 0):.2f}s\t"
+                f"mode={save_mode}\tfmt={output_format}\n")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        print(f"[WARN] time-log failed: {e}", file=sys.stderr)
+
+
+# ----------------------------------------------------------------------------
+# UI Gradio
+# ----------------------------------------------------------------------------
+def _refresh_models(new_dir):
+    """Changes ESRGAN_DIR then returns an update for the Dropdown."""
+    set_esrgan_dir(new_dir)
+    models = list_esrgan_models()
+    value = models[0] if models else None
+    return gr.update(choices=models, value=value), f"{len(models)} model(s) found in {cz_esrgan.ESRGAN_DIR}"
+
+
+# The official FLUX.3 Image Klein base repos, offered directly in the "FLUX.3 checkpoint"
+# dropdown: choosing a base repo = a COMPLETE swap (transformer + VAE + Qwen3-VL encoder),
+# unlike a single-file checkpoint which only swaps the transformer. Both official
+# checkpoints are offered: the distilled one stays the default (16 steps, the one
+# DEFAULT_BASE_REPO points at), the base one when a project wants a real CFG.
+# Overridable through config `flux3_base_repos`. crispz-klein's `klein_base_repos` is NOT
+# read: its values are FLUX.2 repos, which this build refuses anyway.
+import cz_flux3
+FLUX3_DISTILLED = cz_flux3.FLUX3_DISTILLED
+FLUX3_BASE = cz_flux3.FLUX3_BASE
+ZIMAGE_BASE_REPOS = [r for r in (CONFIG.get("flux3_base_repos")
+                                 or [FLUX3_DISTILLED, FLUX3_BASE])
+                     if isinstance(r, str) and r.strip()]
+# A base repo coming from the config/prefs must stay selectable even when it is absent
+# from the list: otherwise the dropdown shows one model while the pipeline uses another (and
+# choosing it would silently bring back the 4B).
+if cz_pipeline.BASE_REPO and cz_pipeline.BASE_REPO not in ZIMAGE_BASE_REPOS:
+    ZIMAGE_BASE_REPOS.append(cz_pipeline.BASE_REPO)
+
+# What you need to know BEFORE launching a run on a base repo, not after 20 GB of
+# download: licence, access, VRAM. Shown on selection.
+_KOMMUNITY = ("**FLUX Kommunity License**: free, commercial use included, under 5 M USD of "
+              "yearly revenue (above that, a licence from BFL). The repo is **gated**: accept "
+              "the licence at https://huggingface.co/{repo} with your HF account, then set a "
+              "READ token (config `hf_token` or env HF_TOKEN). VRAM, BFL's figures to be "
+              "measured here: about 19 GB all-in in bf16, 14.4 in fp8r, 13.5 in nvfp4 "
+              "(the Precision selector); below that, set CPU offload to `model`.")
+BASE_REPO_NOTES = {
+    FLUX3_DISTILLED: ("Distilled checkpoint: a 16-step flow map, no CFG (the guidance slider "
+                      "and the negative prompt are inert). " + _KOMMUNITY.format(repo=FLUX3_DISTILLED)),
+    FLUX3_BASE: ("Base checkpoint: undistilled, about 50 steps with a REAL CFG (3.5 advised) "
+                 "and a working negative prompt; three times slower per image. "
+                 + _KOMMUNITY.format(repo=FLUX3_BASE)),
+}
+# The default Performance preset for each official base repo. Empty: profile_for_model()
+# decides from the name (flux-3-image-klein-base -> 50 / 3.5, flux-3-image-klein -> 16 /
+# 1.0, see cz_core) and _perf_update picks the matching preset. NB: do NOT put a preset
+# name here that does not exist in performance_presets -- _apply_checkpoint would ignore
+# it silently.
+ZIMAGE_BASE_PERFORMANCE = {}
+
+
+def _refresh_checkpoints(new_dir, extra_dir=""):
+    """Changes the checkpoints folder(s) (main + extra) + lists the merged models +
+    persists."""
+    set_checkpoints_dir(new_dir)
+    set_checkpoints_extra_dir(extra_dir)
+    try:
+        _save_prefs_keys({"checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
+                          "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR})
+    except Exception:
+        pass
+    cks = list_checkpoints()
+    n_new = _ensure_model_presets(cks)  # a basic preset for every new local model
+    locs = " + ".join(d for d in (cz_pipeline.CHECKPOINTS_DIR, cz_pipeline.CHECKPOINTS_EXTRA_DIR) if d)
+    msg = f"{len(cks)} checkpoint(s) in {locs} (saved)."
+    if n_new:
+        msg += f" +{n_new} preset(s) auto-created."
+    # 3rd output: refreshes the Presets menu (new models -> new presets).
+    return (gr.update(choices=_ckpt_choices()), msg, gr.update(choices=list_presets()))
+
+
+def _ui_set_detailer_denoise(v):
+    """Sets the face detailer's denoise. cz_detailer's setter returns a status --
+    useful to the CLI, of no use here: the slider already shows the value, and its bounds
+    (0.1-0.7) are the clamp's, so there is nothing to announce. Without this airlock,
+    Gradio warns on EVERY slider move ("returned too many output values"), and that noise
+    ends up hiding a real warning."""
+    cz_detailer.set_denoise(v)
+
+
+def _ui_set_hand_denoise(v):
+    """The same for the hand detailer."""
+    cz_detailer.set_hand_denoise(v)
+
+
+def _valid_performance(name):
+    """A Performance preset name from (steps, guidance), or the first real preset.
+    A value outside `choices` is rejected by the Gradio frontend: the radio would then keep
+    a value other than the one displayed, silently."""
+    return name if name in PERFORMANCE else (next(iter(PERFORMANCE), None))
+
+
+def _performance_label_for(steps, guidance):
+    """The name of the Performance preset matching (steps, guidance), otherwise None.
+    Data-driven: respects the presets overridden through config.txt
+    (performance_presets)."""
+    for name, (s, gg) in PERFORMANCE.items():
+        if int(s) == int(steps) and abs(float(gg) - float(guidance)) < 1e-3:
+            return name
+    return None
+
+
+def _perf_update(steps, guidance):
+    """A gr.update for the Performance radio matching (steps, guidance), otherwise a no-op
+    (leaves the current choice when no preset matches exactly)."""
+    label = _performance_label_for(steps, guidance)
+    return gr.update(value=label) if label else gr.update()
+
+
+def _current_model_label():
+    """The model the NEXT run will use: the single-file transformer when there is one,
+    otherwise the base repo. Used to say which model stays in place when a selection is
+    refused."""
+    t = cz_pipeline.ZIMAGE_TRANSFORMER
+    return os.path.basename(str(t)) if t else str(cz_pipeline.BASE_REPO)
+
+
+def _undistilled_profile():
+    """The Performance preset that carries a REAL CFG, or None when there is none.
+    A single source: no 28/3.5 hardcoded both here AND in config.txt."""
+    for name, (st, g) in PERFORMANCE.items():
+        if float(g) > 1.0:
+            return name, int(st), float(g)
+    return None, None, None
+
+
+def _profile_for_checkpoint(path):
+    """(steps, guidance, reason) for this checkpoint.
+
+    The FILE name does not say everything: an undistilled build is called
+    'kleinForeskinFullCheckpoint_v19Final' like the others, so profile_for_model() sees
+    "klein" in it and answers 4 steps / CFG 1.0 -- the regime of a distilled model, which
+    renders that one as mush. The CivitAI name, on the other hand, says it in black and
+    white ("undistilled - use with Turbo Lora") and we have it on the disk already, in the
+    sidecar downloaded with the preview. So it is read.
+"""
+    base = os.path.basename(path)
+    try:
+        import cz_civitai
+        civ = cz_civitai.load_civitai_sidecar(path) or {}
+    except Exception:
+        civ = {}
+    reco = civ.get("recommended") or {}
+    name = civ.get("modelName") or ""
+    # 1. The community consensus, when it has been fetched. It beats the substring
+    #    profile, which knows nothing about THIS model: on this machine it asks for
+    #    10 steps for rayKlein, 8 for kleinFinalcut, 5 for unstableRevolution -- where
+    #    "klein" imposed 4 on everyone. No network access here: the sidecar already on the
+    #    disk is read, selecting a model has to stay instant.
+    if reco.get("steps") is not None or reco.get("guidance") is not None:
+        d_st, d_g = profile_for_model(base)
+        st = int(reco["steps"]) if reco.get("steps") is not None else d_st
+        g = float(reco["guidance"]) if reco.get("guidance") is not None else d_g
+        return st, g, (f" Settings from the CivitAI consensus of "
+                       f"{reco.get('n', '?')} community image(s) — the sampler is not "
+                       f"applied here, use _Apply CivitAI recommended settings_ for that.")
+    # 2. No consensus, but the page says the model is NOT distilled: by its name, by the
+    #    CivitAI base-model label ("Flux.3 Klein-base" on the INT8 of 2026-10-28), or by
+    #    the file's own tensors (no flow-map embedder = the base checkpoint).
+    base_label = str(civ.get("baseModel") or "").lower()
+    file_variant = None
+    try:
+        file_variant = cz_pipeline._file_variant(path)
+    except Exception:
+        pass
+    if "undistil" in name.lower() or base_label.endswith("-base") or file_variant == "base":
+        preset, st, g = _undistilled_profile()
+        if preset:
+            why = ("its CivitAI page calls it **undistilled**" if "undistil" in name.lower()
+                   else "CivitAI labels it **Flux.3 Klein-base**" if base_label.endswith("-base")
+                   else "its tensors carry no flow-map embedder: it is the **base** checkpoint")
+            return st, g, (f" {why[:1].upper() + why[1:]}, so the distilled profile (16 "
+                           f"steps, no CFG) would leave it unfinished: applied _{preset}_ "
+                           f"instead.")
+    # 2b. The FILE NAME of the official undistilled release ('flux-3-image-klein-base',
+    #     and crispz-klein's 'flux-2-klein-base-4b' in a shared library). An official file
+    #     = no CivitAI page, so no sidecar. Kept from crispz-klein, where the distilled
+    #     profile left such a file unfinished (the 2026-09-10 bench: sharpness 572 on the
+    #     scene, against 971 for the distilled base at the same settings); here the
+    #     cz_core profile already knows '-base', this is the belt to its braces.
+    import re
+    if re.search(r"klein[-_. ]?base|base[-_. ]?(?:4|9)b", base.lower()):
+        preset, st, g = _undistilled_profile()
+        if preset:
+            return st, g, (f" The file name says **klein-base**: the undistilled release, "
+                           f"which the distilled profile (16 steps, no CFG) leaves "
+                           f"unfinished: applied _{preset}_ instead.")
+    # 3. Nothing known: the file-name profile, as before.
+    st, g = profile_for_model(base)
+    return st, g, ""
+
+
+def _te_choices():
+    """Choices of the 'Text encoder' dropdown: the default (the value ''), the folders
+    found, and the current value when it comes from elsewhere (a pasted path, an HF repo)."""
+    ch = [("Default (base repo's own)", "")]
+    for p in cz_pipeline.list_text_encoders():
+        ch.append((cz_pipeline._encoder_label(p), p))
+    # ... and those from the Hugging Face cache that suit the base repo (the HF id as
+    # the value).
+    for label, hid in cz_pipeline.list_cached_text_encoders():
+        if hid not in [v for _lab, v in ch]:
+            ch.append((f"{label} (HF cache)", hid))
+    cur = cz_pipeline.TEXT_ENCODER
+    if cur and cur not in [v for _lab, v in ch]:
+        ch.append((cz_pipeline._encoder_label(cur), cur))
+    return ch
+
+
+def _ui_set_text_encoder(src):
+    """Applies and remembers the chosen encoder -- unless it does not suit the base repo:
+    a named refusal, nothing changed, nothing written to the preferences."""
+    src = (src or "").strip()
+    why = cz_pipeline._text_encoder_problem(src) if src else None
+    if why:
+        return f"⚠️ Text encoder not applied: {why}."
+    changed = src != cz_pipeline.TEXT_ENCODER
+    cz_pipeline.set_text_encoder(src)
+    _save_prefs_keys({cz_pipeline.CFG_TEXT_ENCODER_KEY: src})
+    reload = " The model reloads on next run; the prompt cache was cleared." if changed else ""
+    if not src:
+        return "Text encoder: the base repo's own." + reload
+    return (f"Text encoder: **{cz_pipeline._encoder_label(src)}**. Tokenizer, VAE and "
+            f"transformer stay the base repo's." + reload)
+
+
+def _te_hint():
+    """Why a downloaded encoder does not show up: it is of another size than the current
+    base repo's (caught on 2026-09-10: two Qwen3-4B downloaded, klein 9B loaded, the list
+    reduced to "Default" without a word)."""
+    try:
+        other, width = cz_pipeline.cached_text_encoder_mismatches()
+    except Exception:
+        return ""
+    if not other:
+        return ""
+    names = ", ".join(f"`{h}`" for h, _w in other[:3]) + (", ..." if len(other) > 3 else "")
+    sizes = sorted({w for _h, w in other if w})
+    made = [getattr(cz_pipeline, "_ENCODER_WIDTH_FOR", {}).get(s) for s in sizes]
+    made = [m for m in made if m]
+    return (f"ℹ️ {len(other)} text encoder(s) in the HF cache are hidden here: "
+            f"{'/'.join(str(s) for s in sizes)} wide, and **{cz_pipeline.BASE_REPO}** needs "
+            f"{width}. {names}"
+            + (f" -- made for {', '.join(made)}: pick that base or one of its checkpoints "
+               f"to use them." if made else ". Pick a base of their size to use them."))
+
+
+def _ui_refresh_text_encoders():
+    return gr.update(choices=_te_choices()), _te_hint()
+
+
+def _ckpt_choices():
+    """What the 'FLUX.3 checkpoint' menu offers, under the Distilled/Base selector: the
+    current base repo on its own line, then the single-file FLUX.3 checkpoints, each
+    carrying its family, its size and its format.
+
+    The OTHER official repo is NOT here -- the selector is what switches it. Having both
+    in the menu is what made one entry mean a complete base swap and the next a mere
+    transformer override. The VALUES are unchanged (a repo id, or a path relative to the
+    folder), so presets, queued jobs and image metadata keep working."""
+    repo = cz_pipeline.BASE_REPO or ZIMAGE_BASE_REPOS[0]
+    return ([(f"{repo}   \u00b7   base repo, no override", repo)]
+            + cz_pipeline.checkpoint_choices())
+
+
+VARIANT_CHOICES = ("Distilled", "Base")
+
+
+def _variant_of_repo(repo=None):
+    """'Distilled' / 'Base' for the selector, from the base repo in use."""
+    return "Base" if cz_pipeline.is_base_variant(repo or cz_pipeline.BASE_REPO) else "Distilled"
+
+
+def _apply_variant(v):
+    """The Distilled/Base selector: the same complete base swap that picking the repo in
+    the menu used to do -- transformer, VAE and text encoder all change. Already on that
+    checkpoint -> nothing moves, so clicking the current one never costs a reload."""
+    repo = FLUX3_BASE if str(v).strip().lower().startswith("base") else FLUX3_DISTILLED
+    if repo == cz_pipeline.BASE_REPO:
+        return (gr.update(),) * 6
+    return _apply_checkpoint(repo)
+
+
+def _ui_set_precision(p):
+    """The Precision selector: bf16 / fp8r / nvfp4 of the official transformer. Persisted
+    in the preferences; the swap happens on the next run (the cache key carries it)."""
+    before = cz_pipeline.PRECISION
+    now = cz_pipeline.set_precision(p)
+    try:
+        _save_prefs_keys({"flux3_precision": now})
+    except Exception as e:
+        _dbg(f"precision not persisted: {e}")
+    if now == before:
+        return f"Precision: **{now}** (unchanged)."
+    if cz_pipeline.ZIMAGE_TRANSFORMER:
+        return (f"Precision: **{now}**, noted. The single-file transformer "
+                f"`{os.path.basename(cz_pipeline.ZIMAGE_TRANSFORMER)}` is in use and carries its "
+                f"own precision; this applies once you pick the base repo again.")
+    extra = ""
+    if now == "nvfp4":
+        extra = (" nvfp4 needs an RTX 50xx (Blackwell) and the `flashinfer` package; "
+                 "elsewhere the load fails with its reason.")
+    elif now == "fp8r":
+        extra = " fp8r is fast from compute capability 8.9 (RTX 40xx/50xx); it still runs below."
+    return (f"Precision: **{now}**. The transformer alone is reloaded on the next run "
+            f"(VAE and text encoder stay), downloaded on first use.{extra}")
+
+
+def _apply_checkpoint(name):
+    """Selects either an official FLUX.3 base repo (a complete BASE_REPO swap), or a
+    local single-file checkpoint (a transformer override, with the VAE/encoder from the base
+    repo). Also adjusts steps/guidance AND the Performance preset according to the model's
+    profile.
+
+    Outputs: (status, steps, guidance, performance, ckpt_dd, preset_dd). The last two only
+    move on a base repo change: the 4B and the 9B do not accept the same single-file
+    checkpoints, so the list has to follow the chosen repo.
+"""
+    _noop = (gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
+    if not name:
+        return _noop
+    if name in ZIMAGE_BASE_REPOS:
+        # A complete base repo -> any single-file transformer is removed first, then
+        # the base is swapped.
+        set_zimage_transformer("")
+        set_zimage_model(name)
+        perf = ZIMAGE_BASE_PERFORMANCE.get(name)
+        if perf and perf in PERFORMANCE:
+            st, g = PERFORMANCE[perf]
+            perf_upd = gr.update(value=perf)
+        else:
+            st, g = profile_for_model(name)
+            perf_upd = _perf_update(st, g)
+        # The variant has changed: so has the list of loadable single-file checkpoints
+        # (a 9B does not load in a 4B pipeline, and the reverse). We re-read it, create the
+        # missing presets, and refresh both menus.
+        cks = list_checkpoints()
+        _ensure_model_presets(cks)
+        # The choice survives a restart: "depending on the project" means from one
+        # session to the next, not merely from one run to the next.
+        saved = ""
+        try:
+            _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO})
+            saved = " Saved as the startup model."
+        except Exception as e:
+            saved = f" (could not persist the choice: {e})"
+        note = BASE_REPO_NOTES.get(name)
+        return (f"FLUX.3 base: **{name}** -> {perf or 'auto'} (steps={st}, CFG={g}, full "
+                f"reload on next run — transformer, VAE and text encoder all change). "
+                f"{len(cks)} single-file checkpoint(s) fit this base.{saved}"
+                + (f"\n\n{note}" if note else ""),
+                gr.update(value=st), gr.update(value=g), perf_upd,
+                gr.update(choices=_ckpt_choices(), value=name),
+                gr.update(choices=list_presets()))
+    # A checkpoint the listing discards (the wrong 4B/9B variant, a stray LoRA, a GGUF
+    # of another architecture) must NOT become the current transformer: it would load
+    # gigabytes before dying on an unreadable diffusers message. We refuse and say why.
+    why = checkpoint_refusal(name)
+    if why:
+        return (f"⚠ **{name} was NOT applied** — {why} Still using "
+                f"`{_current_model_label()}`.", *_noop[1:])
+    path = resolve_checkpoint(name)
+    set_zimage_transformer(path)
+    st, g, why = _profile_for_checkpoint(path)
+    return (f"FLUX.3 transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
+            f"(transformer swap on next run — VAE + text encoder stay loaded).{why}",
+            gr.update(value=st), gr.update(value=g), _perf_update(st, g),
+            gr.update(), gr.update())
+
+
+def _ui_civitai_reco(name, progress=gr.Progress()):
+    """Applies the CivitAI community settings to the current model (the consensus of the
+    example images' 'meta': steps/CFG by median, the sampler by majority). Fetches the
+    civitai.json sidecar when it is missing (with progress: hashing a 12 GB checkpoint with
+    no cache can take several minutes on a HDD). The sampler is never applied on FLUX.3
+    (Euler is the model's own schedule): only steps/CFG are."""
+    import cz_civitai
+    _noop = (gr.update(), gr.update(), gr.update(), gr.update())
+    if not name or name in ZIMAGE_BASE_REPOS:
+        return ("Pick a local checkpoint first (official base repos have no CivitAI page).",
+                *_noop)
+    try:
+        path = resolve_checkpoint(name)
+    except Exception as e:
+        return (f"Checkpoint not found: {e}", *_noop)
+    civ = cz_civitai.load_civitai_sidecar(path)
+    reco = civ.get("recommended") or {}
+    if not reco:
+        def _prog(phase, frac, text):
+            try:
+                progress(frac if frac is not None else 0.5, desc=text or phase)
+            except Exception:
+                pass
+        res = cz_civitai.fetch_civitai_for_model(path, progress=_prog)  # writes 'recommended'
+        civ = cz_civitai.load_civitai_sidecar(path)
+        reco = civ.get("recommended") or {}
+        if not reco:
+            return ("No community settings published on CivitAI for this model "
+                    f"({res.get('message', '')}).", *_noop)
+    samp, sched = cz_civitai.map_sampler_name(reco.get("sampler"))
+    parts = []
+    st_u = g_u = gr.update()
+    if reco.get("steps") is not None:
+        st_u = gr.update(value=int(reco["steps"]))
+        parts.append(f"steps={reco['steps']}")
+    if reco.get("guidance") is not None:
+        g_u = gr.update(value=float(reco["guidance"]))
+        parts.append(f"CFG={reco['guidance']}")
+    if reco.get("sampler"):
+        parts.append(f"sampler={reco['sampler']}"
+                     + " (not applied: FLUX.3 runs its native Euler schedule)")
+    if reco.get("size"):
+        parts.append(f"size={reco['size']} (info only)")
+    msg = (f"📊 CivitAI consensus ({reco.get('n', '?')} community image(s)): "
+           + ", ".join(parts) if parts else "CivitAI page has no usable settings.")
+    return (msg, st_u, g_u, gr.update(), gr.update())
+
+
+def _apply_transformer_repo(repo):
+    """Sets the transformer from an HF repo / diffusers folder OR a .safetensors.
+    Adjusts steps/guidance AND the Performance preset according to the model's profile.
+    An EMPTY field = a no-op: nothing is reset (otherwise this button would erase the
+    checkpoint chosen just above). To go back to the pure base repo, pick an official repo
+    in 'FLUX.3 checkpoint'."""
+    repo = (repo or "").strip()
+    if not repo:
+        return ("Transformer override is empty, no change. Pick a model in 'FLUX.3 "
+                "checkpoint' above (that also clears any override).",
+                gr.update(), gr.update(), gr.update())
+    why = checkpoint_refusal(repo)      # None for an HF repo / diffusers folder
+    if why:
+        return (f"⚠ **{repo} was NOT applied** — {why} Still using "
+                f"`{_current_model_label()}`.",
+                gr.update(), gr.update(), gr.update())
+    set_zimage_transformer(repo)
+    st, g = profile_for_model(repo)
+    return (f"Transformer override: {repo} -> auto steps={st}, CFG={g} "
+            f"(keeps base VAE/encoder loaded; transformer swap on next run).",
+            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
+
+
+def _wild_sanitize(name):
+    return "".join(c for c in (name or "").strip() if c.isalnum() or c in "_-")[:64]
+
+
+def _ui_wild_refresh(new_dir):
+    """Changes the folder + refreshes the dropdown of every wildcard + persists."""
+    set_wildcards_dir(new_dir)
+    try:
+        _save_prefs_keys({"wildcards_dir": cz_prompt.WILDCARDS_DIR})
+    except Exception:
+        pass
+    w = list_wildcards()
+    return gr.update(choices=["None"] + w, value="None"), \
+        f"{len(w)} wildcard file(s) in {cz_prompt.WILDCARDS_DIR} (saved)."
+
+
+def _ui_wild_load(name):
+    """Loads the selected wildcard's content into the editor."""
+    if not name or name == "None":
+        return "", ""
+    p = os.path.join(cz_prompt.WILDCARDS_DIR, name + ".txt")
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            txt = f.read()
+        nlines = len([ln for ln in txt.splitlines() if ln.strip() and not ln.lstrip().startswith("#")])
+        return txt, f"{name}: {nlines} option(s). Use __{name}__ in the prompt."
+    except Exception as e:
+        return "", f"Cannot read {name}: {e}"
+
+
+def _ui_wild_insert(name, prompt_text):
+    """Inserts __name__ at the end of the prompt."""
+    if not name or name == "None":
+        return gr.update(), "Pick a wildcard file first."
+    tok = f"__{name}__"
+    base = (prompt_text or "").rstrip()
+    new = (base + (" " if base else "") + tok)
+    return gr.update(value=new), f"Inserted {tok}."
+
+
+def _ui_wild_save(name, content):
+    """Saves the editor's content into the selected wildcard."""
+    n = _wild_sanitize(name if name and name != "None" else "")
+    if not n:
+        return "Pick a wildcard file (or use Create new)."
+    try:
+        os.makedirs(cz_prompt.WILDCARDS_DIR, exist_ok=True)
+        with open(os.path.join(cz_prompt.WILDCARDS_DIR, n + ".txt"), "w", encoding="utf-8") as f:
+            f.write(content or "")
+        return f"Saved {n}.txt."
+    except Exception as e:
+        return f"Save failed: {e}"
+
+
+def _ui_wild_create(newname, content):
+    """Creates a new wildcard + refreshes the dropdown."""
+    n = _wild_sanitize(newname)
+    if not n:
+        return gr.update(), "Enter a valid name (letters/digits/_/-).", newname
+    try:
+        os.makedirs(cz_prompt.WILDCARDS_DIR, exist_ok=True)
+        with open(os.path.join(cz_prompt.WILDCARDS_DIR, n + ".txt"), "w", encoding="utf-8") as f:
+            f.write(content or "")
+        return gr.update(choices=["None"] + list_wildcards(), value=n), f"Created {n}.txt.", ""
+    except Exception as e:
+        return gr.update(), f"Create failed: {e}", newname
+
+
+# The number of LoRA slots displayed (configurable through the 'lora_slots' config, 1..10, default 3).
+MAX_LORA_SLOTS = 10
+LORA_SLOTS = max(1, min(MAX_LORA_SLOTS, int(_prefs.get("lora_slots", CONFIG.get("lora_slots", 3)))))
+
+
+def _ui_set_lora_slots(n):
+    """Sets the number of VISIBLE LoRA slots (Advanced) + persists (preferences.json).
+    The slots beyond it stay present but hidden (a 'None' value -> ignored)."""
+    n = max(1, min(MAX_LORA_SLOTS, int(n)))
+    try:
+        _save_prefs_keys({"lora_slots": n})
+    except Exception:
+        pass
+    return [gr.update(visible=(i < n)) for i in range(MAX_LORA_SLOTS)]
+
+
+def _refresh_loras(new_dir, extra_dirs=""):
+    """Changes the loras folder (+ the 'a;b' extras) + refreshes ALL the slots (N is
+    configurable) + persists."""
+    set_loras_dir(new_dir)
+    cz_pipeline.set_loras_extra_dirs(extra_dirs)
+    try:
+        _save_prefs_keys({"loras_dir": cz_pipeline.LORAS_DIR,      # persiste -> survit au reboot
+                          "loras_extra_dirs": list(cz_pipeline.LORAS_EXTRA_DIRS)})
+    except Exception:
+        pass
+    lr = [("None", "None")] + cz_pipeline.lora_choices()
+    locs = " + ".join(cz_pipeline._lora_dirs())
+    status = f"{len(lr) - 1} LoRA(s) in {locs} (saved)."
+    return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (status,)
+
+
+def _apply_loras(*vals):
+    """Applies the combination of the LoRA slots. vals = (name1, weight1, name2, weight2,
+    ...)."""
+    pairs = [(vals[i], vals[i + 1]) for i in range(0, len(vals) - 1, 2)]
+    set_loras(pairs)
+    if not cz_pipeline.LORAS:
+        return "LoRA: none."
+    return ("LoRA: " + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in cz_pipeline.LORAS)
+            + " (applied on next run — no model reload).")
+
+
+def _edit_lora_choices():
+    """Labels of the edit-preset dropdown ('Name ✓' on disk, 'Name ⬇' to download).
+    Recomputed on every call: a download changes the label."""
+    import cz_edit_loras
+    idx = cz_edit_loras.local_index()          # a single disk walk for all 19
+    return ["None"] + [cz_edit_loras.status_label(n, index=idx) for n in cz_edit_loras.names()]
+
+
+def _ui_edit_lora_apply(label, weight, progress=gr.Progress()):
+    """The edit preset's dropdown / weight -> cz_pipeline.set_edit_loras (downloads the
+    LoRA from the hub on the first selection). Returns (a dropdown update, a status)."""
+    import cz_edit_loras
+    name = cz_edit_loras.strip_label(label)
+    if not name or name == "None":
+        cz_pipeline.set_edit_loras([])
+        return gr.update(), "Edit LoRA: none."
+    try:
+        if not cz_edit_loras.is_downloaded(name):
+            progress(0.0, desc=f"Downloading {name} ({(cz_edit_loras.spec(name) or {}).get('repo', '')})...")
+        cz_pipeline.set_edit_loras([(name, float(weight))])
+    except Exception as e:
+        _log(f"edit LoRA apply failed: {e}")
+        return gr.update(), f"Edit LoRA error: {e}"
+    s = cz_edit_loras.spec(name)
+    on = cz_pipeline.EDIT_LORAS_ENABLED
+    note = (f"Edit LoRA: **{name}**@{float(weight):g}"
+            + ("" if on else " (checkbox *Edit LoRAs* is OFF in Models > LoRA: not applied)")
+            + (". Needs **Ref 1 + Ref 2** (input + reference)." if int(s.get("inputs", 1)) == 2
+               else ". Put the image to edit in **Ref 1**.")
+            + f"  \nExample prompt: *{s.get('prompt', '')}*")
+    return gr.update(choices=_edit_lora_choices(),
+                     value=cz_edit_loras.status_label(name)), note
+
+
+def _ui_edit_lora_pick(label, weight, progress=gr.Progress()):
+    """A choice in the dropdown: applies the preset at ITS advised weight and moves the
+    slider there. The slider used to stay at 1.0, whereas Consistence-Edit is set at 0.6
+    (the author says 0.5-0.7). The slider stays free afterwards (.release ->
+    _ui_edit_lora_apply).
+    Returns (a dropdown update, a status, a slider update)."""
+    import cz_edit_loras
+    s = cz_edit_loras.spec(cz_edit_loras.strip_label(label))
+    preset_w = s.get("weight") if s else None
+    if preset_w is not None:
+        weight = float(preset_w)
+    dd, note = _ui_edit_lora_apply(label, weight, progress=progress)
+    return dd, note, (gr.update(value=weight) if preset_w is not None else gr.update())
+
+
+def _ui_edit_lora_prompt(label, current):
+    """The 'Use example prompt' button: puts the preset's example instruction into the
+    prompt (the current prompt is kept when there is no preset)."""
+    import cz_edit_loras
+    s = cz_edit_loras.spec(cz_edit_loras.strip_label(label))
+    if not s or not s.get("prompt"):
+        return gr.update(value=current)
+    return gr.update(value=s["prompt"])
+
+
+def _initial_edit_speed():
+    """The initial value of the 'Edit speed' dropdown (config 'edit_fast'), applied at
+    startup. A Lightning mode whose LoRA is missing everywhere downloads here; on a failure
+    (offline, a token) it falls back to Off with a log, never a crash."""
+    want = str(CONFIG.get("edit_fast") or "Off").strip()
+    choices = cz_pipeline.edit_speed_choices()
+    match = next((c for c in choices if c.lower() == want.lower()), None)
+    if not match or match == "Off":
+        return "Off"
+    try:
+        cz_pipeline.set_edit_speed(match)
+        return match
+    except Exception as e:
+        _log(f"edit_fast '{want}' not applied at startup ({e}); Off")
+        return "Off"
+
+
+def _ui_edit_speed(name, progress=gr.Progress()):
+    """The 'Edit speed' dropdown -> cz_pipeline.set_edit_speed (downloads the Lightning
+    LoRA when it is in no LoRA folder). Returns the status."""
+    try:
+        if name and not name.lower().startswith(("off", "auto")):
+            progress(0.0, desc=f"Resolving {name} LoRA...")
+        sp = cz_pipeline.set_edit_speed(name)
+    except Exception as e:
+        _log(f"edit speed failed: {e}")
+        return f"Edit speed error: {e}"
+    if not sp:
+        return "Edit speed: off (steps/guidance from Settings)."
+    lora = f", LoRA `{os.path.basename(sp['path'])}`" if sp.get("path") else ", no LoRA"
+    return (f"Edit speed: **{sp['name']}** -> {sp['steps']} steps, cfg {sp['guidance']:g}"
+            f"{lora}.")
+
+
+def _ui_set_omni_model(repo):
+    """The Omni model dropdown -> the pipeline (the omni pipe is invalidated and reloaded
+    on the next edit) + preferences.json (it survives a restart). The Lightning Edit speed
+    mode depends on the revision (2509/2511): so it is resolved again to take the right
+    file."""
+    set_omni_model(repo)
+    try:
+        _save_prefs_keys({"zimage_omni_model": cz_pipeline.OMNI_MODEL})
+    except Exception:
+        pass
+    note = f"Edit model set: `{repo or '(none)'}` (applied on the next edit, saved)."
+    sp = cz_pipeline.EDIT_SPEED
+    if sp and sp.get("path"):
+        try:
+            sp = cz_pipeline.set_edit_speed(sp["name"])
+            note += "  \nEdit speed re-resolved: `" + os.path.basename(sp["path"]) + "`."
+        except Exception as e:
+            note += "  \nEdit speed LoRA not re-resolved: " + str(e)
+    return note
+
+
+def _ui_edit_generate(*args, progress=gr.Progress(track_tqdm=True)):
+    """The 'Edit' button of the Edit (references) tab: the same run as Generate, but forces
+    use_input=True and input_mode=EDIT_MODE (positions 4 and 6 of _ui_generate)
+    -> no need to tick Input Image nor to change the mode above any more."""
+    args = list(args)
+    args[4] = True
+    args[6] = EDIT_MODE
+    return _ui_generate(*args, progress=progress)
+
+
+def _ui_edit_loras_enabled(on):
+    cz_pipeline.set_edit_loras_enabled(on)
+    return f"Edit LoRAs {'ON' if on else 'OFF'} (applied on the next edit, no reload)."
+
+
+def _path_for_lora(name):
+    if not name or name in ("None", "none", ""):
+        return None
+    return cz_pipeline.resolve_lora_path(name)     # the main one then loras_extra_dirs
+
+
+def _lora_keywords_for(names):
+    """Aggregates the keywords (trigger words) of the selected LoRAs."""
+    kws = []
+    for n in names:
+        p = _path_for_lora(n)
+        if p:
+            k = lora_keywords(p)
+            if k:
+                kws.append(k)
+    return ", ".join(kws)
+
+
+def _ui_loras_apply(*vals):
+    """Applies the slots (N) + aggregates the keywords of the selected LoRAs."""
+    status = _apply_loras(*vals)
+    return status, _lora_keywords_for(vals[0::2])
+
+
+def _ui_loras_keywords(*names):
+    """Fetches the keywords of every selected LoRA (a button)."""
+    merged = _lora_keywords_for(names)
+    return merged, (f"{len(merged.split(','))} keyword(s)." if merged
+                    else "No keywords in the selected LoRA(s).")
+
+
+def _ui_kw_to_prompt(prompt_text, keywords):
+    """Appends the keywords to the end of the current prompt."""
+    kw = (keywords or "").strip().strip(",").strip()
+    if not kw:
+        return gr.update()
+    base = (prompt_text or "").strip()
+    if base and not base.endswith(","):
+        base += ", "
+    return gr.update(value=base + kw)
+
+
+def _klein_base_prefixes():
+    """(the family prefix, the current variant prefix), normalised, for ranking the CivitAI
+    candidates.
+
+    CivitAI labels these LoRAs 'Flux.2 Klein 4B-base' (read from a real sidecar), so the
+    exact comparison the single-base forks use would match nothing -> a PREFIX match on the
+    normalised label. The VARIANT matters here, unlike on those forks: a 4B LoRA does not
+    load on a 9B base, cz_pipeline refuses it with its reason. The variant is only used to
+    ORDER and to filter on request; reading it must never break a search, hence the except.
+    """
+    # FLUX.3 has one width: the family IS the current variant. CivitAI's label for the
+    # family is not known yet (the model is days old); 'FLUX.3' as a prefix is the best
+    # guess until a real sidecar says otherwise.
+    fam = cz_civitai._norm_base("FLUX.3")
+    return fam, fam
+
+
+def _ui_civitai_lora_search(query, klein_only):
+    """Searches CivitAI for a LoRA by name. Returns (the field, the candidates, the state,
+    the status): the state carries the candidate dicts (label -> candidate) for the
+    Download button. The candidates of the CURRENT variant come first, then the other
+    Klein ones, then the rest."""
+    q = (query or "").strip()
+    if not q:
+        return (gr.update(), gr.update(choices=[], value=None), {},
+                "Type a LoRA name to search on CivitAI.")
+    cands = cz_civitai.search_loras(q, limit=10)
+    fam, cur = _klein_base_prefixes()
+
+    def _rank(c):
+        b = cz_civitai._norm_base(c.get("baseModel"))
+        if cur and b.startswith(cur):
+            return 0
+        return 1 if b.startswith(fam) else 2
+
+    cands.sort(key=_rank)                        # stable: CivitAI's own order is kept
+    if klein_only:
+        cands = [c for c in cands
+                 if cz_civitai._norm_base(c.get("baseModel")).startswith(fam)]
+    if not cands:
+        hint = (" with a FLUX.3 base, untick 'FLUX.3 only' to see the other bases "
+                "(they will not load here)." if klein_only else
+                ". Check the spelling, or the model may not be on CivitAI.")
+        return (gr.update(value=q), gr.update(choices=[], value=None), {},
+                f"No CivitAI result for **{q}**{hint}")
+    state, labels = {}, []
+    for c in cands:
+        size = f"{c['sizeKB'] / 1024:.0f} MB" if c.get("sizeKB") else "size ?"
+        label = (f"{c['modelName']} — {c['versionName']} [{c['baseModel'] or 'base ?'}] "
+                 f"— {size}"
+                 + (f" — by {c['creator']}" if c.get("creator") else "")
+                 + (" — NSFW" if c.get("nsfw") else ""))
+        if label in state:                       # two versions with the same label
+            label += f" (v{c['versionId']})"
+        state[label] = c
+        labels.append(label)
+    note = ""
+    if cur:
+        n_cur = sum(1 for c in cands
+                    if cz_civitai._norm_base(c.get("baseModel")).startswith(cur))
+        note = (f" {n_cur} match the loaded variant." if n_cur
+                else " None match the loaded variant — check the base in brackets.")
+    return (gr.update(value=q), gr.update(choices=labels, value=labels[0]), state,
+            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download.{note} "
+            f"[Open on CivitAI]({cands[0]['url']})")
+
+
+def _ui_civitai_lora_download(label, state, progress=gr.Progress()):
+    """Downloads the chosen candidate into LORAS_DIR (a verified SHA256 + preview/triggers),
+    then refreshes the choices of ALL the LoRA slots. A failure = a message, never a crash."""
+    cand = (state or {}).get(label)
+    if not cand:
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("Search first, then pick a candidate to download.",)
+
+    def _prog(_phase, frac, text):
+        progress(frac if frac is not None else 0.0, desc=text)
+
+    res = cz_civitai.download_model_file(cand, cz_pipeline.LORAS_DIR, progress=_prog)
+    if not res.get("success"):
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("❌ " + res.get("message", "download failed"),)
+    rel = os.path.relpath(res["path"], cz_pipeline.LORAS_DIR).replace(os.sep, "/")
+    msg = f"✅ {res['message']}  \nSelect **{rel}** in a LoRA slot."
+    lr = ["None"] + list_loras()
+    return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (msg,)
+
+
+def _ui_check_omni():
+    return check_omni_available()
+
+
+def _save_hf_token(token):
+    """The Models tab: sets + persists the HF token (preferences.json, gitignored). Clears
+    the field afterwards (the token is never displayed again)."""
+    token = (token or "").strip()
+    if not token:
+        return gr.update(), ("No change. Enter a token (it won't be shown), or it stays as-is."
+                             if hf_token_is_set() else "Enter a Hugging Face token to save.")
+    set_hf_token(token)
+    return gr.update(value=""), ("✅ HF token saved (preferences.json, gitignored) and applied. "
+                                 "Gated downloads (e.g. FLUX.1-Krea-dev) will now authenticate.")
+
+
+def _save_civitai_key(token):
+    """Advanced: sets + persists the CivitAI key (preferences.json). Used by 'Fetch from
+    CivitAI' in the Asset Browser. Clears the field afterwards."""
+    token = (token or "").strip()
+    if not token:
+        return gr.update(), ("✅ A CivitAI key is set." if cz_civitai.API_KEY
+                             else "Enter a CivitAI API key to save.")
+    cz_civitai.set_api_key(token)
+    try:
+        _save_prefs_keys({"civitai_api_key": token})
+    except Exception:
+        pass
+    return gr.update(value=""), "✅ CivitAI key saved (preferences.json) and applied."
+
+
+def _save_paths_to_prefs(esrgan_dir, checkpoints_dir=None, checkpoints_extra_dir=None,
+                         loras_dir=None, wildcards_dir=None):
+    """Persists the paths in preferences.json (local) -> loaded on the next boot.
+    The current klein base repo (chosen through the dropdown) is persisted as it is."""
+    set_esrgan_dir(esrgan_dir)
+    if checkpoints_dir:
+        set_checkpoints_dir(checkpoints_dir)
+    if checkpoints_extra_dir is not None:
+        set_checkpoints_extra_dir(checkpoints_extra_dir)
+    if loras_dir:
+        set_loras_dir(loras_dir)
+    if wildcards_dir:
+        set_wildcards_dir(wildcards_dir)
+    _save_prefs_keys({"esrgan_dir": cz_esrgan.ESRGAN_DIR,
+                      cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO,
+                      "checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
+                      "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR,
+                      "loras_dir": cz_pipeline.LORAS_DIR,
+                      "wildcards_dir": cz_prompt.WILDCARDS_DIR})
+    return (f"Saved to {PREFS_PATH}: esrgan_dir, {cz_pipeline.CFG_MODEL_KEY}, checkpoints_dir, "
+            f"checkpoints_extra_dir, loras_dir, wildcards_dir={cz_prompt.WILDCARDS_DIR}")
+
+
+# Order of the components the presets dropdown updates (it must match the UI).
+_PRESET_UI_ORDER = ("factor", "denoise", "steps", "tile", "overlap",
+                    "refine_tile", "refine_overlap", "cpu_offload")
+
+
+def _apply_preset(name):
+    """UI: returns the control updates for the chosen preset (the _PRESET_UI_ORDER order).
+    Custom, or a missing key = no change on that control."""
+    p = PRESETS.get(name, {})
+    return [gr.update(value=p[k]) if k in p else gr.update() for k in _PRESET_UI_ORDER]
+
+
+def _set_aspect(name):
+    """UI: applies an aspect ratio -> (width, height)."""
+    w, h = ASPECT_RATIOS.get(name, (1024, 1024))
+    return w, h
+
+
+def _ui_set_force_ratio(mode, aspect_name):
+    """UI: the forced ratio for Upscale/img2img. 'Off' -> the native ratio is preserved;
+    'Crop to fit' -> a center crop to the chosen Aspect ratio;
+    'Extend (outpaint)' -> extends the image to the ratio (generated bands, nothing lost).
+    Sets the state in cz_pipeline."""
+    m = str(mode or "Off").strip().lower()
+    set_force_ratio("" if m.startswith("off") else aspect_name)
+    cz_pipeline.set_force_ratio_mode("extend" if m.startswith("extend") else "crop")
+
+
+def _set_performance(name, *slot_vals):
+    """UI: applies a Performance preset -> (gen_steps, guidance) + its associated LoRA
+    (slot 1) when the preset defines one in config.txt (e.g. 'Lightning' -> the 8-step
+    LoRA).
+
+    slot_vals = (name2, weight2, name3, weight3, ...): slots 2..N as displayed, which are
+    preserved. The number of slots is configurable (lora_slots) -> a variadic signature.
+    Returns (steps, guidance, update(slot1_name), update(slot1_weight)).
+"""
+    steps, g = PERFORMANCE.get(name, (8, 0.0))
+    n1 = PERFORMANCE_LORA.get(name, "") or "None"
+    w1 = float(cz_pipeline.LORA_WEIGHT)
+    pairs = [(n1, w1)] + [(slot_vals[i], slot_vals[i + 1])
+                          for i in range(0, len(slot_vals) - 1, 2)]
+    try:
+        set_loras(pairs)
+    except Exception as e:
+        _log(f"performance preset LoRA apply failed: {e}")
+    return steps, g, gr.update(value=n1), gr.update(value=w1)
+
+
+def _caption_choices(vision_models):
+    """Choices of the Caption model: local BLIP, then the Ollama vision models detected
+    ("ollama:<name>"). The current choice stays in the list, even before the detection."""
+    ch = ["blip-large", "blip-base"] + [OLLAMA_CAPTION_PREFIX + m for m in (vision_models or [])]
+    cur = _current_caption_kind()
+    if cur not in ch:
+        ch.append(cur)
+    return ch
+
+
+def _remembered_vision_model():
+    """The vision model chosen in the previous session (preferences.json), or None."""
+    try:
+        return cz_core._load_prefs_raw().get("ollama_model")
+    except Exception:
+        return None
+
+
+def _ui_detect_improve_models(url):
+    """Lists ALL the Ollama models for Improve (rewriting text does not require vision).
+    Ollama unreachable -> an empty list (the status comes from _ui_detect_ollama)."""
+    try:
+        return gr.update(choices=list_text_models(base=url), value=None)
+    except Exception:
+        return gr.update(choices=[], value=None)
+
+
+# Negative Improve in the UI: hidden when the negative has no effect on the model.
+IMPROVE_NEGATIVE_UI = False
+
+
+def _ui_detect_ollama(url):
+    """Detects Ollama and lists ONLY the vision models (Describe, Vision Mix, Caption
+    model). Also called when the page loads: the list stayed empty until Detect was clicked,
+    and Describe silently went through BLIP. Picks the remembered model back up."""
+    try:
+        models = _ollama_vision_models(base=url)
+    except Exception:
+        return (gr.update(choices=[], value=None),
+                "Ollama not reachable. Describe will use the caption model fallback. "
+                "Improve needs Ollama.", gr.update(choices=_caption_choices([])))
+    if not models:
+        return (gr.update(choices=[], value=None),
+                "Ollama OK but no VISION model. Pull one, e.g. `ollama pull llava` or `moondream`.",
+                gr.update(choices=_caption_choices([])))
+    keep = _remembered_vision_model()
+    value = keep if keep in models else models[0]
+    return (gr.update(choices=models, value=value), f"Ollama OK - {len(models)} vision model(s).",
+            gr.update(choices=_caption_choices(models)))
+
+
+def _ui_remember_vision_model(model):
+    """Remembers the chosen vision model (preferences.json) for the next launch."""
+    if model:
+        try:
+            _save_prefs_keys({"ollama_model": model})
+        except Exception as e:
+            _dbg(f"save ollama_model pref failed: {e}")
+
+
+def _ui_set_describe_style(style, length):
+    """Describe's style and length (Prompt AI): active immediately, remembered; returns
+    the instruction sent to the model (a preview)."""
+    s, n = set_describe_style(style, length)
+    try:
+        _save_prefs_keys({"describe_style": s, "describe_length": n})
+    except Exception as e:
+        _dbg(f"save describe style pref failed: {e}")
+    return describe_instruction(s, n)
+
+
+def _ui_describe(image, model, url):
+    """Describes the image -> fills the prompt. Ollama when a model is chosen, otherwise
+    local BLIP."""
+    image = _editor_img(image)
+    if image is None:
+        return gr.update(), "Drop an image to describe first."
+    if model:
+        try:
+            return (gr.update(value=_ollama_describe(image, model, base=url)),
+                    f"Described via {model} ({cz_ollama.DESCRIBE_STYLE}).")
+        except Exception as e:
+            # Ollama off or the model missing: the Caption model's caption rather than
+            # nothing.
+            try:
+                return (gr.update(value=_local_caption(image)),
+                        f"Ollama describe failed ({e}); described via the caption model instead.")
+            except Exception as e2:
+                return gr.update(), f"Ollama describe failed: {e} (caption model failed too: {e2})"
+    try:
+        return gr.update(value=_local_caption(image)), "Described via local captioner (no Ollama model)."
+    except Exception as e:
+        return gr.update(), f"No Ollama model selected and local captioner failed: {e}"
+
+
+def _ui_improve(prompt_text, model, url, directives=""):
+    """Improve of the POSITIVE prompt through Ollama (prompt_improve). The model: the one
+    chosen for Improve, otherwise ollama_improve.model, otherwise the first installed one.
+    `directives`: free instructions for THIS call (never saved). A failure -> the text is
+    left untouched and the status says why (no more silent fallback to local keywords)."""
+    if not (prompt_text or "").strip():
+        return gr.update(), "Type a prompt first."
+    try:
+        out, used = improve_prompt(prompt_text, "positive", model or None, url, directives)
+    except OllamaError as e:
+        return gr.update(), f"⚠ Improve failed: {e}"
+    extra = " with your directives" if (directives or "").strip() else ""
+    return gr.update(value=out), f"Improved via {used}{extra}."
+
+
+def _ui_improve_negative(negative_text, model, url, directives=""):
+    """Improve of the NEGATIVE prompt. An empty box: starts from the standard negative and
+    has it extended; Ollama unreachable -> the standard negative is inserted as it is with a
+    warning."""
+    try:
+        out, used, warn = improve_negative(negative_text, model or None, url, directives)
+    except OllamaError as e:
+        return gr.update(), f"⚠ Improve negative failed: {e}"
+    if warn:
+        return gr.update(value=out), f"⚠ Ollama unavailable: {warn}."
+    extra = " with your directives" if (directives or "").strip() else ""
+    return gr.update(value=out), f"Negative improved via {used}{extra}."
+
+
+def _ui_toggle_panel(opened):
+    """The ✎ button next to an Improve: unfolds / folds its directives panel."""
+    return (not opened), gr.update(visible=not opened)
+
+
+def _ui_set_caption_model(kind):
+    """Changes the local captioner + persists the choice in preferences.json."""
+    k = set_caption_model(kind)
+    try:
+        _save_prefs_keys({"caption_model": k})
+    except Exception as e:
+        _dbg(f"save caption_model pref failed: {e}")
+    if k.startswith(OLLAMA_CAPTION_PREFIX):
+        return (f"Caption model set to **{k}** (saved). BLIP takes over if Ollama fails. Prefer a "
+                "small vision model: it runs right before the image model.")
+    return f"Caption model set to **{k}** (saved; loads on next use)."
+
+
+def _ui_compose(r1, r2, r3, r4, model, url):
+    """'Fake Omni': describes each reference image (vision) then merges them into ONE
+    prompt through the LLM. Fills the prompt box."""
+    refs = [im for im in (_editor_img(r) for r in [r1, r2, r3, r4]) if im is not None]
+    if not refs:
+        return gr.update(), "Add at least one reference image."
+    if not model:
+        return gr.update(), "Select an Ollama vision model in Advanced > Prompt AI (Detect)."
+    try:
+        caps = [_ollama_describe(im, model, base=url, length="Medium") for im in refs]
+    except Exception as e:
+        return gr.update(), f"Describe failed: {e}"
+    try:
+        merged = _ollama_compose(caps, model, base=url)
+    except Exception as e:
+        return gr.update(), f"Compose failed: {e}"
+    return gr.update(value=merged), f"Composed one prompt from {len(refs)} image(s) via {model}."
+
+
+def _ui_remove_bg(image, history, save_mode, output_dir):
+    """Remove background -> the result (a transparent PNG) into the gallery + the
+    history."""
+    image = _editor_img(image)
+    if image is None:
+        return [], "Drop an image first.", history, history
+    try:
+        res = _remove_bg(image)
+    except Exception as e:
+        return [], f"Remove BG failed: {e}", history, history
+    if save_mode != "display":
+        try:
+            dst = build_output_path(None, save_mode, output_dir, "png", tag="nobg", size=res.size)
+            if dst:
+                save_image(res, dst, "png")
+        except Exception as e:
+            _dbg(f"save nobg failed: {e}")
+    new_hist = ([res] + list(history or []))[:200]
+    return [res], "Background removed (transparent PNG).", new_hist, new_hist
+
+
+def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, harmonize_denoise,
+             prompt, negative, styles, guidance, offload_mode, steps, strength, seed, save_mode,
+             output_dir, output_format, history, lora_weight=1.5,
+             progress=gr.Progress(track_tqdm=True)):
+    """The unified Inpaint / Outpaint / Reframe tab. The `mode` picks the operation; the
+    image (the editor), the prompt, the `steps` (the model's) and `strength` are shared.
+      - Brush       : inpaints the painted area (inpaint_run)
+      - Expand sides: a directional L/R/T/B outpaint (outpaint_directions)
+      - Expand sides (outpaint LoRA): the same sides, through the FLUX.3 Outpaint LoRA on
+        a gray canvas (outpaint_lora); `lora_weight` is its strength (1.5 advised)
+      - Reframe     : a crop to the ratio, ~1 MP, Contain/Cover (reframe)
+    auto_describe (outpaint/reframe): describes the central image through local BLIP (no
+    Ollama) to guide the filling of the edges coherently.
+"""
+    cz_pipeline._PROGRESS = lambda f, d: progress(f, desc=d)
+    try:
+        bg, mask = _editor_to_image_mask(editor_value)
+        if bg is None:
+            return [], "Load an image first.", history, history
+        set_offload_mode(offload_mode)
+        set_guidance(guidance)
+        # The same rules as Generate: seed -1 resolved to a concrete value, {a|b|c}
+        # variants + wildcards expanded (tied to that seed).
+        seed = resolve_seed(seed)
+        cz_pipeline._LAST_SEED = seed
+        prompt, _ = expand_prompt_pair(prompt, "", seed, index=0)
+        m = str(mode).lower()
+        eff_prompt = prompt or ""
+        # Auto-describe (the local captioner, no Ollama): useful for
+        # outpaint/reframe -> the model "sees" the subject in the centre and continues the
+        # scene instead of inventing one. Implicit when the prompt is EMPTY; also forced
+        # when the box is ticked (as a prefix).
+        if not m.startswith("brush") and (auto_describe or not eff_prompt.strip()):
+            try:
+                progress(0.05, desc="Describing center (caption model; first use downloads it)...")
+                cap = _local_caption(bg)
+                eff_prompt = (cap + (", " + eff_prompt if eff_prompt.strip() else "")).strip()
+                _log(f"auto-describe: {cap}")
+            except Exception as e:
+                _log(f"auto-describe failed (continuing without): {e}")
+        full_prompt, _ = _apply_styles(eff_prompt, negative, styles)
+        painted = mask is not None and mask.getbbox() is not None
+        try:
+            if m.startswith("reframe"):
+                try:
+                    rw, rh = [int(x) for x in str(ratio).split(":")]
+                except Exception:
+                    rw, rh = 16, 9
+                fit_mode = "cover" if str(fit).lower().startswith("cover") else "contain"
+                res = reframe(bg, rw, rh, fit_mode, full_prompt, steps, seed, strength=strength)
+                tag, info = "reframe", f"Reframe {ratio} ({fit_mode})"
+            elif m.startswith("expand"):
+                d = [x.lower() for x in (dirs or [])]
+                if not d and not ("lora" in m and painted):
+                    return [], "Pick at least one side (or Center).", history, history
+                if "lora" in m:
+                    # The LoRA takes the user's words AFTER its trigger sentence; the
+                    # auto-description is a user prompt like any other here.
+                    res = outpaint_lora(bg, d, full_prompt, steps, seed,
+                                        mask=mask if painted else None,
+                                        weight=float(lora_weight))
+                    tag, info = "outpaint", f"Outpaint LoRA {'+'.join(d) or 'brush'} @{float(lora_weight):g}"
+                else:
+                    res = outpaint_directions(bg, mask if painted else None, d,
+                                              full_prompt, steps, seed, strength=strength)
+                    tag, info = "outpaint", f"Outpaint {'+'.join(d)}"
+            else:  # Brush -> inpaint
+                if not painted:
+                    return [], "Paint the area to change (brush).", history, history
+                res = inpaint_run(bg, mask, full_prompt, steps, strength, seed)
+                tag, info = "inpaint", "Inpaint"
+        except Exception as e:
+            _log(f"{mode} error: {e}")
+            return [], f"{mode} failed: {e}", history, history
+        # Harmonize: a light img2img pass (a diffusion refine, no ESRGAN) over the
+        # WHOLE final image -> unifies grain/light/joins and erases the "added area" look. A
+        # low denoise (~0.2) so as not to reinvent the subject.
+        if harmonize and float(harmonize_denoise) > 0.001:
+            try:
+                progress(0.9, desc="Harmonizing (img2img refine)...")
+                hd = float(harmonize_denoise)
+                # img2img: the effective steps = base x denoise -> so the base is
+                # raised to keep ~8 real steps even at a low denoise (otherwise 1-2 steps =
+                # useless).
+                h_steps = min(40, max(int(steps), int(round(8.0 / max(hd, 0.05)))))
+                res, _ = process_one(res, None, 1.0, hd, h_steps, full_prompt, seed, 512, 64,
+                                     refine_tile=0, refine_overlap=64, do_esrgan=False)
+                info += " + harmonize"
+            except Exception as e:
+                _log(f"harmonize failed (keeping edit): {e}")
+        dst = None
+        if save_mode != "display":
+            try:
+                dst = build_output_path(None, save_mode, output_dir, output_format,
+                                        tag=tag, seed=seed, size=res.size)
+                if dst:
+                    save_image(res, dst, output_format, meta=_gen_meta(
+                        tag, full_prompt, seed=seed, steps=steps, guidance=cz_pipeline.GUIDANCE,
+                        size=res.size, styles=styles,
+                        extra=source_meta(editor_value)))
+            except Exception as e:
+                dst = None
+                _dbg(f"save {tag} failed: {e}")
+        item = _dl_path(res, dst)   # a download with the real file name when it was saved
+        new_hist = ([item] + list(history or []))[:200]
+        return [item], f"{info} -> {res.size[0]}x{res.size[1]}", new_hist, new_hist
+    finally:
+        cz_pipeline._PROGRESS = None
+
+
+def _ui_clear_history():
+    """Empties the session history (the state + the gallery)."""
+    return [], []
+
+
+def _ui_load_outputs(output_dir):
+    """Loads the output folder's images into the session history."""
+    files = _list_output_files(output_dir, 200)
+    return files, files
+
+
+# ---- Galerie avancee (panneau dedie: meta, suppression, flou) ----
+def _gallery_filtered(output_dir, sort="Newest", filt=""):
+    files = _list_output_files(output_dir, 4000)
+    if filt:
+        f = filt.lower()
+        files = [p for p in files if f in os.path.basename(p).lower()]
+    if sort == "Oldest":
+        files.sort(key=os.path.getmtime)
+    elif sort == "Name":
+        files.sort(key=lambda p: os.path.basename(p).lower())
+    else:  # Newest
+        files.sort(key=os.path.getmtime, reverse=True)
+    return files[:300]
+
+
+def _gallery_load(output_dir, sort="Newest", filt=""):
+    files = _gallery_filtered(output_dir, sort, filt)
+    return files, files, f"{len(files)} image(s)."
+
+
+def _gallery_selected(paths, evt: gr.SelectData):
+    """Shows the selected image's metadata + its path."""
+    if not paths or evt is None or evt.index is None or evt.index >= len(paths):
+        return "*No selection.*", ""
+    path = paths[evt.index]
+    info = [f"**File:** `{os.path.basename(path)}`"]
+    meta = _read_image_meta(path)
+    if meta.get("prompt"):
+        info.append(f"**Prompt:** {meta['prompt']}")
+    if meta.get("negative"):
+        info.append(f"**Negative:** {meta['negative']}")
+    line2 = []
+    for k in ("mode", "seed", "steps", "guidance", "size"):
+        if meta.get(k) is not None:
+            line2.append(f"{k}={meta[k]}")
+    if meta.get("model"):
+        line2.append(f"model={os.path.basename(str(meta['model']))}")
+    if meta.get("loras"):
+        line2.append("loras=" + ",".join(meta["loras"]))
+    if line2:
+        info.append("**Params:** " + "  ".join(line2))
+    if not meta:  # no sidecar -> minimal info (the real size)
+        try:
+            with Image.open(path) as im:
+                info.append(f"**Size:** {im.size[0]}x{im.size[1]}")
+        except Exception:
+            pass
+    try:
+        st = os.stat(path)
+        info.append(f"**Weight:** {st.st_size / 1024:.0f} KB  Â·  "
+                    f"**Modified:** {datetime.datetime.fromtimestamp(st.st_mtime):%Y-%m-%d %H:%M}")
+    except Exception:
+        pass
+    info.append(f"**Path:** `{path}`")
+    return "  \n".join(info), path
+
+
+def _gallery_delete(path, output_dir, sort="Newest", filt=""):
+    """Deletes the selected file (+ its sidecar) then reloads the gallery."""
+    msg = "Nothing to delete."
+    if path and os.path.isfile(path):
+        try:
+            os.remove(path)
+            if os.path.isfile(path + ".json"):   # the sidecar goes too
+                os.remove(path + ".json")
+            msg = f"Deleted {os.path.basename(path)}."
+        except Exception as e:
+            msg = f"Delete failed: {e}"
+    files = _gallery_filtered(output_dir, sort, filt)
+    return files, files, msg, "*Select an image to see its info.*", ""
+
+
+# ----------------------------------------------------------------------------
+# Asset Browser (Fooocus2026-style): a static SPA dropped into the output folder,
+# opened through a file= link, fed by a JSON manifest + thumbnails.
+# The same options (enabled, generate_thumbnails, thumbnail_size/quality, blur).
+# ----------------------------------------------------------------------------
+# Asset Browser (SPA + reindex + thumbnails + delete) -> cz_assetbrowser.py.
+from cz_assetbrowser import (_ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast,  # noqa: E402,F401
+                             ab_build_catalog, delete_asset, rebuild_thumbs)
+
+
+# Static assets (the Asset Browser SPA, the interface JS, the CSS) -> cz_assets.py
+from cz_assets import ASSET_BROWSER_HTML, CZ_JS, FOOOCUS_CSS  # noqa: E402
+
+
+# A reference to the running Blocks (filled in by build_ui), to allow output folders
+# chosen in the UI on the fly. Gradio freezes `allowed_paths` at launch, but re-reads
+# `blocks.allowed_paths` on EVERY file request -> so the current folder can be added to it
+# when the Asset Browser is opened (with no restart).
+_DEMO = None
+
+
+def _allow_runtime_path(output_dir):
+    """Adds the resolved output folder to the running Blocks' `allowed_paths`, so that
+    Gradio agrees to serve index.html / the thumbnails should it have been changed in the UI
+    after launch. No effect when the Blocks is not launched yet."""
+    try:
+        d = os.path.abspath(_ab_resolve_dir(output_dir))
+        paths = getattr(_DEMO, "allowed_paths", None)
+        if paths is not None and d not in paths:
+            paths.append(d)
+            _dbg(f"asset-browser: allowed runtime path {d}")
+    except Exception as e:
+        _dbg(f"allow runtime path failed: {e}")
+
+
+def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
+    """The FORCE button: regenerates ALL the thumbnails (synchronously) + the link."""
+    _allow_runtime_path(output_dir)
+    try:
+        n, idx, _ = ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs,
+                               background_thumbs=False)
+    except Exception as e:
+        return "", f"Asset Browser reindex failed: {e}"
+    url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
+    link = (f'<a href="{url}" target="_blank" style="display:inline-block;padding:8px 14px;'
+            f'background:#3b4356;color:#fff;border-radius:6px;text-decoration:none;">'
+            f'\U0001F5BC️ Open Asset Browser ({n} images)</a>')
+    return link, f"Rebuilt all thumbnails for {n} image(s)."
+
+
+def _ui_gallery_open(output_dir):
+    """INSTANT opening: writes index.html and opens the tab right away, then (re)indexes
+    (the manifest + the thumbnails) in the background. The SPA loads the existing manifest
+    immediately and refreshes itself once the new index is ready."""
+    _allow_runtime_path(output_dir)
+    try:
+        idx = ab_open_fast(output_dir, _ab_get("thumbnail_size"), _ab_get("thumbnail_quality"),
+                           bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
+    except Exception as e:
+        return f"Gallery open failed: {e}", ""
+    # The LoRAs / Models catalogue (Asset Browser tabs), built in the background.
+    try:
+        threading.Thread(target=ab_build_catalog,
+                         args=(output_dir, cz_pipeline._lora_dirs(), cz_pipeline._checkpoint_dirs()),
+                         daemon=True).start()
+    except Exception as e:
+        _dbg(f"catalog build spawn failed: {e}")
+    url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
+    return "Opening Asset Browser in a new tab (indexing in background)...", url
+
+
+def _asset_focus_url(kind, name):
+    """Opens the Asset Browser straight on the 'loras' or 'models' tab, focused on
+    'name' (a card = the preview + the trigger words + examples) when it is a local file.
+    Used by the icons next to the LoRA / checkpoint dropdowns. Returns (status, url)."""
+    import urllib.parse
+    name = (name or "").strip()
+    out_dir = DEFAULT_OUTPUT_DIR
+    _allow_runtime_path(out_dir)
+    try:
+        idx = ab_open_fast(out_dir, _ab_get("thumbnail_size"), _ab_get("thumbnail_quality"),
+                           bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
+    except Exception as e:
+        return f"Asset Browser open failed: {e}", ""
+    # The catalogue is built SYNCHRONOUSLY here (it is fast: no hashing) so that the
+    # target is present in loras.json/models.json by the time the SPA focuses on it.
+    try:
+        ab_build_catalog(out_dir, cz_pipeline._lora_dirs(), cz_pipeline._checkpoint_dirs())
+    except Exception as e:
+        _dbg(f"catalog build (focus) failed: {e}")
+    focus = ""
+    if kind == "loras":
+        focus = name if name and name != "None" else ""            # list_loras -> a relative path
+    else:  # models: the HF base repo = no local file -> no focus (the tab alone)
+        if name and name not in ZIMAGE_BASE_REPOS:
+            focus = os.path.basename(name)                          # the models catalogue indexed by file name
+    url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/") + "?src=" + kind
+    if focus:
+        url += "&focus=" + urllib.parse.quote(focus)
+    tgt = f" → {focus}" if focus else ""
+    return (f"Opening Asset Browser ({kind}{tgt})…", url)
+
+
+# Registry of the running CivitAI jobs (the key = the .safetensors' absolute path).
+# Each state: {phase, frac (0..1 or null), text, done, ok, message}. Written by the fetch
+# thread, read by _api_job_progress (polled from the Asset Browser).
+_BG_JOBS = {}
+_BG_LOCK = threading.Lock()
+
+
+def _bg_job_set(key, **fields):
+    with _BG_LOCK:
+        st = _BG_JOBS.get(key) or {}
+        st.update(fields)
+        _BG_JOBS[key] = st
+
+
+def _ui_set_ab_cache(path):
+    """Changes the thumbnail cache folder (persisted + immediate effect for WRITING;
+    SERVING the thumbnails from a new path needs a restart: allowed_paths is frozen at
+    launch)."""
+    import cz_core
+    path = (path or "").strip()
+    cz_core._prefs["ab_cache_dir"] = path        # effet immediat (lu par _ab_get)
+    try:
+        _save_prefs_keys({"ab_cache_dir": path})
+    except Exception as e:
+        return f"Save failed: {e}"
+    if path.lower() == "output":
+        return ("✅ Thumbnails will live NEXT TO the images (<out>/_index/thumbs, relative "
+                "URLs — no restart needed).")
+    target = path or os.path.join(HERE, "cache")
+    try:
+        os.makedirs(target, exist_ok=True)
+    except Exception as e:
+        return f"Saved, but cannot create '{target}': {e}"
+    return (f"✅ Thumbnail cache → `{target}` (saved). New thumbnails are written there "
+            "now; **restart the app** so they can be served (allowed_paths is fixed at "
+            "launch), then Rebuild ALL thumbnails.")
+
+
+def _civitai_model_path(rel, kind):
+    """Absolute path of an Asset Browser entry, from its path RELATIVE to its own folder.
+
+    The catalogue lists the extra folders too (_lora_dirs / _checkpoint_dirs). Joining
+    that relative path to the MAIN folder alone answered "model file not found" for every
+    model stored elsewhere -- which is the normal case when the library lives outside the
+    app folder."""
+    rel = str(rel or "").strip()
+    if not rel:
+        return ""
+    return (cz_pipeline.resolve_lora_path(rel) if kind == "loras"
+            else cz_pipeline.resolve_checkpoint(rel))
+
+
+def _api_civitai_fetch(rel, kind):
+    """API (Asset Browser): starts a model's CivitAI enrichment IN THE BACKGROUND and
+    returns the job's key immediately. The client then polls civitai_progress.
+    A thread runs the fetch (preview + trigger words + examples), updates the state at every
+    phase, then rebuilds the LoRAs/Models catalogue."""
+    try:
+        import cz_civitai
+        path = _civitai_model_path(rel, kind)
+        key = os.path.abspath(path)
+        _bg_job_set(key, phase="start", frac=None, text="Starting…",
+                         done=False, ok=False, message="")
+
+        def _progress(phase, frac, text):
+            _bg_job_set(key, phase=phase, frac=frac, text=text, done=False)
+
+        def _work():
+            try:
+                res = cz_civitai.fetch_civitai_for_model(path, progress=_progress)
+                try:
+                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline._lora_dirs(),
+                                     cz_pipeline._checkpoint_dirs())
+                except Exception as e:
+                    _dbg(f"catalog rebuild after civitai fetch failed: {e}")
+                _bg_job_set(key, phase="done", frac=1.0, done=True,
+                                 ok=bool(res.get("success")),
+                                 text=res.get("message", "done"),
+                                 message=res.get("message", "done"))
+            except Exception as e:
+                _bg_job_set(key, phase="error", frac=None, done=True, ok=False,
+                                 text=f"error: {e}", message=f"error: {e}")
+
+        threading.Thread(target=_work, daemon=True).start()
+        return key
+    except Exception as e:
+        return f"error: {e}"
+
+
+def _api_thumbs_rebuild(kind):
+    """API (Asset Browser, the 'Rebuild thumbnails' button): FORCE-regenerates every
+    thumbnail of the current tab (outputs / loras / models), in parallel and in the
+    background. Returns a job key to poll through job_progress."""
+    try:
+        kind = (kind or "").strip() or "outputs"
+        key = "__thumbs__:" + kind
+        _bg_job_set(key, phase="start", i=0, n=0, text="Scanning…",
+                    done=False, ok=False, summary=None)
+
+        def _progress(done, total, name):
+            _bg_job_set(key, phase="thumbs", i=done, n=total, done=False,
+                        text=f"{name}")
+
+        def _work():
+            try:
+                _allow_runtime_path(DEFAULT_OUTPUT_DIR)
+                res = rebuild_thumbs(kind, DEFAULT_OUTPUT_DIR,
+                                     loras_dir=cz_pipeline._lora_dirs(),
+                                     checkpoints_dir=cz_pipeline._checkpoint_dirs(),
+                                     force=True, progress=_progress)
+                _bg_job_set(key, phase="done", done=True, ok=True, summary=res,
+                            text=(f"{res['made']} rebuilt, {res['failed']} failed "
+                                  f"({res['total']} total)"))
+            except Exception as e:
+                _bg_job_set(key, phase="error", done=True, ok=False,
+                            text=f"error: {e}", summary=None)
+
+        threading.Thread(target=_work, daemon=True).start()
+        return key
+    except Exception as e:
+        return f"error: {e}"
+
+
+def _api_job_progress(key):
+    """API (Asset Browser): the current state of a background job (JSON). done=true when
+    it is over. Serves all 3 job types: a per-model CivitAI fetch, a batch, a thumbnail
+    rebuild."""
+    with _BG_LOCK:
+        st = _BG_JOBS.get(key)
+        st = dict(st) if st else {"phase": "unknown", "frac": None, "text": "",
+                                  "done": True, "ok": False, "message": "no such job"}
+    return json.dumps(st)
+
+
+def _api_civitai_fetch_all(kind):
+    """API (Asset Browser, the 'Fetch all missing' button): enriches IN THE BACKGROUND
+    every missing model of the LoRAs or checkpoints folder (the same core as the .bat/.sh
+    script cz_civitai_batch). Returns a batch job key to poll through civitai_progress."""
+    try:
+        import cz_civitai_batch
+        import cz_civitai
+        kind = (kind or "").strip() or "loras"
+        key = "__batch__:" + kind
+        _bg_job_set(key, phase="start", i=0, n=0, text="Starting…",
+                         done=False, ok=False, summary=None)
+
+        def _progress(i, n, name, phase, text):
+            _bg_job_set(key, phase=phase, i=i, n=n, text=text, done=False)
+
+        def _work():
+            try:
+                api_key = getattr(cz_civitai, "API_KEY", None)
+                summary = cz_civitai_batch.run(
+                    kind=kind, api_key=api_key, progress=_progress,
+                    # the LIVE folders (changeable in the UI), EXTRAS INCLUDED: the
+                    # catalogue shows them, so "fetch all missing" must cover them.
+                    loras_dir=cz_pipeline._lora_dirs(),
+                    checkpoints_dir=cz_pipeline._checkpoint_dirs())
+                try:
+                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline._lora_dirs(),
+                                     cz_pipeline._checkpoint_dirs())
+                except Exception as e:
+                    _dbg(f"catalog rebuild after batch failed: {e}")
+                _bg_job_set(
+                    key, phase="done", done=True, ok=True, summary=summary,
+                    text=(f"enriched {summary['enriched']}, updated {summary['updated']}, "
+                          f"skipped {summary['skipped']}, failed {summary['failed']}"))
+            except Exception as e:
+                _bg_job_set(key, phase="error", done=True, ok=False,
+                                 text=f"error: {e}", summary=None)
+
+        threading.Thread(target=_work, daemon=True).start()
+        return key
+    except Exception as e:
+        return f"error: {e}"
+
+
+# delete_asset -> cz_assetbrowser.py (imported at the top; exposed through api_name in build_ui).
+# _pil_to_b64_jpeg -> cz_core.py (importe en tete).
+
+
+def _make_compare_html(src_img, result_img):
+    """A standalone before/after comparer: 2 stacked <img>, a range slider driving a
+    clip-path."""
+    if src_img is None or result_img is None:
+        return "<div style='padding:1em;color:#888'>No result to compare.</div>"
+    src_b64 = _pil_to_b64_jpeg(src_img)
+    res_b64 = _pil_to_b64_jpeg(result_img)
+    uid = uuid.uuid4().hex[:8]
+    return f"""
+<div style="position:relative; max-width:100%; user-select:none;">
+  <img src="data:image/jpeg;base64,{src_b64}" style="display:block; width:100%; height:auto;" alt="source" />
+  <img id="cmp-top-{uid}" src="data:image/jpeg;base64,{res_b64}"
+       style="position:absolute; top:0; left:0; display:block; width:100%; height:100%;
+              clip-path: inset(0 50% 0 0); -webkit-clip-path: inset(0 50% 0 0);" alt="resultat" />
+  <div id="cmp-bar-{uid}" style="position:absolute; top:0; left:50%; width:2px; height:100%;
+       background:#fff; box-shadow:0 0 4px rgba(0,0,0,0.5); pointer-events:none;"></div>
+  <input type="range" min="0" max="100" value="50"
+         oninput="
+           var v=this.value;
+           document.getElementById('cmp-top-{uid}').style.clipPath='inset(0 '+(100-v)+'% 0 0)';
+           document.getElementById('cmp-top-{uid}').style.webkitClipPath='inset(0 '+(100-v)+'% 0 0)';
+           document.getElementById('cmp-bar-{uid}').style.left=v+'%';
+         "
+         style="position:absolute; bottom:10px; left:5%; width:90%; height:14px; cursor:ew-resize;" />
+  <div style="position:absolute; top:8px; left:8px; padding:2px 8px; background:rgba(0,0,0,0.6); color:#fff;
+              font-size:12px; border-radius:4px; pointer-events:none;">BEFORE</div>
+  <div style="position:absolute; top:8px; right:8px; padding:2px 8px; background:rgba(0,0,0,0.6); color:#fff;
+              font-size:12px; border-radius:4px; pointer-events:none;">AFTER</div>
+</div>
+"""
+
+
+def _ui_run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed,
+            tile, overlap, offload_mode, refine_tile, refine_overlap, do_esrgan, guidance,
+            save_mode, output_dir, output_format):
+    """The UI adapter: calls run() and returns (result_image, html_slider, report_markdown)."""
+    set_offload_mode(offload_mode)
+    set_guidance(guidance)
+    last_result, last_source, report = run(
+        image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed,
+        tile, overlap, save_mode=save_mode, output_dir=output_dir,
+        output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
+        do_esrgan=bool(do_esrgan),
+    )
+    html = _make_compare_html(last_source, last_result)
+    return last_result, html, report
+
+
+def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upscale,
+                esrgan_model, factor, denoise, offload_mode):
+    """The txt2img UI adapter: generates then (optionally) upscales. Returns (image, report)."""
+    set_offload_mode(offload_mode)
+    set_guidance(guidance)
+    result, t = txt2img_run(prompt, width, height, gen_steps, seed, negative,
+                            upscale=bool(upscale), esrgan_model=esrgan_model,
+                            factor=factor, denoise=denoise, steps=DEFAULT_STEPS)
+    rep = f"txt2img **{result.size[0]}x{result.size[1]}** in **{t['txt2img']:.1f}s**"
+    if upscale:
+        rep += (f"  \nESRGAN **{t['esrgan']:.1f}s** + refine **{t['refine']:.1f}s** "
+                f"-> **{result.size[0]}x{result.size[1]}**")
+    return result, rep
+
+
+def _vram_hint(e):
+    """The advice attached to the report when a render fails for lack of VRAM, after the
+    cache has been emptied and cz_pipeline.retry_on_oom has tried again."""
+    if not cz_pipeline.is_oom(e):
+        return ""
+    return ("  \n**VRAM full**, even after clearing the cache: close the other GPU apps "
+            "(ComfyUI...), lower Image number, the upscale factor or the number of "
+            "references. If the next render fails too, restart crispz-flux3.")
+
+
+def _with_live_preview(fn):
+    """Makes a Generate handler show the image AS IT FORMS, in the result gallery.
+
+    The denoise drops a small projection of its latents into cz_pipeline at every step
+    (preview_snapshot). This wrapper turns the handler into a generator: it runs `fn` in
+    a thread and, while that thread works, hands each new frame to the gallery -- the
+    three other outputs left alone. The finished images then replace the last frame.
+
+    ONE component, ONE event writing it. An earlier design streamed the preview into a
+    second component from a SECOND event on the same button, because two concurrent
+    events writing the same output race and the loser could be the finished image. That
+    race cannot happen here: the frames and the result come out of the same generator,
+    in order.
+
+    `fn` keeps its fifteen exits untouched -- avoiding that rewrite is the whole point of
+    wrapping. The price is the worker thread: gradio's progress bar lives in context
+    variables bound to the calling thread, so the context is COPIED into it. Without that
+    copy, progress() there does nothing at all, silently.
+
+    With the live preview turned off in the config, the old direct call is used: no
+    thread, no generator behaviour change to inherit.
+"""
+    @functools.wraps(fn)
+    def _wrapped(*a, **kw):
+        if not cz_pipeline.LIVE_PREVIEW_ENABLED:
+            cz_pipeline.preview_begin()
+            try:
+                yield fn(*a, **kw)
+            finally:
+                cz_pipeline.preview_end()
+            return
+        box = {}
+
+        def _run():
+            try:
+                box["out"] = fn(*a, **kw)
+            except BaseException as exc:        # noqa: BLE001 - re-raised as is
+                box["err"] = exc
+
+        cz_pipeline.preview_begin()
+        worker = threading.Thread(target=contextvars.copy_context().run, args=(_run,),
+                                  name="cz-generate", daemon=True)
+        worker.start()
+        try:
+            last, n = -1, 0
+            while worker.is_alive():
+                p = cz_pipeline.preview_snapshot()
+                if p["img"] is not None and p["seq"] != last:
+                    last, n = p["seq"], n + 1
+                    yield [p["img"]], gr.update(), gr.update(), gr.update()
+                worker.join(_LIVE_PREVIEW_POLL)   # wakes as soon as the render is done
+        finally:
+            worker.join()
+            cz_pipeline.preview_end()
+        _dbg(f"live preview: {n} frame(s) shown")
+        if "err" in box:
+            raise box["err"]
+        yield box["out"]
+    return _wrapped
+
+
+def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
+                 input_mode, ref1, ref2, ref3, ref4, faceswap_enable, faceswap_src,
+                 width, height, gen_steps, image_number, seed, guidance, offload_mode,
+                 esrgan_model, do_esrgan, do_refine, refine_first, factor, denoise, refine_steps,
+                 tile, overlap, refine_tile, refine_overlap,
+                 save_mode, output_dir, output_format, history,
+                 auto_upscale=False,
+                 progress=gr.Progress(track_tqdm=True)):
+    """The unified Fooocus-style Generate button. Returns 4 outputs:
+    (the run's images, the report, history_state, history_gallery). The history accumulates
+    the session's renders (most recent first, capped at 200)."""
+    cz_pipeline._STOP = False
+    cz_pipeline._PROGRESS = lambda f, d: progress(f, desc=d)
+    progress(0.0, desc="Starting...")
+    # The image inputs are gr.ImageEditor (crop) -> extract the cropped PIL.
+    input_image = _editor_img(input_image)
+    faceswap_src = _editor_img(faceswap_src)
+    ref1, ref2, ref3, ref4 = (_editor_img(ref1), _editor_img(ref2),
+                              _editor_img(ref3), _editor_img(ref4))
+
+    def _done(imgs, rep, paths=None):
+        # FaceSwap post-processing (optional, gated). It applies to every mode.
+        if faceswap_enable and faceswap_src is not None and imgs:
+            try:
+                imgs = [_faceswap(im, faceswap_src) for im in imgs]
+                rep += " + faceswap"
+                paths = [None] * len(imgs)   # new images -> new paths
+                if save_mode != "display":
+                    for k, im in enumerate(imgs):
+                        dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                tag="faceswap", seed=seed, size=im.size,
+                                                index=(k + 1 if len(imgs) > 1 else 0))
+                        if dst:
+                            save_image(im, dst, output_format)
+                            paths[k] = dst
+            except Exception as e:
+                _log(f"faceswap error: {e}")
+                rep += f"  \n[faceswap skipped: {e}]"
+        # Gallery + history: the file's path (the real name at download time) when
+        # available, otherwise the PIL image (a preview). _dl_path keeps the preview intact
+        # either way.
+        paths = paths or [None] * len(imgs)
+        gallery = [_dl_path(imgs[i], paths[i] if i < len(paths) else None) for i in range(len(imgs))]
+        new_hist = (list(gallery) + list(history or []))[:200]
+        return gallery, rep, new_hist, new_hist
+
+    try:
+        set_offload_mode(offload_mode)
+        set_guidance(guidance)
+        # seed -1 resolved to a CONCRETE value for EVERY branch (Omni included):
+        # reproducible, remembered (the "Reuse last seed" button), written into the
+        # metadata, and needed by the {a|b|c} variants / wildcards tied to the seed.
+        base_seed = resolve_seed(seed)
+        cz_pipeline._LAST_SEED = base_seed
+
+        def _prep(s, i):
+            """The prompt of ONE image (seed s, index i in the batch): {a|b|c} variants +
+            wildcards of the positive and the negative, THEN styles. Returns (prompt,
+            negative, chosen styles)."""
+            p_i, n_i = expand_prompt_pair(prompt, negative, s, index=i)
+            chosen = _pick_styles(styles, style_random)
+            fp_i, fn_i = _apply_styles(p_i, n_i, chosen)
+            return fp_i, fn_i, chosen
+
+        mode = "img2img/upscale" if (use_input and input_image is not None) else "txt2img"
+        _log(f"Generate ({mode})")
+        _dbg(f"params: mode={mode} use_input={use_input} has_img={input_image is not None} "
+             f"size={int(width)}x{int(height)} gen_steps={int(gen_steps)} n={int(image_number)} "
+             f"seed={base_seed} guidance={float(guidance)} offload={offload_mode} styles={styles}")
+        _dbg(f"prompt='{(prompt or '')[:160]}' | negative='{(negative or '')[:80]}'")
+        # --- Omni multi-reference (a composition from several images) ---
+        # A guard rail: Omni is only routed to when an Omni model is configured. Otherwise
+        # (a stale UI in the browser, the mode left on Omni) we fall back to
+        # txt2img/img2img instead of failing.
+        omni_ready = bool((cz_pipeline.OMNI_MODEL or "").strip())
+        if use_input and input_mode == EDIT_MODE and omni_ready:
+            refs = [r for r in [ref1, ref2, ref3, ref4] if r is not None]
+            _dbg(f"omni: {len(refs)} ref(s), size={int(width)}x{int(height)}")
+            if not refs:
+                return _done([], "Edit: add at least one reference image.")
+            # As in txt2img: an "Image number" batch (each image replays the
+            # composition with seed+i, and the variants, wildcards and random style are
+            # drawn again per image), then upscale and the detailer. Omni only made one
+            # image and ignored those three settings without a word.
+            n = max(1, int(image_number))
+            images, img_paths, notes, total_t, upscaled = [], [], [], 0.0, False
+            for i in range(n):
+                if cz_pipeline._STOP:
+                    _log(f"stop requested after {i}/{n} image(s)")
+                    break
+                s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
+                progress(i / n, desc=f"Image {i + 1}/{n}")
+                full_prompt, full_negative, picked_styles = _prep(s, i)
+                if style_random:
+                    _log(f"random style #{i + 1}: {picked_styles}")
+                t0 = time.time()
+                try:
+                    img = cz_pipeline.retry_on_oom("omni", generate_omni, refs, full_prompt,
+                                                   full_negative, width, height, gen_steps, s)
+                except Exception as e:
+                    _log(f"omni error: {e}")
+                    # The images already produced stay displayed and saved.
+                    return _done(images, "  \n".join(notes + [f"Edit error: {e}{_vram_hint(e)}"]),
+                                 img_paths)
+                total_t += time.time() - t0
+                tag, gmode = "omni", "omni"
+                if auto_upscale:
+                    # The same chaining as in txt2img: Upscale (ESRGAN + refine), with
+                    # no manual action.
+                    progress((i + 0.5) / n, desc=f"Upscaling {i + 1}/{n}")
+                    base_img = img
+                    eff_denoise = float(denoise) if do_refine else 0.0
+                    try:
+                        img, ut = cz_pipeline.retry_on_oom(
+                            "upscale", process_one,
+                            base_img, esrgan_model, factor, eff_denoise, refine_steps,
+                            full_prompt, s, tile, overlap, refine_tile=refine_tile,
+                            refine_overlap=refine_overlap, do_esrgan=bool(do_esrgan),
+                            refine_first=bool(refine_first))
+                    except Exception as e:
+                        # The Omni image is already made: we keep it and say why.
+                        _log(f"omni upscale error: {e}")
+                        img = base_img
+                        notes.append(f"[image {i + 1}: upscale skipped: {e}]")
+                    else:
+                        total_t += ut.get("esrgan", 0.0) + ut.get("refine", 0.0)
+                        tag, gmode, upscaled = "omni_upscaled", "omni+upscale", True
+                        # Option: ALSO save the original Omni image (before the
+                        # upscale).
+                        if cz_pipeline._SAVE_PRE_UPSCALE and save_mode != "display":
+                            try:
+                                pre_dst = build_output_path(
+                                    None, save_mode, output_dir, output_format, tag="omni",
+                                    seed=s, size=base_img.size, index=(i + 1 if n > 1 else 0))
+                                if pre_dst:
+                                    save_image(base_img, pre_dst, output_format, meta=_gen_meta(
+                                        "omni", full_prompt, full_negative, s, gen_steps,
+                                        cz_pipeline.GUIDANCE, base_img.size,
+                                        styles=picked_styles, extra={"refs": len(refs)}))
+                                    _dbg(f"saved pre-upscale: {pre_dst}")
+                            except Exception as e:
+                                _dbg(f"pre-upscale save failed: {e}")
+                # The auto detailer (faces, hands) on the FINAL image (after the upscale, if any).
+                if cz_detailer.DETAILER_ENABLED:
+                    progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
+                    try:
+                        img, _nf = cz_detailer.detail_faces(
+                            img, full_prompt, s, steps=int(refine_steps),
+                            progress=lambda t: progress((i + 0.9) / n, desc=t))
+                    except Exception as e:
+                        _log(f"detailer failed: {e}")
+                if cz_detailer.HAND_ENABLED:
+                    progress((i + 0.92) / n, desc=f"Detailing hands {i + 1}/{n}")
+                    try:
+                        img, _nh = cz_detailer.detail_hands(
+                            img, full_prompt, s, steps=int(refine_steps),
+                            progress=lambda t: progress((i + 0.95) / n, desc=t))
+                    except Exception as e:
+                        _log(f"hand detailer failed: {e}")
+                images.append(img)
+                omni_dst = None
+                if save_mode != "display":
+                    try:
+                        omni_dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                     tag=tag, seed=s, size=img.size,
+                                                     index=(i + 1 if n > 1 else 0))
+                        if omni_dst:
+                            save_image(img, omni_dst, output_format, meta=_gen_meta(
+                                gmode, full_prompt, full_negative, s, gen_steps,
+                                cz_pipeline.GUIDANCE, img.size, styles=picked_styles,
+                                extra={"refs": len(refs),
+                                       **source_meta([ref1, ref2, ref3, ref4], "ref_images")}))
+                            _dbg(f"saved: {omni_dst}")
+                    except Exception as e:
+                        omni_dst = None
+                        _dbg(f"save failed: {e}")
+                img_paths.append(omni_dst)
+                # Between two images, torch's cache goes back to the driver: the
+                # onnxruntime detectors and the kernels loaded on demand have no access to
+                # it, and it was on the 4th image of an Omni + upscale + detailer batch that
+                # the card was full.
+                cz_pipeline.release_vram()
+            progress(1.0, desc="Done")
+            if not images:
+                return _done([], "Stopped before any image.")
+            suffix = " (stopped)" if cz_pipeline._STOP else ""
+            rep = (f"{'omni+upscale' if upscaled else 'omni'} x{len(images)} - "
+                   f"**{images[0].size[0]}x{images[0].size[1]}** in **{total_t:.1f}s** "
+                   f"from {len(refs)} ref(s){suffix}")
+            return _done(images, "  \n".join([rep] + notes), img_paths)
+        if use_input and input_image is not None:
+            # Refine (img2img) decoche -> denoise 0 = saute la passe de diffusion (lente).
+            eff_denoise = float(denoise) if do_refine else 0.0
+            # An "Image number" batch, as in txt2img: each image replays the refine
+            # with seed+i (wildcards + the random style drawn again per image). Without a
+            # refine (denoise 0) the output is deterministic -> n identical images: so it is
+            # clamped to 1.
+            n = max(1, int(image_number))
+            if eff_denoise <= 0.0 and n > 1:
+                _log(f"img2img: no refine (denoise 0) -> deterministic output, batch {n} -> 1")
+                n = 1
+            _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} do_refine={do_refine} "
+                 f"n={n} seed={base_seed} factor={factor} denoise={eff_denoise} "
+                 f"refine_steps={int(refine_steps)} tile={int(tile)} "
+                 f"refine_tile={int(refine_tile)} model={cz_pipeline.BASE_REPO} transformer={cz_pipeline.ZIMAGE_TRANSFORMER}")
+            images, img_paths, reports = [], [], []
+            for i in range(n):
+                if cz_pipeline._STOP:
+                    _log(f"stop requested after {i}/{n} image(s)")
+                    break
+                s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
+                progress(i / n, desc=f"Image {i + 1}/{n}")
+                fp, _fn, chosen = _prep(s, i)
+                if style_random:
+                    _log(f"random style #{i + 1}: {chosen}")
+                try:
+                    last_result, last_source, report = run(
+                        input_image, None, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
+                        tile, overlap, save_mode=save_mode, output_dir=output_dir,
+                        output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
+                        do_esrgan=bool(do_esrgan), refine_first=bool(refine_first), styles=chosen)
+                except Exception as e:
+                    _log(f"img2img/upscale error: {e}")
+                    msg = f"Upscale/img2img failed: {e}"
+                    if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                        msg += ("  \n**VRAM full** (another GPU app like ComfyUI still loaded? "
+                                "spill -> Windows TDR timeout). Close the other GPU apps, **restart "
+                                "crispz-flux3** (the CUDA context is dead), lower refine_tile / factor.")
+                    # The images already produced stay displayed/saved.
+                    return _done(images, "  \n".join(reports + [msg]), img_paths)
+                images.append(last_result)
+                # _LAST_RUN_DST = the file really saved by run() -> the real name at
+                # download time.
+                img_paths.append(_LAST_RUN_DST)
+                reports.append((f"**{i + 1}/{n}** (seed {s})  \n" if n > 1 else "") + report)
+            return _done(images, "  \n".join(reports), img_paths)
+        # txt2img (batch image_number)
+        n = max(1, int(image_number))
+        images, img_paths, total_t = [], [], 0.0
+        for i in range(n):
+            if cz_pipeline._STOP:
+                _log(f"stop requested after {i}/{n} image(s)")
+                break
+            s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
+            progress(i / n, desc=f"Image {i + 1}/{n}")
+            # {a|b|c} variants + wildcards + a random style, per image (seed s)
+            fp, fn, chosen = _prep(s, i)
+            if style_random:
+                _log(f"random style #{i + 1}: {chosen}")
+            img, t = cz_pipeline.retry_on_oom("txt2img", txt2img_run, fp, width, height,
+                                              gen_steps, s, fn, upscale=False,
+                                              steps=refine_steps)
+            total_t += t["txt2img"]
+            tag, gmode = "txt2img", "txt2img"
+            base_img = img   # the txt2img image before any upscale
+            # Optional chaining: an upscale (ESRGAN + refine) on the generated image,
+            # with no manual action. Reuses the same pipeline as the Upscale/img2img tab.
+            if auto_upscale:
+                progress((i + 0.5) / n, desc=f"Upscaling {i + 1}/{n}")
+                eff_denoise = float(denoise) if do_refine else 0.0
+                img, ut = cz_pipeline.retry_on_oom(
+                    "upscale", process_one,
+                    base_img, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
+                    tile, overlap, refine_tile=refine_tile, refine_overlap=refine_overlap,
+                    do_esrgan=bool(do_esrgan), refine_first=bool(refine_first))
+                total_t += ut.get("esrgan", 0.0) + ut.get("refine", 0.0)
+                tag, gmode = "upscaled", "txt2img+upscale"
+                # Option: ALSO save the original txt2img image (before the upscale).
+                if cz_pipeline._SAVE_PRE_UPSCALE and save_mode != "display":
+                    try:
+                        pre_dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                    tag="txt2img", seed=s, size=base_img.size,
+                                                    index=(i + 1 if n > 1 else 0))
+                        if pre_dst:
+                            save_image(base_img, pre_dst, output_format, meta=_gen_meta(
+                                "txt2img", fp, fn, s, gen_steps, cz_pipeline.GUIDANCE,
+                                base_img.size, styles=chosen))
+                            _dbg(f"saved pre-upscale: {pre_dst}")
+                    except Exception as e:
+                        _dbg(f"pre-upscale save failed: {e}")
+            # The auto detailer (faces) on the FINAL image (after the upscale, if any).
+            if cz_detailer.DETAILER_ENABLED:
+                progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
+                try:
+                    img, _nf = cz_detailer.detail_faces(
+                        img, fp, s, steps=int(refine_steps),
+                        progress=lambda t: progress((i + 0.9) / n, desc=t))
+                except Exception as e:
+                    _log(f"detailer failed: {e}")
+            if cz_detailer.HAND_ENABLED:
+                progress((i + 0.92) / n, desc=f"Detailing hands {i + 1}/{n}")
+                try:
+                    img, _nh = cz_detailer.detail_hands(
+                        img, fp, s, steps=int(refine_steps),
+                        progress=lambda t: progress((i + 0.95) / n, desc=t))
+                except Exception as e:
+                    _log(f"hand detailer failed: {e}")
+            images.append(img)
+            dst = None
+            if save_mode != "display":
+                try:
+                    dst = build_output_path(None, save_mode, output_dir, output_format,
+                                            tag=tag, seed=s, size=img.size,
+                                            index=(i + 1 if n > 1 else 0))
+                    if dst:
+                        save_image(img, dst, output_format, meta=_gen_meta(
+                            gmode, fp, fn, s, gen_steps, cz_pipeline.GUIDANCE,
+                            img.size, styles=chosen))
+                        _dbg(f"saved: {dst}")
+                except Exception as e:
+                    dst = None
+                    _dbg(f"save failed: {e}")
+            img_paths.append(dst)
+            cz_pipeline.release_vram()   # as in Omni: the cache goes back to the driver
+        progress(1.0, desc="Done")
+        if not images:
+            return _done([], "Stopped before any image.")
+        suffix = " (stopped)" if cz_pipeline._STOP else ""
+        _label = "txt2img+upscale" if auto_upscale else "txt2img"
+        rep = (f"{_label} x{len(images)} - **{images[0].size[0]}x{images[0].size[1]}** "
+               f"in **{total_t:.1f}s**{suffix}")
+        return _done(images, rep, img_paths)
+    finally:
+        cz_pipeline._PROGRESS = None
+
+
+def _pick_download(evt: gr.SelectData):
+    """A click on an image of the result -> a Download button pointing at the REAL file
+    (with its disk name), instead of the Gradio gallery's generic 'image'."""
+    try:
+        v = evt.value
+        path = None
+        if isinstance(v, dict):
+            img = v.get("image")
+            if isinstance(img, dict):
+                path = img.get("path") or img.get("name")
+            path = path or v.get("path") or v.get("name")
+        elif isinstance(v, (list, tuple)) and v:
+            path = v[0]
+        elif isinstance(v, str):
+            path = v
+        if path and os.path.isfile(str(path)):
+            return gr.DownloadButton(value=str(path), visible=True)
+    except Exception:
+        pass
+    return gr.DownloadButton(visible=False)
+
+
+# ---- Job queue: complete setting snapshots stacked up, run in series ----
+# Config: the "job_queue" block of config.txt. enabled=false -> NO component is created and
+# no handler is wired (the zero-cost contract when off).
+_JQ_CFG = CONFIG.get("job_queue") if isinstance(CONFIG.get("job_queue"), dict) else {}
+JOB_QUEUE_ENABLED = bool(_JQ_CFG.get("enabled", True))
+
+# Indices inside _gen_inputs (to be kept in sync with the list in build_ui).
+_Q_HISTORY_IDX = 34   # the session history is injected LIVE at run time, not taken from the snapshot
+_Q_IDX = {"prompt": 0, "use_input": 4, "input_mode": 6, "width": 13, "height": 14,
+          "gen_steps": 15, "image_number": 16, "seed": 17}
+# ref1..ref4 inside _gen_inputs. Serves the "Edit LoRA weight" axis, which only makes
+# sense on an edit job -- and an edit job means at least one reference.
+_Q_REF_IDX = (7, 8, 9, 10)
+
+
+def _q_model_state():
+    """A snapshot of the GLOBAL model state (outside _gen_inputs): checkpoint/transformer,
+    active LoRAs, sampler/schedule. Makes every job self-contained and reproducible.
+
+    The EDIT set is part of it now that an axis makes it vary: without it, an edit job
+    replayed by the queue picked up the UI's CURRENT edit set instead of its own --
+    reproducible in appearance only.
+"""
+    return {"base_repo": cz_pipeline.BASE_REPO,
+            "transformer": cz_pipeline.ZIMAGE_TRANSFORMER,
+            "loras": list(cz_pipeline.LORAS),
+            "edit_loras": list(cz_pipeline.EDIT_LORAS),
+            "edit_loras_enabled": bool(cz_pipeline.EDIT_LORAS_ENABLED),
+            "sampler": cz_pipeline.SAMPLER,
+            "schedule": cz_pipeline.SCHEDULE,
+            "text_encoder": cz_pipeline.TEXT_ENCODER}
+
+
+def _q_restore_model_state(ms):
+    """Restores a job's model state through the existing setters -> free_vram() fires
+    automatically if (and only if) the model changes between two jobs."""
+    if ms.get("base_repo"):
+        set_zimage_model(ms["base_repo"])
+    set_zimage_transformer(ms.get("transformer") or "")
+    # The text encoder: 'text_encoder' missing = a snapshot from before the option ->
+    # we leave it alone.
+    if "text_encoder" in ms:
+        cz_pipeline.set_text_encoder(ms.get("text_encoder") or "")
+    set_loras([(p, w) for p, w in (ms.get("loras") or [])])
+    # The edit set: applied hot on the same transformer, no reload.
+    # 'edit_loras' missing = a snapshot from before that axis -> we touch nothing.
+    if "edit_loras" in ms:
+        cz_pipeline.set_edit_loras([(p, w) for p, w in (ms.get("edit_loras") or [])])
+        cz_pipeline.set_edit_loras_enabled(ms.get("edit_loras_enabled", True))
+    set_sampler(ms.get("sampler") or "euler")
+    set_schedule(ms.get("schedule") or "sgm_uniform")
+
+
+def _q_label(vals, ms):
+    """A readable label for a job (its key parameters) from the snapshot.
+
+    The PROMPT comes first and the fields are pipe-separated: in a clickable list each row
+    is read left to right, and what tells two jobs apart is almost always the prompt, not
+    the mode. The rest keeps the same fields in the same words, so a label stays greppable.
+    """
+    mode = "img2img" if vals[_Q_IDX["use_input"]] else "txt2img"
+    model = os.path.basename(str(ms.get("transformer") or ms.get("base_repo") or "?"))
+    n = max(1, int(vals[_Q_IDX["image_number"]] or 1))
+    seed = int(vals[_Q_IDX["seed"]] if vals[_Q_IDX["seed"]] is not None else -1)
+    p = str(vals[_Q_IDX["prompt"]] or "").strip().replace("\n", " ")
+    parts = []
+    if p:
+        parts.append(f"{p[:48]}{'…' if len(p) > 48 else ''}")
+    parts += [mode, model,
+              f"{int(vals[_Q_IDX['width']])}x{int(vals[_Q_IDX['height']])}",
+              f"{int(vals[_Q_IDX['gen_steps']])} steps", f"seed {seed}", f"x{n}"]
+    return " | ".join(parts)
+
+
+def _q_picked(items, sel):
+    """`sel` -> a sorted list of valid indices. The panel sends a list (a CheckboxGroup),
+    the callers that touch one job send a bare index, and a fresh page sends None."""
+    if sel is None:
+        picked = []
+    elif isinstance(sel, (list, tuple, set)):
+        picked = [int(s) for s in sel]
+    else:
+        picked = [int(sel)]
+    return sorted({i for i in picked if 0 <= i < len(items)})
+
+
+def _q_move_many(items, sels, delta):
+    """Moves EVERY checked job one step (-1 up, +1 down), relative order kept.
+
+    A job blocked by the edge -- or by another CHECKED job that is itself blocked -- stays
+    where it is, so a selected block pressed against the top does not scramble when Up is
+    pressed again: it simply stops. Going up, the topmost selected job is handled first
+    (and the other way for down), otherwise they would swap with each other instead of
+    moving past the unselected ones.
+
+    Mutates the list IN PLACE (see _ui_queue_run) and returns (items, the new selection) --
+    the selection follows the jobs, which is the whole point of pressing Up twice.
+    """
+    if not isinstance(items, list):
+        items = []
+    idx = _q_picked(items, sels)
+    if not idx:
+        return items, []
+    step = -1 if int(delta) < 0 else 1
+    here = set(idx)                       # where the checked jobs are, as we move them
+    for i in (idx if step < 0 else reversed(idx)):
+        j = i + step
+        if not (0 <= j < len(items)) or j in here:
+            continue                      # the edge, or another checked job
+        items[i], items[j] = items[j], items[i]
+        here.discard(i)
+        here.add(j)
+    return items, sorted(here)
+
+
+def _q_remove_many(items, sels):
+    """Removes every checked job. Mutates IN PLACE; the selection comes back EMPTY rather
+    than landing on a neighbour: a second Remove on a selection you did not choose would
+    delete a job you never ticked."""
+    if not isinstance(items, list):
+        items = []
+    for i in reversed(_q_picked(items, sels)):     # from the end: the indices stay valid
+        items.pop(i)
+    return items, []
+
+
+def _q_choices(items):
+    """The job list as (label, index) pairs, for the tickable list.
+
+    Shared with build_ui on purpose. The components used to be built EMPTY while the
+    accordion title and the + Queue button were computed from the restored queue, so a
+    restart showed "Job queue (2 restored)", "+ Queue (2)" and an empty list -- nothing
+    renders the queue at page load, only an interaction does. Going through one function
+    is what stops the two sides drifting again.
+
+    '▶' marks the job that runs NEXT: the head of the queue, nothing to do with the
+    selection -- you can move or remove a job other than the one about to run.
+    """
+    return [(f"#{i + 1} {'▶ ' if i == 0 else ''}{it['label']}", i)
+            for i, it in enumerate(items)]
+
+
+def _q_summary(items):
+    """The one-line summary under the list (it used to repeat the list itself)."""
+    return (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
+            else "*Queue empty.*")
+
+
+def _q_render(items, sel=None):
+    """UI updates from the queue: (the job list, a one-line summary, the button label).
+
+    The first element drives a gr.CheckboxGroup -- one tickable row per job -- and NOT a
+    dropdown any more: reading the queue in one widget and selecting in another was two
+    places for one thing, and ticking several is what makes removing five of eight jobs one
+    Remove instead of ten clicks. It takes the same update shape as a dropdown, so this
+    function keeps its arity and its eleven callers are untouched.
+
+    `sel` is normalised through _q_picked, so a caller may pass a list, a bare index or
+    None: the ones that act on a single job did not have to change.
+
+    '▶' marks the job that runs NEXT, which is the head of the queue and has nothing to do
+    with the selection: you can move or remove a job other than the one about to run.
+
+    The Markdown stopped being a list for the same reason -- it duplicated the rows -- and
+    is now a one-line summary.
+    """
+    return (gr.update(choices=_q_choices(items), value=_q_picked(items, sel)),
+            _q_summary(items), gr.update(value=f"+ Queue ({len(items)})"))
+
+
+# --- Queue persistence (survives a restart / a crash) ---------------
+# A night's queue represents hours of settings: losing it because the app restarted is the
+# worst scenario. Saved on every mutation AND after every job.
+_Q_STORE = os.path.join(HERE, "cache", "queue.json")
+_Q_ASSETS = os.path.join(HERE, "cache", "queue_assets")
+Q_PERSIST = bool(_JQ_CFG.get("persist", True))
+
+
+def _q_json_ready(v, assets):
+    """Converts a Gradio component's value to JSON. The images (an input, a mask editor)
+    are written next to it and replaced by their path; whatever is not serialisable becomes
+    None rather than failing the whole save."""
+    from PIL import Image as _Img
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, _Img.Image):
+        os.makedirs(assets, exist_ok=True)
+        p = os.path.join(assets, f"q_{abs(hash((id(v), v.size)))}.png")
+        v.save(p)
+        return {"__img__": p}
+    if isinstance(v, dict):
+        return {k: _q_json_ready(x, assets) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_q_json_ready(x, assets) for x in v]
+    return None
+
+
+def _q_json_restore(v):
+    from PIL import Image as _Img
+    if isinstance(v, dict):
+        p = v.get("__img__")
+        if p:
+            try:
+                return _Img.open(p).convert("RGB") if os.path.isfile(p) else None
+            except Exception:
+                return None
+        return {k: _q_json_restore(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_q_json_restore(x) for x in v]
+    return v
+
+
+def _q_persist(items):
+    """Writes the queue to disk (best effort, never blocking for the UI)."""
+    if not Q_PERSIST:
+        return
+    try:
+        os.makedirs(os.path.dirname(_Q_STORE), exist_ok=True)
+        out = []
+        for job in (items or []):
+            vals = list(job.get("vals") or [])
+            if len(vals) > _Q_HISTORY_IDX:
+                vals[_Q_HISTORY_IDX] = None      # the history is injected at run time, not stored
+            out.append({"vals": _q_json_ready(vals, _Q_ASSETS),
+                        "ms": _q_json_ready(job.get("ms"), _Q_ASSETS),
+                        "label": job.get("label", ""),
+                        "xyz": job.get("xyz")})
+        tmp = _Q_STORE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "jobs": out}, f)
+        os.replace(tmp, _Q_STORE)
+    except Exception as e:
+        _log(f"queue not saved ({e})", mod="queue")
+
+
+def _q_load():
+    """Reloads the queue from disk at startup ([] when absent/unreadable)."""
+    if not Q_PERSIST or not os.path.isfile(_Q_STORE):
+        return []
+    try:
+        with open(_Q_STORE, encoding="utf-8") as f:
+            data = json.load(f)
+        jobs = []
+        for j in data.get("jobs") or []:
+            ms = _q_json_restore(j.get("ms")) or {}
+            # the LoRAs are (path, weight) pairs: JSON returns them as lists
+            ms["loras"] = [tuple(x) for x in (ms.get("loras") or []) if x]
+            jobs.append({"vals": _q_json_restore(j.get("vals")) or [],
+                         "ms": ms, "label": j.get("label", ""), "xyz": j.get("xyz")})
+        if jobs:
+            _log(f"{len(jobs)} job(s) restored from the previous session", mod="queue")
+        return jobs
+    except Exception as e:
+        _log(f"queue not restored ({e})", mod="queue")
+        return []
+
+
+def _ui_queue_add(*args):
+    """'+ Queue': freezes the 36 current values + the global model state, stacks them.
+    An IN-PLACE mutation of the state list (a shared object): a 'Run queue' already in
+    flight therefore sees the jobs added on the fly and runs them (see _ui_queue_run)."""
+    *vals, items = args
+    job = {"vals": list(vals), "ms": _q_model_state()}
+    job["label"] = _q_label(job["vals"], job["ms"])
+    if not isinstance(items, list):
+        items = []
+    items.append(job)
+    _log(f"job added ({len(items)} queued): {job['label']}", mod="queue")
+    _q_persist(items)
+    return (items, *_q_render(items, len(items) - 1))
+
+
+def _ui_queue_move(items, sel, delta):
+    """Up / Down: every TICKED job moves one step, relative order kept."""
+    items, sel = _q_move_many(items, sel, delta)
+    _q_persist(items)
+    return (items, *_q_render(items, sel))
+
+
+def _ui_queue_remove(items, sel):
+    """Remove: every TICKED job goes, in one click."""
+    items, sel = _q_remove_many(items, sel)
+    _q_persist(items)
+    return (items, *_q_render(items, sel))
+
+
+def _ui_queue_clear(items):
+    """Empties the queue IN-PLACE: this also interrupts the stacking of a running run."""
+    _log("queue cleared", mod="queue")
+    if isinstance(items, list):
+        items.clear()
+    else:
+        items = []
+    _q_persist(items)
+    return (items, *_q_render(items))
+
+
+def _ui_queue_reload():
+    """Re-seeds the queue panel from DISK on every page load.
+
+    _q_restored is read once, when build_ui runs, and gr.State hands each session a copy
+    of it. So the module-level snapshot never changes: clear the queue, reload the page,
+    and the cleared jobs came back while queue.json said 0. Building the panel from that
+    snapshot fixed the empty list but inherited the staleness.
+
+    Reading the file here is what makes a page load agree with what is persisted -- and
+    _q_persist writes on every mutation, so the file is the live truth.
+    """
+    items = _q_load()
+    return (items, *_q_render(items))
+
+
+_QUEUE_PAUSE = False
+
+
+def _q_request_pause():
+    """A soft PAUSE of the queue: the running job FINISHES cleanly, then the queue
+    suspends itself (Run queue resumes it). Unlike Stop, which interrupts the render in
+    mid-flight - and now leaves the interrupted job IN THE QUEUE so that it is re-run whole
+    on resume (before, it was thrown away)."""
+    global _QUEUE_PAUSE
+    _QUEUE_PAUSE = True
+    _log("pause requested: finishing the current job, then halting", mod="queue")
+    return "*⏸ Pause requested — the current job will finish, then the queue halts.*"
+
+
+
+def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
+    """Runs the queue in series. Each job restores its model state (an automatic VRAM
+    purge on a change) then replays _ui_generate.
+
+    Two ways to stop, both WITHOUT losing jobs (the queue is persisted):
+      - ⏸ Pause: finishes the running job then suspends; the rest remain.
+      - Stop: interrupts the job in mid-flight; the INTERRUPTED job stays in the queue
+        (it was not done) and will be re-run whole on resume.
+
+    We operate IN-PLACE on the shared state object (no copy): the jobs added during the
+    run (through '+ Queue') are therefore taken into account and run on the fly, and the
+    return value never overwrites the queue with a stale snapshot.
+"""
+    global _QUEUE_PAUSE
+    _QUEUE_PAUSE = False
+    if not isinstance(items, list):
+        items = []
+    if not items:
+        return (items, *_q_render(items), gr.update(), "*Queue empty.*", history, history)
+    done, gallery_all, rep = 0, [], ""
+    touched_gids = set()
+    while items:
+        job = items[0]
+        _log(f"running job {done + 1} ({len(items) - 1} more queued): {job['label']}", mod="queue")
+        try:
+            _q_restore_model_state(job["ms"])
+            vals = list(job["vals"])
+            vals[_Q_HISTORY_IDX] = history
+            g, rep, history, _hg = _ui_generate(*vals, progress=progress)
+            gallery_all.extend(list(g or []))
+            # A cell of an X/Y/Z grid: remembers the 1st image (downscaled) for the
+            # contact sheet.
+            xj = job.get("xyz")
+            if xj and g:
+                try:
+                    im = _as_pil(g[0])
+                    if im is not None:
+                        im = im.copy()
+                        im.thumbnail((XYZ_THUMB, XYZ_THUMB), Image.LANCZOS)
+                        meta = _XYZ_PENDING.get(xj["gid"])
+                        if meta is not None:
+                            meta.setdefault("cells", {})[(xj["ix"], xj["iy"], xj["iz"])] = im
+                            touched_gids.add(xj["gid"])
+                except Exception as e:
+                    _log(f"cell capture failed ({e})", mod="xyz")
+        except Exception as e:
+            _log(f"job failed ({e}); continuing with next", mod="queue")
+            rep = f"Job failed: {e}"
+        if cz_pipeline._STOP:
+            # A job INTERRUPTED in mid-flight: it stays at the head of the queue (it
+            # was not finished) and will be re-run whole on resume.
+            _q_persist(items)
+            _log(f"stopped mid-job; the interrupted job stays queued "
+                 f"({len(items)} job(s) in the queue)", mod="queue")
+            break
+        done += 1
+        items.pop(0)
+        # Persisted after EVERY job: a crash / a power cut in the middle of a night's
+        # queue only costs the running job, not the ones after it.
+        _q_persist(items)
+        if _QUEUE_PAUSE:
+            _log(f"paused after the current job; {len(items)} job(s) remaining",
+                 mod="queue")
+            break
+    # Assembling the X/Y/Z contact sheets touched during this run (cells accumulated
+    # across pause/resume). A gid is freed once no job of that grid is in the queue any
+    # more.
+    for gid in sorted(touched_gids):
+        meta = _XYZ_PENDING.get(gid)
+        if not meta:
+            continue
+        try:
+            for p in _xyz_assemble(meta, meta.get("cells", {}), thumb=XYZ_THUMB):
+                gallery_all.append(_dl_path(Image.open(p), p))
+        except Exception as e:
+            _log(f"assembly failed ({e})", mod="xyz")
+        if not any((j.get("xyz") or {}).get("gid") == gid for j in items):
+            _XYZ_PENDING.pop(gid, None)
+    if items and cz_pipeline._STOP:
+        status = (f"Queue stopped after {done} completed job(s) — the interrupted "
+                  f"job stays queued, {len(items)} remaining (Run queue to resume).")
+    elif items and _QUEUE_PAUSE:
+        status = f"⏸ Queue paused after {done} job(s) — {len(items)} remaining (Run queue to resume)."
+    else:
+        status = f"Queue done: {done} job(s)."
+    return (items, *_q_render(items), gallery_all, f"{status}  \n{rep}", history, history)
+
+
+# ---- X/Y/Z grid: parameter combos -> Job queue jobs + an annotated contact sheet ----
+# Config: the "xyz_grid" block of config.txt. Requires job_queue (it reuses the snapshots,
+# the runner and the Stop pause). enabled=false -> no component, zero cost.
+_XYZ_CFG = CONFIG.get("xyz_grid") if isinstance(CONFIG.get("xyz_grid"), dict) else {}
+XYZ_FEATURE_ENABLED = bool(_XYZ_CFG.get("enabled", True))          # feature (UI + CLI)
+XYZ_ENABLED = XYZ_FEATURE_ENABLED and JOB_QUEUE_ENABLED            # panneau UI (via la file)
+XYZ_MAX_JOBS = int(_XYZ_CFG.get("max_jobs", 100))
+XYZ_THUMB = int(_XYZ_CFG.get("thumb", 512))
+
+# Axis table: kind=val -> _gen_inputs[idx] on the UI side, an abstract param on the CLI
+# side (cz_cli --xyz); kind=ms -> model state; the special kinds are handled in _xyz_apply.
+# choices=callable -> a closed list evaluated at build time.
+_XYZ_AXES = {
+    "(none)":       None,
+    "Checkpoint":   {"kind": "checkpoint"},
+    "Sampler":      {"kind": "ms", "key": "sampler", "choices": lambda: list(SAMPLER_CHOICES)},
+    # SCHEDULE_INPUTS rather than SCHEDULE_CHOICES: 'simple' (an alias of sgm_uniform)
+    # is accepted here too -- this is precisely where a CivitAI recipe gets copied as is.
+    "Schedule":     {"kind": "ms", "key": "schedule", "choices": lambda: list(SCHEDULE_INPUTS)},
+    "Steps":        {"kind": "val", "idx": 15, "cast": int, "param": "gen_steps"},
+    "Guidance":     {"kind": "val", "idx": 18, "cast": float, "param": "guidance"},
+    "Seed":         {"kind": "val", "idx": 17, "cast": int, "param": "seed"},
+    "ESRGAN model": {"kind": "val", "idx": 20, "cast": str, "param": "esrgan",
+                     "choices": lambda: list_esrgan_models()},
+    "Factor":       {"kind": "val", "idx": 24, "cast": float, "param": "factor"},
+    "Denoise":      {"kind": "val", "idx": 25, "cast": float, "param": "denoise"},
+    "Tile":         {"kind": "val", "idx": 27, "cast": int, "param": "tile"},
+    "Refine tile":  {"kind": "val", "idx": 29, "cast": int, "param": "refine_tile"},
+    "LoRA weight":  {"kind": "lora_weight"},
+    # The weight of the EDIT set (the omni pipe), distinct from the base set. It only
+    # has an effect on an EDIT job: _ui_generate only applies EDIT_LORAS on its omni branch
+    # (use_input + the EDIT_MODE mode + at least one reference). The axis checks
+    # that and REFUSES rather than rendering N identical images without a word.
+    "Edit LoRA weight": {"kind": "edit_lora_weight"},
+    # Comparing several LoRAs in slot 1: epochs of the same training run, CivitAI
+    # versions of the same model. The current weight is kept; the "LoRA + weight" axis
+    # varies both together ("my_lora.safetensors:0.8").
+    "LoRA":         {"kind": "lora_name"},
+    "LoRA + weight": {"kind": "lora_name_weight"},
+    "Performance":  {"kind": "performance"},
+    # An A/B test of WHOLE prompts: each value replaces the entire prompt (the quotes
+    # protect the internal commas). Different from Prompt S/R, which only replaces one
+    # term.
+    "Prompt":       {"kind": "prompt"},
+    "Prompt S/R":   {"kind": "sr"},
+}
+
+
+# Autosuggest for the value fields (the "suggest" subkey of the xyz_grid block).
+XYZ_SUGGEST = bool(_XYZ_CFG.get("suggest", True))
+
+# Classic calibration values offered for the numeric axes.
+_XYZ_CALIB = {
+    "Steps": "4, 8, 12, 20, 28",
+    "Guidance": "0, 2, 3.5, 5",
+    "Seed": "-1, 42, 1234",
+    "Factor": "1.5, 2, 3, 4",
+    "Denoise": "0.2, 0.3, 0.4",
+    "Tile": "384, 512, 768",
+    "Refine tile": "0, 768, 1024",
+    "LoRA weight": "0.4, 0.7, 1.0",
+    # Negative weights invert the LoRA's effect and are within the default bounds
+    # (-2..2): a sweep centred on 0 shows both directions and the reference.
+    "Edit LoRA weight": "-0.4, -0.2, 0, 0.2, 0.4",
+}
+
+
+def _xyz_csv_join(values):
+    """Joins values into CSV that _xyz_parse_values can parse back: quotes the ones that
+    contain a comma or a quote (doubling the internal quotes)."""
+    out = []
+    for v in map(str, values):
+        if "," in v or '"' in v:
+            out.append('"' + v.replace('"', '""') + '"')
+        else:
+            out.append(v)
+    return ", ".join(out)
+
+
+def _xyz_current_lora_weight(default=0.8):
+    """The weight of the first active LoRA slot, to pre-fill the 'LoRA + weight' axis and
+    to keep the current setting when the 'LoRA' axis only varies the name."""
+    try:
+        cur = list(cz_pipeline.LORAS or [])
+        if cur:
+            return float(cur[0][1])
+    except Exception:
+        pass
+    return float(default)
+
+
+def _xyz_suggestions(axis):
+    """An axis' contextual suggestions: (insertable text, placeholder). The app's closed
+    lists for the finite choices, calibration for the numeric ones, help for S/R."""
+    spec = _XYZ_AXES.get(axis)
+    if not spec:
+        return "", "pick an axis first"
+    kind = spec.get("kind")
+    if kind == "prompt":
+        return "", 'prompt A, "prompt B, with a comma", prompt C  (__wildcards__ ok)'
+    if kind == "sr":
+        return "", 'search term, replacement1, "replacement, with comma", ...'
+    if kind == "checkpoint":
+        names = ZIMAGE_BASE_REPOS + list_checkpoints()
+        return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
+    if kind in ("lora_name", "lora_name_weight"):
+        names = ["None"] + list_loras()
+        if kind == "lora_name_weight":
+            # the current weight is appended: the inserted list is directly editable,
+            # only the numbers are left to change.
+            w = _xyz_current_lora_weight()
+            names = [n if n == "None" else f"{n}:{w}" for n in names]
+        ph = (f"e.g. {_xyz_csv_join(names[1:3])}" if len(names) > 1
+              else f"no LoRA found in {cz_pipeline.LORAS_DIR}")
+        return _xyz_csv_join(names), ph
+    if kind == "performance":
+        names = list(PERFORMANCE)
+        return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
+    choices = spec.get("choices")
+    if choices:
+        try:
+            names = list(choices())
+        except Exception:
+            names = []
+        return _xyz_csv_join(names), (f"e.g. {_xyz_csv_join(names[:3])}" if names else "no items found")
+    calib = _XYZ_CALIB.get(axis, "")
+    return calib, (f"e.g. {calib}" if calib else "comma-separated values")
+
+
+def _ui_xyz_axis_changed(axis):
+    """Changes the axis -> the values field's contextual placeholder."""
+    _fill, ph = _xyz_suggestions(axis)
+    return gr.update(placeholder=ph)
+
+
+def _ui_xyz_fill(axis, current):
+    """The suggest button: inserts the complete list (closed choices / calibration) when
+    the field is empty, otherwise leaves the user's input alone."""
+    fill, _ph = _xyz_suggestions(axis)
+    if not fill or (current or "").strip():
+        return gr.update()
+    return gr.update(value=fill)
+
+
+def _xyz_parse_values(s):
+    """Parses a CSV value field; the quotes protect the commas (the csv stdlib). Returns
+    the list of non-empty values.
+
+    NEWLINES are separators, just like the comma. Pasting a list over several lines is a
+    normal gesture, and `csv.reader([s])` answered it with `_csv.Error: new-line character
+    seen in unquoted field` -- a Gradio trace in the console, and nothing at all on the
+    interface side. Reading the field as a FILE (StringIO, newline='') is exactly the
+    "universal-newline mode" that message asked for: the lines become lines again, CRLF
+    included, and a value that REALLY contains a newline gets quoted -- like a comma.
+
+    Never lets a csv.Error escape: it leaves as a readable ValueError, which _ui_xyz_build
+    shows in its error channel instead of dumping a trace.
+"""
+    if not (s or "").strip():
+        return []
+    out = []
+    try:
+        for row in csv.reader(io.StringIO(s, newline=""), skipinitialspace=True):
+            out.extend(v.strip() for v in row)
+    except csv.Error as e:
+        raise ValueError(f"unreadable value list ({e})") from e
+    return [v for v in out if v]
+
+
+def _xyz_match(value, choices):
+    """Resolves `value` inside a closed list: an exact case-insensitive match, otherwise a
+    unique substring. Returns (choice, None) or (None, an error message)."""
+    v = str(value).lower().strip()
+    exact = [c for c in choices if str(c).lower() == v]
+    if exact:
+        return exact[0], None
+    part = [c for c in choices if v in str(c).lower()]
+    if len(part) == 1:
+        return part[0], None
+    if not part:
+        return None, f"'{value}' not found (choices: {', '.join(map(str, choices))[:120]})"
+    return None, f"'{value}' is ambiguous ({', '.join(map(str, part))[:120]})"
+
+
+def _xyz_validate_axis(name, raw_values, base_vals, base_ms):
+    """Validates/normalises an axis' values BEFORE the build. Returns (values, None) or
+    (None, an error message)."""
+    spec = _XYZ_AXES.get(name)
+    if not spec:
+        return None, f"unknown axis '{name}'"
+    if not raw_values:
+        return None, f"{name}: no values"
+    kind = spec.get("kind")
+    if kind == "prompt":
+        # whole prompts, as they are (the quotes have already protected the commas)
+        return [str(v) for v in raw_values], None
+    if kind == "sr":
+        term = raw_values[0]
+        if len(raw_values) < 2:
+            return None, "Prompt S/R needs the search term + at least one replacement"
+        if term not in str(base_vals[_Q_IDX["prompt"]] or ""):
+            return None, f"Prompt S/R: '{term}' not found in the prompt"
+        return list(raw_values), None
+    if kind == "lora_weight":
+        if not base_ms.get("loras"):
+            return None, "LoRA weight: no active LoRA (pick one in Models first)"
+        try:
+            return [float(v) for v in raw_values], None
+        except ValueError as e:
+            return None, f"LoRA weight: {e}"
+    if kind == "edit_lora_weight":
+        if not base_ms.get("edit_loras"):
+            return None, ("Edit LoRA weight: no active edit LoRA (pick one in "
+                          "Models > LoRA, section Edit LoRA)")
+        # The edit set is only applied by _ui_generate's omni branch. On a
+        # txt2img/img2img job it would never apply and the grid would render N IDENTICAL
+        # images, with no error and no explanation -- the worst possible outcome.
+        # So it is refused here, saying what to tick.
+        if not (base_vals[_Q_IDX["use_input"]]
+                and str(base_vals[_Q_IDX["input_mode"]]) == EDIT_MODE
+                and any(base_vals[i] is not None for i in _Q_REF_IDX)):
+            return None, ("Edit LoRA weight only bites on an EDIT run, and this grid "
+                          "is not one: tick 'Use input image', set the mode to "
+                          f"'{EDIT_MODE}', add at least one reference image, then "
+                          "rebuild. (On a txt2img grid the edit set is never applied "
+                          "-- every cell would come out identical.)")
+        if not base_ms.get("edit_loras_enabled", True):
+            return None, ("Edit LoRA weight: the 'Edit LoRAs' checkbox is OFF in "
+                          "Models > LoRA, so the set is remembered but never applied. "
+                          "Tick it, then rebuild.")
+        try:
+            return [float(v) for v in raw_values], None
+        except ValueError as e:
+            return None, f"Edit LoRA weight: {e}"
+    if kind == "performance":
+        out = []
+        for v in raw_values:
+            m, err = _xyz_match(v, list(PERFORMANCE))
+            if err:
+                return None, f"Performance: {err}"
+            out.append(m)
+        return out, None
+    if kind == "checkpoint":
+        choices = ZIMAGE_BASE_REPOS + list_checkpoints()
+        out = []
+        for v in raw_values:
+            m, err = _xyz_match(v, choices)
+            if err:
+                return None, f"Checkpoint: {err}"
+            out.append(m)
+        return out, None
+    if kind in ("lora_name", "lora_name_weight"):
+        choices = list_loras()
+        if not choices:
+            return None, f"LoRA: no file found in {cz_pipeline.LORAS_DIR}"
+        out = []
+        for v in raw_values:
+            raw = str(v).strip()
+            weight = None
+            if kind == "lora_name_weight":
+                raw, _, w = raw.rpartition(":")   # the last ':' -> Windows paths get through
+                if not raw:
+                    return None, (f"LoRA + weight: '{v}' must be written name:weight "
+                                  "(e.g. my_lora.safetensors:0.8)")
+                try:
+                    weight = float(w.strip().replace(",", "."))
+                except ValueError:
+                    return None, f"LoRA + weight: invalid weight in '{v}' (expected name:0.8)"
+                raw = raw.strip()
+            if raw.lower() in ("none", "-"):      # the control cell: no LoRA at all
+                out.append(("None", weight))
+                continue
+            m, err = _xyz_match(raw, choices)
+            if err:
+                return None, f"LoRA: {err}"
+            out.append((m, weight))
+        return out, None
+    choices = spec.get("choices")
+    if choices:
+        out = []
+        for v in raw_values:
+            m, err = _xyz_match(v, choices())
+            if err:
+                return None, f"{name}: {err}"
+            out.append(m)
+        return out, None
+    cast = spec.get("cast", str)
+    try:
+        return [cast(v) for v in raw_values], None
+    except ValueError:
+        return None, f"{name}: non-numeric value in {raw_values}"
+
+
+def _xyz_apply(name, value, vals, ms):
+    """Applies an axis' value to a snapshot (vals, ms) — an in-place mutation."""
+    spec = _XYZ_AXES[name]
+    kind = spec.get("kind")
+    if kind == "val":
+        vals[spec["idx"]] = value
+    elif kind == "ms":
+        ms[spec["key"]] = value
+    elif kind == "checkpoint":
+        if value in ZIMAGE_BASE_REPOS:
+            ms["base_repo"], ms["transformer"] = value, None
+        else:
+            ms["transformer"] = resolve_checkpoint(value)
+    elif kind == "lora_weight":
+        ms["loras"] = [(p, float(value)) for p, _w in (ms.get("loras") or [])]
+    elif kind == "edit_lora_weight":
+        ms["edit_loras"] = [(p, float(value)) for p, _w in (ms.get("edit_loras") or [])]
+    elif kind in ("lora_name", "lora_name_weight"):
+        name, weight = value
+        if weight is None:                       # the "LoRA" axis: the current weight is kept
+            cur = list(ms.get("loras") or [])
+            weight = float(cur[0][1]) if cur else _xyz_current_lora_weight()
+        if name == "None":
+            ms["loras"] = []
+        else:
+            # replaces slot 1 and leaves the other active slots untouched
+            rest = list(ms.get("loras") or [])[1:]
+            ms["loras"] = [(_path_for_lora(name), float(weight))] + rest
+    elif kind == "performance":
+        st, g = PERFORMANCE[value]
+        vals[_Q_IDX["gen_steps"]], vals[18] = int(st), float(g)
+    elif kind == "prompt":
+        vals[_Q_IDX["prompt"]] = str(value)
+    elif kind == "sr":
+        term = spec["_term"]
+        if str(value) != term:
+            vals[_Q_IDX["prompt"]] = str(vals[_Q_IDX["prompt"]] or "").replace(term, str(value))
+
+
+def _xyz_fmt_value(axis, value, maxlen=28):
+    """A short label for an axis value, for the job label and for the contact sheet's
+    headers. The LoRA axes carry (name, weight) tuples and long file names: so the base name
+    without its extension is shown, truncated from the LEFT — the LoRAs being compared often
+    differ only by their suffix (..._e000010 / ..._e000020), and cutting the end would make
+    every column look identical.
+"""
+    kind = (_XYZ_AXES.get(axis) or {}).get("kind")
+    if kind == "prompt":
+        # long prompts -> the start of the prompt (that is where what varies in an A/B
+        # goes)
+        s = " ".join(str(value).split())
+        return s if len(s) <= maxlen else s[:maxlen - 3] + "..."
+    if kind not in ("lora_name", "lora_name_weight"):
+        return str(value)
+    name, weight = value if isinstance(value, tuple) else (value, None)
+    if name != "None":
+        name = os.path.splitext(os.path.basename(str(name)))[0]
+    if len(name) > maxlen:
+        name = "..." + name[-(maxlen - 3):]
+    if weight is not None:
+        w = int(weight) if float(weight) == int(weight) else weight
+        name = f"{name}@{w}"
+    return name
+
+
+def _xyz_build_jobs(axes, base_vals, base_ms):
+    """Builds the jobs of the cross product. axes = an ordered list [(name, values)] for
+    X (required), Y, Z (optional). Returns (jobs, meta) — meta describes the contact sheet."""
+    gid = time.strftime("%Y%m%d_%H%M%S")
+    (xn, xv) = axes[0]
+    (yn, yv) = axes[1] if len(axes) > 1 else (None, [None])
+    (zn, zv) = axes[2] if len(axes) > 2 else (None, [None])
+    # Prompt S/R: remembers the term searched for (the 1st value) for _xyz_apply.
+    for n, v in axes:
+        if _XYZ_AXES[n].get("kind") == "sr":
+            _XYZ_AXES[n]["_term"] = str(v[0])
+    jobs = []
+    for iz, z in enumerate(zv):
+        for iy, y in enumerate(yv):
+            for ix, x in enumerate(xv):
+                vals, ms = list(base_vals), dict(base_ms, loras=list(base_ms.get("loras") or []))
+                _xyz_apply(xn, x, vals, ms)
+                if yn is not None:
+                    _xyz_apply(yn, y, vals, ms)
+                if zn is not None:
+                    _xyz_apply(zn, z, vals, ms)
+                parts = ([f"{xn}={_xyz_fmt_value(xn, x)}"]
+                         + ([f"{yn}={_xyz_fmt_value(yn, y)}"] if yn else [])
+                         + ([f"{zn}={_xyz_fmt_value(zn, z)}"] if zn else []))
+                jobs.append({"vals": vals, "ms": ms, "label": "xyz · " + " · ".join(parts),
+                             "xyz": {"gid": gid, "ix": ix, "iy": iy, "iz": iz}})
+    meta = {"gid": gid, "x": (xn, [_xyz_fmt_value(xn, v) for v in xv]),
+            "y": (yn, [_xyz_fmt_value(yn, v) for v in yv]) if yn else None,
+            "z": (zn, [_xyz_fmt_value(zn, v) for v in zv]) if zn else None,
+            "out_dir": str(base_vals[32] or DEFAULT_OUTPUT_DIR)}
+    return jobs, meta
+
+
+def _as_pil(item):
+    """A PIL from a gallery item (_dl_path: a str path or a PIL)."""
+    if isinstance(item, str):
+        return Image.open(item).convert("RGB")
+    if isinstance(item, (tuple, list)) and item:
+        return _as_pil(item[0])
+    return item.convert("RGB") if item is not None else None
+
+
+def _xyz_font(size):
+    from PIL import ImageFont
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _xyz_assemble(meta, cells, thumb=512):
+    """Assembles the annotated contact sheets (one per Z value): X in columns, Y in rows,
+    letterboxed `thumb`px thumbnails, margins for the labels. cells = {(ix,iy,iz): PIL}.
+    Returns the list of saved paths."""
+    from PIL import ImageDraw
+    xn, xv = meta["x"]
+    yn, yv = meta["y"] if meta["y"] else (None, [""])
+    zn, zv = meta["z"] if meta["z"] else (None, [""])
+    left = 200 if yn else 20
+    top_hdr, top_lbl = 44, 40
+    bg, fg, line = (17, 24, 42), (223, 230, 242), (60, 72, 100)
+    f_lbl, f_hdr = _xyz_font(22), _xyz_font(26)
+    out_root = _ab_resolve_dir(meta["out_dir"])
+    sheet_dir = os.path.join(out_root, f"xyz_{meta['gid']}")
+    os.makedirs(sheet_dir, exist_ok=True)
+    saved = []
+    for iz, z in enumerate(zv):
+        w = left + len(xv) * (thumb + 8) + 20
+        h = top_hdr + top_lbl + len(yv) * (thumb + 8) + 20
+        sheet = Image.new("RGB", (w, h), bg)
+        d = ImageDraw.Draw(sheet)
+        hdr = f"X: {xn}" + (f"  ·  Y: {yn}" if yn else "") + (f"  ·  Z: {zn} = {z}" if zn else "")
+        d.text((left, 10), hdr, fill=fg, font=f_hdr)
+        for ix, x in enumerate(xv):
+            cx = left + ix * (thumb + 8)
+            d.text((cx + 6, top_hdr + 8), str(x)[:40], fill=fg, font=f_lbl)
+        for iy, y in enumerate(yv):
+            cy = top_hdr + top_lbl + iy * (thumb + 8)
+            if yn:
+                d.text((10, cy + thumb // 2 - 12), str(y)[:22], fill=fg, font=f_lbl)
+            for ix in range(len(xv)):
+                cx = left + ix * (thumb + 8)
+                img = cells.get((ix, iy, iz))
+                if img is None:
+                    d.rectangle([cx, cy, cx + thumb, cy + thumb], outline=line, width=2)
+                    d.text((cx + thumb // 2 - 8, cy + thumb // 2 - 12), "—", fill=line, font=f_hdr)
+                    continue
+                t = img.copy()
+                t.thumbnail((thumb, thumb), Image.LANCZOS)
+                sheet.paste(t, (cx + (thumb - t.width) // 2, cy + (thumb - t.height) // 2))
+        suffix = f"_{zn}-{z}" if zn else ""
+        safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(suffix))[:60]
+        dst = os.path.join(sheet_dir, f"sheet{safe or ''}.png")
+        sheet.save(dst)
+        saved.append(dst)
+        _log(f"sheet saved: {dst}", mod="xyz")
+    return saved
+
+
+def _ui_xyz_build(*args):
+    """'Build grid -> queue': validates the axes, produces the combos, stacks the jobs.
+    Stacks IN-PLACE on the shared state object (like '+ Queue') to stay coherent with a
+    'Run queue' that may be in flight."""
+    *gen_vals, xa, xv, ya, yv, za, zv, items = args
+    if not isinstance(items, list):
+        items = []
+    axes_in = [(a, v) for a, v in ((xa, xv), (ya, yv), (za, zv)) if a and a != "(none)"]
+    if not axes_in:
+        return (items, *_q_render(items), "Pick at least the X axis.")
+    names = [a for a, _v in axes_in]
+    if len(set(names)) != len(names):
+        return (items, *_q_render(items), "Each axis must vary a different parameter.")
+    base_ms = _q_model_state()
+    axes = []
+    for name, raw in axes_in:
+        # The parse can refuse an input (unreadable csv): its message goes into the
+        # SAME channel as the validation errors. Without this net it left as a Gradio trace,
+        # noisy in the console and mute for the user.
+        try:
+            parsed = _xyz_parse_values(raw)
+        except ValueError as e:
+            return (items, *_q_render(items), f"❌ {name}: {e}")
+        values, err = _xyz_validate_axis(name, parsed, list(gen_vals), base_ms)
+        if err:
+            return (items, *_q_render(items), f"❌ {err}")
+        axes.append((name, values))
+    total = 1
+    for _n, v in axes:
+        total *= len(v)
+    if total > XYZ_MAX_JOBS:
+        return (items, *_q_render(items),
+                f"❌ {total} combos > max_jobs ({XYZ_MAX_JOBS}). Reduce the value lists "
+                f"(or raise xyz_grid.max_jobs in config.txt).")
+    jobs, meta = _xyz_build_jobs(axes, list(gen_vals), base_ms)
+    _XYZ_PENDING[meta["gid"]] = meta
+    items += jobs
+    _log(f"grid built: {total} job(s) queued (gid {meta['gid']})", mod="xyz")
+    return (items, *_q_render(items, len(items) - 1),
+            f"Built **{total}** job(s) ({' × '.join(str(len(v)) for _n, v in axes)}). "
+            f"Press **Run queue** to execute; the annotated sheet(s) will be saved in "
+            f"`xyz_{meta['gid']}/` and shown in the gallery.")
+
+
+# Contact sheets awaiting assembly: gid -> meta (filled at build time, consumed at
+# run time).
+_XYZ_PENDING = {}
+
+
+# ---- Tag autocomplete (prompts): CSVs in tags/ + local assets, a dropdown under the caret ----
+# Config: the "tag_autocomplete" block. enabled=false -> no cz_tags import, no download,
+# no JS injected (the zero-cost contract when off).
+_TAC_CFG = CONFIG.get("tag_autocomplete") if isinstance(CONFIG.get("tag_autocomplete"), dict) else {}
+TAGAC_ENABLED = bool(_TAC_CFG.get("enabled", True))
+TAGAC_SOURCES = _TAC_CFG.get("sources", [
+    "https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv",
+])
+TAGAC_MAX = int(_TAC_CFG.get("max_results", 8))
+
+
+def _tagac_head():
+    """Prepares the autocomplete <script> (or None): downloads the sources once
+    (atomically + with progress), builds the client payload (the CSVs' URLs + the local
+    wildcards). Any failure -> a warning and the feature is simply absent (the boot goes
+    on)."""
+    if not TAGAC_ENABLED:
+        return None
+    try:
+        from cz_tags import ensure_tag_sources, list_tag_files
+        from cz_assets import TAG_AC_JS
+        ensure_tag_sources(TAGAC_SOURCES)
+        files = list_tag_files()
+        urls = ["/gradio_api/file=" + os.path.abspath(p).replace("\\", "/") for p in files]
+        local = [f"__{w}__" for w in list_wildcards()]
+        if not urls and not local:
+            _log("no tag source available; autocomplete inactive", mod="tagac")
+            return None
+        js = (TAG_AC_JS.replace("__SRC__", json.dumps(urls))
+              .replace("__LOCAL__", json.dumps(local))
+              .replace("__MAX__", str(TAGAC_MAX)))
+        _log(f"{len(urls)} CSV source(s) + {len(local)} local asset(s)", mod="tagac")
+        return "<script>" + js + "</script>"
+    except Exception as e:
+        _log(f"init failed ({e}); autocomplete disabled", mod="tagac")
+        return None
+
+
+def _xyz_ac_head():
+    """The <script> for the autosuggest of the X/Y/Z value fields (or None): after 3
+    characters, it offers the checkpoints/LoRAs that are VALID at that moment for the chosen
+    axis, and the __wildcards__ on the Prompt / Prompt S/R axes. A failure -> the feature is
+    absent, the boot is fine."""
+    if not (XYZ_ENABLED and XYZ_SUGGEST):
+        return None
+    try:
+        from cz_assets import XYZ_AC_JS
+        sources = {
+            "ckpt": ZIMAGE_BASE_REPOS + list_checkpoints(),
+            "lora": list_loras(),
+            "wc": [f"__{w}__" for w in list_wildcards()],
+        }
+        rows = [[f"cz_xyz_{a}_axis", f"cz_xyz_{a}_vals"] for a in ("x", "y", "z")]
+        js = (XYZ_AC_JS.replace("__ROWS__", json.dumps(rows))
+              .replace("__SOURCES__", json.dumps(sources)))
+        _log(f"xyz suggest: {len(sources['ckpt'])} checkpoint(s), "
+             f"{len(sources['lora'])} LoRA, {len(sources['wc'])} wildcard(s)", mod="xyz")
+        return "<script>" + js + "</script>"
+    except Exception as e:
+        _log(f"xyz suggest init failed ({e}); disabled", mod="xyz")
+        return None
+
+
+def _ui_head():
+    """Concatenates the <script> tags injected into the <head> (tag autocomplete + the XYZ
+    suggest)."""
+    parts = [h for h in (_tagac_head(), _xyz_ac_head()) if h]
+    return "".join(parts) or None
+
+
+# JS injected on load: forces the dark theme, a style preview on hover, and a
+# full-screen lightbox when the render is clicked. __MAP__ = {style_name: thumbnail_url}.
+def _parse_a1111_params(text):
+    """Parse le format A1111/Civitai (chunk PNG 'parameters'):
+        <prompt>\\nNegative prompt: <neg>\\nSteps: N, Sampler: ..., Seed: N, Size: WxH, Model: ...
+    Returns a dict {prompt, negative, seed, steps, guidance, sampler, size, model}."""
+    def _int(v):
+        try:
+            return int(str(v).strip())
+        except Exception:
+            return None
+
+    def _float(v):
+        try:
+            return float(str(v).strip())
+        except Exception:
+            return None
+
+    out = {}
+    t = (text or "").replace("\r", "")
+    neg_i = t.find("Negative prompt:")
+    steps_i = t.find("\nSteps:")
+    if neg_i >= 0:
+        out["prompt"] = t[:neg_i].strip()
+        rest = t[neg_i + len("Negative prompt:"):]
+        s2 = rest.find("\nSteps:")
+        out["negative"] = (rest[:s2] if s2 >= 0 else rest).strip()
+        params = rest[s2:].strip() if s2 >= 0 else ""
+    else:
+        out["prompt"] = (t[:steps_i] if steps_i >= 0 else t).strip()
+        out["negative"] = ""
+        params = t[steps_i:].strip() if steps_i >= 0 else ""
+    for part in params.split(","):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        k, v = k.strip().lower(), v.strip()
+        if k == "seed":
+            out["seed"] = _int(v)
+        elif k == "steps":
+            out["steps"] = _int(v)
+        elif k in ("cfg scale", "guidance", "cfg"):
+            out["guidance"] = _float(v)
+        elif k == "sampler":
+            out["sampler"] = v
+        elif k == "size":
+            out["size"] = v
+        elif k == "model":
+            out["model"] = v
+    return out
+
+
+def _ui_read_meta(path, check_wm=False):
+    """PNG Info: reads the prompt + the parameters embedded in an image (crispz JSON,
+    A1111/Civitai 'parameters', ComfyUI, or EXIF). Returns (markdown, the parsed dict)."""
+    empty = "*Upload an image to read its embedded prompt & parameters.*"
+    if not path or not os.path.isfile(path):
+        return empty, {}
+    import cz_provenance
+    prov = cz_provenance.provenance_markdown(path, check_wm=check_wm)
+    meta = dict(_read_image_meta(path) or {})   # sidecar + chunk 'crispz' + EXIF
+    scheme = "crispz" if meta.get("prompt") else None
+    if not meta.get("prompt"):
+        try:
+            with Image.open(path) as im:
+                info = im.info or {}
+        except Exception:
+            info = {}
+        if info.get("parameters"):              # A1111 / Civitai
+            meta.update(_parse_a1111_params(info["parameters"]))
+            scheme = "a1111"
+        elif info.get("prompt"):                # ComfyUI (workflow json, brut)
+            meta["prompt"] = str(info.get("prompt"))[:2000]
+            scheme = "comfyui"
+    if not meta.get("prompt") and not meta.get("negative"):
+        return "*No embedded prompt/metadata found in this image.*\n\n" + prov, {}
+    lines = [f"*Detected scheme: **{scheme or 'unknown'}***"]
+    if meta.get("prompt"):
+        lines.append(f"**Prompt**\n\n{meta['prompt']}")
+    if meta.get("negative"):
+        lines.append(f"**Negative**\n\n{meta['negative']}")
+    kv = [f"{k}: {meta[k]}" for k in ("seed", "steps", "guidance", "sampler", "size", "model", "mode")
+          if meta.get(k) not in (None, "")]
+    if kv:
+        lines.append("**Params** — " + "  ·  ".join(kv))
+    lines.append(prov)
+    return "\n\n".join(lines), meta
+
+
+def _ui_meta_apply_all(m):
+    """PNG Info: applies ALL the parameters embedded in the image — prompt, negative,
+    seed, steps, CFG, size, sampler/schedule (the equivalent of Fooocus' full load). The
+    sampler: the crispz 'euler/sgm_uniform' format is recognised as is, and the A1111 names
+    ('Euler a', 'DPM++ 2M Karras'...) are mapped through cz_civitai.map_sampler_name."""
+    m = m or {}
+    applied = []
+
+    def _upd(key, cast, label=None):
+        v = m.get(key)
+        if v in (None, ""):
+            return gr.update()
+        try:
+            v = cast(v)
+        except (TypeError, ValueError):
+            return gr.update()
+        applied.append(f"{label or key}={v}" if not isinstance(v, str) or len(v) < 40
+                       else f"{label or key}=…")
+        return gr.update(value=v)
+
+    p_u = _upd("prompt", str)
+    n_u = _upd("negative", str)
+    sd_u = _upd("seed", int)
+    st_u = _upd("steps", int)
+    g_u = _upd("guidance", float, "CFG")
+    w_u = h_u = gr.update()
+    sz = str(m.get("size") or "")
+    if "x" in sz:
+        try:
+            w, h = (int(x) for x in sz.lower().split("x")[:2])
+            w_u, h_u = gr.update(value=w), gr.update(value=h)
+            applied.append(f"size={w}x{h}")
+        except (TypeError, ValueError):
+            pass
+    samp_u = sched_u = gr.update()
+    s = str(m.get("sampler") or "").strip()
+    if s:
+        if "/" in s:                       # format crispz "sampler/schedule"
+            a, b = (x.strip().lower() for x in s.split("/", 1))
+            if a in cz_pipeline.SAMPLER_CHOICES:
+                samp_u = gr.update(value=a)
+                applied.append(f"sampler={a}")
+            sched = cz_pipeline._norm_schedule(b, default=None)
+            if sched:
+                sched_u = gr.update(value=sched)
+                applied.append(f"schedule={sched}")
+        else:                              # nom A1111/CivitAI ("Euler a", "DPM++ ...")
+            import cz_civitai
+            sa, sc = cz_civitai.map_sampler_name(s)
+            if sa:
+                samp_u = gr.update(value=sa)
+                applied.append(f"sampler={s}→{sa}")
+            elif s:
+                applied.append(f"sampler={s} (no equivalent, kept current)")
+            if sc:
+                sched_u = gr.update(value=sc)
+                applied.append(f"schedule={sc}")
+    status = ("✅ **Applied:** " + ", ".join(applied)) if applied \
+        else "*No applicable parameters in this image.*"
+    return status, p_u, n_u, sd_u, st_u, g_u, w_u, h_u, samp_u, sched_u
+
+
+# ============================ Presets (Fooocus-style) =========================
+# A preset = a bundle of settings (prompt, styles, size, steps/CFG, sampler, checkpoint,
+# transformer, LoRAs) saved as JSON in presets/. Load / create / update / delete from the
+# Settings tab.
+_PRESETS_DIR = os.path.join(HERE, "presets")
+_PRESET_KEYS = ["prompt", "negative", "styles", "width", "height", "steps", "guidance",
+                "sampler", "schedule", "image_number", "checkpoint", "transformer"]
+
+
+def _preset_sanitize(name):
+    n = "".join(c for c in (name or "") if c.isalnum() or c in " -_").strip()
+    return n or "preset"
+
+
+def list_presets():
+    try:
+        return sorted(f[:-5] for f in os.listdir(_PRESETS_DIR) if f.lower().endswith(".json"))
+    except Exception:
+        return []
+
+
+def _load_preset_file(name):
+    try:
+        with open(os.path.join(_PRESETS_DIR, _preset_sanitize(name) + ".json"), encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _ensure_model_presets(checkpoints):
+    """Creates a 'basic' preset presets/<stem>.json for every LOCAL loadable checkpoint
+    (from list_checkpoints) that does not have one yet. steps/CFG are deduced by
+    profile_for_model (as when a model is selected), the rest = the config's defaults.
+    NEVER modifies an existing preset. Returns the number of presets created.
+    Called at startup and on every refresh/filtering of the checkpoints."""
+    created = 0
+    try:
+        existing = set(list_presets())
+    except Exception:
+        existing = set()
+    for f in checkpoints or []:
+        # Ignores the HF base repos (Tongyi-MAI/...): those are not local files.
+        if not isinstance(f, str) or f in ZIMAGE_BASE_REPOS or "/" in f or "\\" in f:
+            continue
+        name = _preset_sanitize(os.path.splitext(f)[0])
+        if name in existing:
+            continue
+        steps, g = profile_for_model(f)
+        data = {
+            "prompt": "",
+            "negative": CONFIG.get("default_negative_prompt", "") or "",
+            "styles": list(CONFIG.get("default_styles", []) or []),
+            "width": int(CONFIG.get("default_width", 1024)),
+            "height": int(CONFIG.get("default_height", 1024)),
+            "steps": steps, "guidance": g,
+            "sampler": (CONFIG.get("default_sampler") or "euler").strip().lower(),
+            "schedule": (CONFIG.get("default_schedule") or "sgm_uniform").strip().lower(),
+            "image_number": int(CONFIG.get("default_image_number", 1)),
+            "checkpoint": f, "transformer": "", "loras": [],
+            # The base under which this file was judged loadable. A single-file only
+            # swaps the transformer: outside that base, it does not load.
+            "base_repo": cz_pipeline.BASE_REPO,
+        }
+        try:
+            os.makedirs(_PRESETS_DIR, exist_ok=True)
+            with open(os.path.join(_PRESETS_DIR, name + ".json"), "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+            existing.add(name)
+            created += 1
+        except Exception as e:
+            _dbg(f"auto-preset failed for {f}: {e}")
+    if created:
+        _log(f"presets: auto-created {created} basic model preset(s)")
+    return created
+
+
+def _log_stale_model_presets(checkpoints):
+    """Logs ONE line for the presets that name a checkpoint the dropdown no longer offers
+    (a 9B library on a 4B install, a moved model). Their 'Load' applies everything EXCEPT
+    the model; without that line, the only sign at startup is the absence of a sign, and the
+    Gradio error 'not in the list of choices' at Load time does not say that the model, for
+    its part, has not changed."""
+    offered = set(checkpoints or []) | set(ZIMAGE_BASE_REPOS)
+    stale = []
+    for p in list_presets():
+        d = _load_preset_file(p) or {}
+        ck = d.get("checkpoint")
+        if not ck or ck in offered:
+            continue
+        # A preset that knows its base AND whose base is offered repairs itself at
+        # Load time (it switches the base, then its checkpoint becomes valid).
+        base = (d.get("base_repo") or "").strip()
+        if base and base != cz_pipeline.BASE_REPO and base in ZIMAGE_BASE_REPOS:
+            continue
+        stale.append(p)
+    if stale:
+        shown = ", ".join(stale[:6]) + ("..." if len(stale) > 6 else "")
+        _log(f"{len(stale)} preset(s) name a checkpoint this install cannot load "
+             f"({shown}): loading one applies everything EXCEPT the model, and says so.")
+    return stale
+
+
+def _ui_preset_save(name, *vals):
+    """Saves the current state under 'name'. vals = the scalars (_PRESET_KEYS) + lora_dds
+    + lora_lws."""
+    name = _preset_sanitize(name)
+    nk = len(_PRESET_KEYS)
+    scalars, lora_vals = vals[:nk], vals[nk:]
+    half = len(lora_vals) // 2
+    dds, lws = lora_vals[:half], lora_vals[half:]
+    data = {k: v for k, v in zip(_PRESET_KEYS, scalars)}
+    data["loras"] = [[dds[i], float(lws[i])] for i in range(half)
+                     if dds[i] and dds[i] not in ("None", "none", "")]
+    # Not a UI scalar: the base repo has no component of its own (the 'Klein
+    # checkpoint' dropdown serves both). So it is read off the pipeline, which is the
+    # authority.
+    data["base_repo"] = cz_pipeline.BASE_REPO
+    try:
+        os.makedirs(_PRESETS_DIR, exist_ok=True)
+        with open(os.path.join(_PRESETS_DIR, name + ".json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return gr.update(), f"Save failed: {e}"
+    return gr.update(choices=list_presets(), value=name), f"Preset '{name}' saved."
+
+
+def _preset_switch_base(data):
+    """Aligns the base repo with the preset's. Returns what has to be said about it.
+
+    A single-file checkpoint only swaps the TRANSFORMER: it only makes sense under the base
+    repo that supplies its VAE, its text encoder and its architecture config. So a 9B preset
+    loaded under a 4B base could only observe its own failure. Hence the base is remembered
+    when saving and restored when loading.
+
+    The swap downloads NOTHING here: set_zimage_model marks the pipeline for reloading, and
+    the weights arrive on the next Generate. What is lost right away is the model warm in
+    VRAM -- so that is said.
+"""
+    want = (data.get("base_repo") or "").strip()
+    if not want or want == cz_pipeline.BASE_REPO:
+        return ""
+    if want not in ZIMAGE_BASE_REPOS:
+        return (f"\n\n⚠ This preset was saved on the base repo `{want}`, which is not "
+                f"offered here (config `flux3_base_repos`). The base was left on "
+                f"`{cz_pipeline.BASE_REPO}`.")
+    was = cz_pipeline.BASE_REPO
+    set_zimage_transformer("")
+    set_zimage_model(want)
+    try:
+        _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO})
+    except Exception:
+        pass
+    line = (f"\n\n🔄 **Base model switched** to `{want}` (this preset's base; was "
+            f"`{was}`). The loaded model was released — the next **Generate** reloads "
+            f"the whole pipeline, and downloads it if this base is not cached yet.")
+    note = BASE_REPO_NOTES.get(want)
+    return line + (f"\n\n{note}" if note else "")
+
+
+def _preset_ckpt_refusal(ckpt, data):
+    """The message when the preset's checkpoint is not selectable.
+
+    It must start with WHAT TO DO. The technical reason (the variant, the licence, the VRAM)
+    comes afterwards: someone who has just clicked 'Load' is looking for the action, not the
+    diagnosis.
+"""
+    want = (data.get("base_repo") or "").strip()
+    dim = None
+    try:
+        dim = cz_pipeline._flux2_hidden_dim(resolve_checkpoint(ckpt))
+    except Exception:
+        pass
+    # The base to aim for: the preset's, otherwise the one the file's variant calls
+    # for -- its hidden dimension names it. So an old preset with no base_repo stays
+    # actionable: we do not merely say that it is old.
+    target = want or cz_pipeline._variant_repo(dim)
+    fam = None
+    try:
+        fam = cz_pipeline._file_family(resolve_checkpoint(ckpt))
+    except Exception:
+        pass
+    if fam == "flux2":
+        # No base of THIS build loads it: the width (3072) would otherwise point at the
+        # FLUX.3 distilled repo, a wrong direction said with confidence.
+        action = ("**This preset names a FLUX.2 Klein checkpoint, which runs in "
+                  "crispz-klein, not here: pick a FLUX.3 checkpoint above, then hit "
+                  "_Update selected_ to repair the preset.**")
+    elif target and target in ZIMAGE_BASE_REPOS and target != cz_pipeline.BASE_REPO:
+        action = (f"**Pick `{target}` in the _FLUX.3 checkpoint_ dropdown above, then "
+                  f"load this preset again.**")
+    else:
+        action = "**Fix the checkpoint folder(s), then load this preset again.**"
+    if not want:
+        # A preset from before the base was tracked: repairing it once and for all
+        # avoids taking this detour on every load.
+        action += (" This preset predates base-repo tracking, so it cannot switch the "
+                   "base by itself — once it loads correctly, hit _Update selected_ "
+                   "to record the base in it.")
+    why = checkpoint_refusal(ckpt) or "it is not offered by the checkpoint list any more"
+    return (f"\n\n⚠ **Model NOT switched.** {action}\n\n"
+            f"Why: this preset asks for `{ckpt}` and {why}\n\n"
+            f"Everything else in the preset was applied; the model stays "
+            f"`{_current_model_label()}`.")
+
+
+def _ui_preset_load(name):
+    """Returns the gr.update for every component (the scalars + 10 LoRA dropdowns + 10
+    weights) + the status.
+
+    The preset's checkpoint is only pushed when it is still among the dropdown's choices.
+    Otherwise the Gradio frontend refuses the value ("not in the list of choices"), the .then
+    that applies the model re-reads the dropdown's OLD value, and the preset applied
+    entirely EXCEPT the model -- silently. That is exactly the trap of presets auto-created
+    before a base repo change: everything else changes, the model does not, and one believes
+    that changing the model is pointless.
+"""
+    data = _load_preset_file(name)
+    note = _preset_switch_base(data)
+    ckpt = data.get("checkpoint")
+    cks = list_checkpoints()                       # after the base swap, if any
+    ckpt_upd = gr.update(choices=_ckpt_choices())
+    if ckpt and ckpt not in (ZIMAGE_BASE_REPOS + cks):
+        note += _preset_ckpt_refusal(ckpt, data)
+        data = {k: v for k, v in data.items() if k != "checkpoint"}
+    elif ckpt:
+        ckpt_upd = gr.update(choices=_ckpt_choices(), value=ckpt)
+    scal = [ckpt_upd if k == "checkpoint"
+            else (gr.update(value=data[k]) if k in data else gr.update())
+            for k in _PRESET_KEYS]
+    loras = data.get("loras", []) or []
+    dd_up = [gr.update(value=(loras[i][0] if i < len(loras) else "None")) for i in range(MAX_LORA_SLOTS)]
+    w_up = [gr.update(value=(float(loras[i][1]) if i < len(loras) else float(cz_pipeline.LORA_WEIGHT)))
+            for i in range(MAX_LORA_SLOTS)]
+    return scal + dd_up + w_up + [f"Preset '{name}' loaded.{note}"]
+
+
+def _ui_preset_delete(name):
+    try:
+        p = os.path.join(_PRESETS_DIR, _preset_sanitize(name) + ".json")
+        if os.path.isfile(p):
+            os.remove(p)
+    except Exception as e:
+        return gr.update(), f"Delete failed: {e}"
+    return gr.update(choices=list_presets(), value=None), f"Deleted '{_preset_sanitize(name)}'."
+
+
+def _ui_apply_ckpt_silent(name):
+    """Applies the checkpoint WITHOUT touching steps/guidance (the preset has already set
+    them)."""
+    try:
+        return _apply_checkpoint(name)[0]
+    except Exception as e:
+        return f"Checkpoint apply failed: {e}"
+
+
+def _ui_apply_transformer_silent(repo):
+    if not (repo or "").strip():
+        return gr.update()
+    try:
+        return _apply_transformer_repo(repo)[0]
+    except Exception as e:
+        return f"Transformer apply failed: {e}"
+
+
+def _api_cli_caps():
+    """The api_name='cli_caps' endpoint (the family CLI protocol, cz_protocol/czp):
+    lets czp and the other tools know WHO is running here."""
+    import cz_protocol
+    return json.dumps(cz_protocol.caps_dict(), ensure_ascii=False)
+
+
+def _api_cli_gen(spec_json):
+    """The api_name='cli_gen' endpoint: one generation driven by a JSON spec
+    (CLI protocol v1). Goes through the app's queue -> serialised with the user's own
+    generations, with the model already warm."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_gen_json(spec_json),
+                      ensure_ascii=False)
+
+
+def _api_cli_upscale(spec_json):
+    """The api_name='cli_upscale' endpoint: an ESRGAN + refine upscale of an image
+    (CLI protocol v1, the upscale op) - the family's print output."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_upscale_json(spec_json),
+                      ensure_ascii=False)
+
+
+def _api_cli_edit(spec_json):
+    """Endpoint api_name='cli_edit': image + instruction -> image via le
+    pipeline omni/edit (protocole CLI v1, op edit)."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_edit_json(spec_json),
+                      ensure_ascii=False)
+
+
+def _api_cli_inpaint(spec_json):
+    """Endpoint api_name='cli_inpaint': image + masque + prompt -> image
+    (zone blanche redessinee, protocole CLI v1, op inpaint)."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_inpaint_json(spec_json),
+                      ensure_ascii=False)
+
+
+def _api_cli_faces(img_b64):
+    """api_name='cli_faces': face-detection service for the family (boxes,
+    mouths, embeddings from a base64 PNG/JPEG). Lets torch-free callers
+    (comics2crispz) letter with the SAME face-aware placement as the app:
+    bubbles avoid faces, tails aim at the speaker's mouth."""
+    import base64
+    import io
+    try:
+        from cz_face import detect_faces_full
+        img = Image.open(io.BytesIO(base64.b64decode(img_b64))).convert("RGB")
+        faces = []
+        for f in detect_faces_full(img) or []:
+            faces.append({
+                "box": [int(v) for v in f["box"]],
+                "mouth": ([int(f["mouth"][0]), int(f["mouth"][1])]
+                          if f.get("mouth") else None),
+                "embedding": ([float(x) for x in f["embedding"]]
+                              if f.get("embedding") else None)})
+        return json.dumps({"ok": True, "faces": faces})
+    except Exception as e:
+        return json.dumps({"ok": False,
+                           "error": f"{type(e).__name__}: {e}"})
+
+
+def build_ui():
+    models = list_esrgan_models()
+    default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
+
+    # A style_name -> thumbnail URL map (served by Gradio) for the hover preview.
+    _sample_urls = {}
+    for n in STYLES:
+        p = _style_sample(n)
+        if p:
+            _sample_urls[n] = "/gradio_api/file=" + os.path.abspath(p).replace("\\", "/")
+    js_full = CZ_JS.replace("__MAP__", json.dumps(_sample_urls))
+    # Omni (multi-reference) is only offered when an Omni/Edit model is configured.
+    omni_on = bool((cz_pipeline.OMNI_MODEL or "").strip())
+
+    with gr.Blocks(title=f"crispz-flux3 {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
+                   js=js_full, head=_ui_head()) as demo:
+        # The output folder's gallery opens in a new tab (the Asset Browser), through
+        # the button under the preview. No inline gallery panel.
+        gallery_url = gr.Textbox(visible=False)
+        # An API endpoint (called by the Asset Browser to delete an image)
+        del_in = gr.Textbox(visible=False)
+        del_out = gr.Textbox(visible=False)
+        del_btn = gr.Button(visible=False)
+        del_btn.click(delete_asset, del_in, del_out, api_name="delete_asset")
+        # The CivitAI API endpoint (Asset Browser -> a model's preview/trigger words/examples)
+        cf_rel = gr.Textbox(visible=False)
+        cf_kind = gr.Textbox(visible=False)
+        cf_out = gr.Textbox(visible=False)
+        cf_btn = gr.Button(visible=False)
+        cf_btn.click(_api_civitai_fetch, [cf_rel, cf_kind], cf_out, api_name="civitai_fetch")
+        # Progress endpoint (polled by the Asset Browser during the CivitAI fetch)
+        cp_in = gr.Textbox(visible=False)
+        cp_out = gr.Textbox(visible=False)
+        cp_btn = gr.Button(visible=False)
+        cp_btn.click(_api_job_progress, cp_in, cp_out, api_name="job_progress")
+        # Batch endpoint (the Asset Browser's 'Fetch all missing' button)
+        cfa_in = gr.Textbox(visible=False)
+        cfa_out = gr.Textbox(visible=False)
+        cfa_btn = gr.Button(visible=False)
+        cfa_btn.click(_api_civitai_fetch_all, cfa_in, cfa_out, api_name="civitai_fetch_all")
+        # The thumbnail rebuild endpoint (the Asset Browser's 'Rebuild thumbnails' button)
+        tr_in = gr.Textbox(visible=False)
+        tr_out = gr.Textbox(visible=False)
+        tr_btn = gr.Button(visible=False)
+        tr_btn.click(_api_thumbs_rebuild, tr_in, tr_out, api_name="thumbs_rebuild")
+        # The family CLI protocol endpoints (czp / cz_protocol: caps + gen route to
+        # this instance -> a shared queue, a warm model)
+        clc_out = gr.Textbox(visible=False)
+        clc_btn = gr.Button(visible=False)
+        clc_btn.click(_api_cli_caps, None, clc_out, api_name="cli_caps")
+        clg_in = gr.Textbox(visible=False)
+        clg_out = gr.Textbox(visible=False)
+        clg_btn = gr.Button(visible=False)
+        clg_btn.click(_api_cli_gen, clg_in, clg_out, api_name="cli_gen")
+        clu_in = gr.Textbox(visible=False)
+        clu_out = gr.Textbox(visible=False)
+        clu_btn = gr.Button(visible=False)
+        clu_btn.click(_api_cli_upscale, clu_in, clu_out,
+                      api_name="cli_upscale")
+        cle_in = gr.Textbox(visible=False)
+        cle_out = gr.Textbox(visible=False)
+        cle_btn = gr.Button(visible=False)
+        cle_btn.click(_api_cli_edit, cle_in, cle_out, api_name="cli_edit")
+        cli_in = gr.Textbox(visible=False)
+        cli_out = gr.Textbox(visible=False)
+        cli_btn = gr.Button(visible=False)
+        cli_btn.click(_api_cli_inpaint, cli_in, cli_out,
+                      api_name="cli_inpaint")
+        clf_in = gr.Textbox(visible=False)
+        clf_out = gr.Textbox(visible=False)
+        clf_btn = gr.Button(visible=False)
+        clf_btn.click(_api_cli_faces, clf_in, clf_out, api_name="cli_faces")
+
+        with gr.Row():
+            # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
+            with gr.Column(scale=3):
+                out = gr.Gallery(label="Result", elem_id="cz_result", columns=2,
+                                 object_fit="contain", preview=True, allow_preview=True,
+                                 show_fullscreen_button=True, show_download_button=True)
+                # The gallery's native download names the file "image" (a Gradio
+                # limitation). This button downloads the REAL file (its real name) of the
+                # image clicked.
+                result_dl = gr.DownloadButton("⬇ Download (real filename)", size="sm", visible=False)
+                report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
+
+                history = gr.State([])
+                with gr.Accordion("History (this session)", open=False):
+                    gr.Markdown("*Renders made in this session (in-memory, not the disk folder). "
+                                "Use 'Load output folder' to pull saved files in.*")
+                    history_gallery = gr.Gallery(label=None, height=240, columns=6,
+                                                 object_fit="cover", show_download_button=True)
+                    with gr.Row():
+                        load_out_btn = gr.Button("Load output folder", size="sm")
+                        clear_hist_btn = gr.Button("Clear history", size="sm")
+                        gallery_btn = gr.Button("\U0001F5BC️ Asset Browser", size="sm",
+                                                variant="primary")
+                gallery_status = gr.Markdown("")
+
+                with gr.Row(equal_height=True):
+                    prompt = gr.Textbox(show_label=False, value=CONFIG.get("default_prompt", ""),
+                                        placeholder="Type your prompt here...",
+                                        elem_id="cz_prompt", lines=2, max_lines=12, scale=4, container=False)
+                    btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
+
+                with gr.Row(equal_height=True):
+                    negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
+                                          elem_id="cz_neg", lines=1, max_lines=6, container=False, scale=4,
+                                          placeholder="Negative prompt - inert on the distilled FLUX.3 checkpoint (no CFG); works on flux-3-image-klein-base")
+                    stop_btn = gr.Button("Stop", variant="stop", scale=1, min_width=150)
+
+                with gr.Row():
+                    # The txt2img -> upscale chaining (left) + Improve prompt (right), aligned.
+                    auto_upscale_cb = gr.Checkbox(
+                        value=bool(CONFIG.get("default_auto_upscale", False)), scale=4,
+                        label="Upscale after generate: chain each txt2img or Edit (references) image "
+                              "through the Upscale pipeline (ESRGAN + refine), no manual step")
+                    improve_btn = gr.Button("Improve prompt", scale=1, min_width=130,
+                                            visible=IMPROVE_ENABLED)
+                    improve_dir_btn = gr.Button("✎", scale=0, min_width=44,
+                                                visible=IMPROVE_ENABLED,
+                                                elem_id="cz_improve_dir")
+                    improve_neg_btn = gr.Button("Improve negative", scale=1, min_width=130,
+                                                visible=IMPROVE_ENABLED and IMPROVE_NEGATIVE_UI)
+                    improve_neg_dir_btn = gr.Button("✎", scale=0, min_width=44,
+                                                    visible=IMPROVE_ENABLED and IMPROVE_NEGATIVE_UI,
+                                                    elem_id="cz_improve_neg_dir")
+                # Improve directives (one call, never saved): the ✎ button unfolds the
+                # panel; the plain Improve button keeps its one-click behaviour.
+                improve_dir_open = gr.State(False)
+                with gr.Row(visible=False) as improve_dir_row:
+                    improve_directives = gr.Textbox(
+                        show_label=False, lines=2, max_lines=2, scale=4, container=False,
+                        placeholder="Directives for this rewrite (prompt), e.g. more cinematic, "
+                                    "under 60 words, in French")
+                    improve_dir_go = gr.Button("Improve with these directives", scale=1,
+                                               min_width=150)
+                improve_neg_dir_open = gr.State(False)
+                with gr.Row(visible=False) as improve_neg_dir_row:
+                    improve_neg_directives = gr.Textbox(
+                        show_label=False, lines=2, max_lines=2, scale=4, container=False,
+                        placeholder="Directives for this rewrite (negative), e.g. keep it short, "
+                                    "no anatomy terms")
+                    improve_neg_dir_go = gr.Button("Improve with these directives", scale=1,
+                                                   min_width=150)
+                detail_faces_cb = gr.Checkbox(
+                    value=cz_detailer.DETAILER_ENABLED,
+                    label="🔧 Detail faces — after each render (and upscale), detect faces and "
+                          "re-refine each one at high resolution (ADetailer-style)")
+                detail_hands_cb = gr.Checkbox(
+                    value=cz_detailer.HAND_ENABLED,
+                    label="🖐 Detail hands — same pass on detected hands "
+                          "(needs the optional 'ultralytics' package)")
+                improve_status = gr.Markdown("")
+
+                if JOB_QUEUE_ENABLED:
+                    # A queue restored from disk: a night's queue survives a restart /
+                    # a crash (see _q_persist, job_queue.persist).
+                    _q_restored = _q_load()
+                    queue_state = gr.State(_q_restored)
+                    with gr.Accordion(
+                            f"Job queue{f' ({len(_q_restored)} restored)' if _q_restored else ''}",
+                            open=bool(_q_restored)):
+                        gr.Markdown("*'+ Queue' snapshots ALL current settings (incl. model, "
+                                    "LoRAs, sampler). 'Run queue' executes jobs in order; "
+                                    "**Stop** pauses the queue — remaining jobs are kept.*")
+                        with gr.Row():
+                            queue_add_btn = gr.Button(f"+ Queue ({len(_q_restored)})", size="sm", scale=1, min_width=140)
+                            queue_run_btn = gr.Button("Run queue", variant="primary", size="sm",
+                                                      scale=1, min_width=140)
+                            queue_pause_btn = gr.Button("⏸ Pause", size="sm",
+                                                        scale=1, min_width=100)
+                        # One clickable row per job (Fooocus-style) instead of a
+                        # Markdown list plus a separate "Selected job" dropdown: the list
+                        # you read and the thing you pick are the same widget.
+                        # Built FROM the restored queue, through the same two helpers
+                        # _q_render uses: empty components next to a "(2 restored)" title
+                        # and a "+ Queue (2)" button is what a restart used to show.
+                        # Tickable, not a radio: Up/Down move everything ticked one step,
+                        # and Remove clears the lot in one click instead of ten.
+                        queue_sel = gr.CheckboxGroup(_q_choices(_q_restored),
+                                                     label="Pending jobs", value=[],
+                                                     container=True)
+                        queue_md = gr.Markdown(_q_summary(_q_restored))
+                        with gr.Row():
+                            queue_up_btn = gr.Button("🔼 Up", size="sm", scale=1, min_width=80)
+                            queue_down_btn = gr.Button("🔽 Down", size="sm", scale=1, min_width=90)
+                            queue_rm_btn = gr.Button("❌ Remove", size="sm", scale=1, min_width=100)
+                            queue_clear_btn = gr.Button("🗑 Clear", size="sm", scale=1, min_width=90)
+
+                if XYZ_ENABLED:
+                    with gr.Accordion("X/Y/Z grid", open=False):
+                        gr.Markdown("*Vary 1–3 parameters (comma-separated values; use quotes to "
+                                    "protect commas). Each combo becomes a queued job; when it has "
+                                    "run, an annotated contact sheet is saved (one per Z value) and "
+                                    "shown in the gallery. Prompt = A/B test of FULL prompts; "
+                                    "Prompt S/R: first value = search term, then its replacements. "
+                                    "Type 3+ characters for suggestions (checkpoints/LoRAs; "
+                                    "__wildcards__ on the Prompt axes).*")
+                        _ax = [k for k in _XYZ_AXES]
+                        _xyz_rows = []
+                        for _axis_lbl, _default in (("X", "Steps"), ("Y", "(none)"), ("Z", "(none)")):
+                            with gr.Row():
+                                _dd = gr.Dropdown(_ax, value=_default, label=f"{_axis_lbl} axis",
+                                                  scale=1,
+                                                  elem_id=f"cz_xyz_{_axis_lbl.lower()}_axis")
+                                _tb = gr.Textbox(label=f"{_axis_lbl} values", scale=3,
+                                                 placeholder=_xyz_suggestions(_default)[1],
+                                                 elem_id=f"cz_xyz_{_axis_lbl.lower()}_vals")
+                                _sg = (gr.Button("⤵ suggest", size="sm", scale=0, min_width=90)
+                                       if XYZ_SUGGEST else None)
+                                _xyz_rows.append((_dd, _tb, _sg))
+                        (xyz_xa, xyz_xv, xyz_xs), (xyz_ya, xyz_yv, xyz_ys), (xyz_za, xyz_zv, xyz_zs) = _xyz_rows
+                        xyz_build_btn = gr.Button("Build grid → queue", variant="primary", size="sm")
+                        xyz_status = gr.Markdown("")
+
+                with gr.Row():
+                    use_input = gr.Checkbox(value=False, label="Input Image", min_width=160)
+                    advanced_cb = gr.Checkbox(value=False, label="Advanced", min_width=160)
+
+                with gr.Group(visible=False) as input_group:
+                    input_mode = gr.Radio(
+                        ["Upscale / img2img"] + ([EDIT_MODE] if omni_on else []),
+                        value="Upscale / img2img", label="Input mode", visible=omni_on,
+                        info="Edit (references) = FLUX.3 edits from the images of the Edit tab, cited in the prompt as `<ref_image_0>`, `<ref_image_1>`... (no tag needed with a single image)")
+                    with gr.Tabs():
+                        with gr.Tab("Upscale or img2img"):
+                            with gr.Row():
+                                inp = _crop_input("Drop image here / click to upload", 300)
+                                with gr.Column():
+                                    with gr.Row():
+                                        do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
+                                                                   info="Uncheck = img2img only (no enlargement).")
+                                        do_refine_cb = gr.Checkbox(value=bool(CONFIG.get("default_refine", True)),
+                                                                   label="Refine (img2img)",
+                                                                   info="Uncheck = ESRGAN upscale only (skip the slow diffusion pass).")
+                                    refine_first_cb = gr.Checkbox(value=bool(CONFIG.get("default_refine_first", False)),
+                                                                  label="Refine before upscale (faster)",
+                                                                  info="Refine at native res THEN ESRGAN enlarge "
+                                                                       "(~4-16x faster refine; a touch less high-res detail).")
+                                    with gr.Row():
+                                        vary_subtle_btn = gr.Button("🎲 Vary (subtle)", size="sm")
+                                        vary_strong_btn = gr.Button("🎲 Vary (strong)", size="sm")
+                                    preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
+                                    esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
+                                    factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
+                                    denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
+                                                        label="Refine denoise (strength) - 0 = skip refine (ESRGAN only)")
+                                    refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1,
+                                                             label="Refine steps (runs at upscaled res -> higher = slower)")
+                            with gr.Accordion("\U0001F4C4 Read prompt / metadata from an image (PNG Info)",
+                                              open=False):
+                                gr.Markdown("*Drop a PNG/JPG to read its embedded prompt & parameters "
+                                            "(crispz, A1111/Civitai, or EXIF), then send them to the fields.*")
+                                meta_reader = gr.Image(type="filepath", sources=["upload", "clipboard"],
+                                                       height=150,
+                                                       label="Image to read")
+                                input_meta_md = gr.Markdown(
+                                    "*Upload an image above to read its prompt & parameters.*")
+                                meta_state = gr.State({})
+                                with gr.Row():
+                                    meta_apply_all_btn = gr.Button("✨ Apply all", size="sm",
+                                                                   variant="primary")
+                                    meta_to_prompt_btn = gr.Button("→ Send prompt", size="sm",
+                                                                   variant="primary")
+                                    meta_to_seed_btn = gr.Button("→ Send seed", size="sm")
+                                    meta_wm_btn = gr.Button("🔍 Check invisible watermark",
+                                                            size="sm")
+                            with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
+                                tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
+                                overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
+                            with gr.Accordion("Qwen tiling (4K+)", open=False):
+                                refine_tile = gr.Dropdown(
+                                    choices=REFINE_TILE_CHOICES, value=DEFAULT_REFINE_TILE,
+                                    label="Diffusion tile (Auto = sized to the output)")
+                                refine_overlap = gr.Slider(0, 256, value=DEFAULT_REFINE_OVERLAP, step=16,
+                                                           label="Diffusion tile overlap")
+
+                        with gr.Tab("Describe"):
+                            describe_img = _crop_input("Image to describe", 280)
+                            describe_btn = gr.Button("Describe -> prompt", variant="primary", size="sm")
+                            describe_status = gr.Markdown(
+                                "*Uses the Ollama vision model and the Describe style set in Advanced > Prompt AI "
+                                "(or the caption model if Ollama is off or fails).*")
+
+                        with gr.Tab("Vision Mix"):
+                            gr.Markdown("*Vision Mix: a vision model looks at your reference images "
+                                        "and an LLM blends them into ONE text prompt (e.g. a person + "
+                                        "an outfit + a setting), then FLUX.3 generates from it. "
+                                        "Needs Ollama with a vision model (Advanced > Prompt AI). "
+                                        "It mixes ideas/style, not exact pixels.*")
+                            with gr.Row():
+                                cref1 = _crop_input("Ref 1", 180)
+                                cref2 = _crop_input("Ref 2", 180)
+                            with gr.Row():
+                                cref3 = _crop_input("Ref 3", 180)
+                                cref4 = _crop_input("Ref 4", 180)
+                            with gr.Row():
+                                compose_btn = gr.Button("Vision Mix -> prompt", size="sm")
+                                vmix_gen_btn = gr.Button("Vision Mix & Generate", variant="primary",
+                                                         size="sm")
+                            compose_status = gr.Markdown(
+                                "*Select an Ollama vision model in Advanced > Prompt AI (click Detect), "
+                                "then add reference images and run Vision Mix.*",
+                                container=True, min_height=48)
+
+                        with gr.Tab("Remove BG"):
+                            rembg_img = _crop_input("Image", 280)
+                            rembg_btn = gr.Button("Remove background", variant="primary", size="sm")
+                            rembg_status = gr.Markdown("*Local (rembg). Output = transparent PNG. "
+                                                       "First use downloads the u2net model.*")
+
+                        with gr.Tab("Inpaint / Outpaint"):
+                            gr.Markdown("*One editor for everything: **Brush** = inpaint the painted "
+                                        "area · **Expand sides** = outpaint Left/Right/Top/Bottom "
+                                        "(inpaint blend, or the FLUX.3 **Outpaint LoRA** on a gray "
+                                        "canvas: it sees the whole picture and continues it) · "
+                                        "**Reframe** = new aspect ratio. Steps follow the model "
+                                        "(Performance). Describe the result in the prompt.*")
+                            edit_mode = gr.Radio(
+                                ["Brush (inpaint)", "Expand sides (outpaint)",
+                                 "Expand sides (outpaint LoRA)", "Reframe (ratio)"],
+                                value="Brush (inpaint)", label="Mode")
+                            inpaint_editor = gr.ImageEditor(
+                                type="pil", label="Image + mask (paint for Brush mode; click the "
+                                                  "brush icon to change its size)",
+                                brush=gr.Brush(default_size=25,
+                                               colors=["#ffffff", "#ff3b3b", "#3b82f6"],
+                                               default_color="#ffffff"),
+                                layers=False, transforms=[], height=420)
+                            with gr.Group(visible=False) as expand_group:
+                                inpaint_outpaint = gr.CheckboxGroup(
+                                    choices=["Left", "Right", "Top", "Bottom"], value=[],
+                                    label="Sides to expand (~30% each; blurred-edge fill + blend)")
+                                center_btn = gr.Button("Center (all sides)", size="sm")
+                            with gr.Group(visible=False) as outpaint_lora_group:
+                                outpaint_lora_w = gr.Slider(
+                                    0.5, 2.0, value=1.5, step=0.05, label="Outpaint LoRA weight",
+                                    info="CivitAI 'FLUX 3 Image Klein Outpaint LoRA' (153 MB, "
+                                         "downloaded on first use into the LoRA folder). The "
+                                         "author advises 1.5 on the distilled checkpoint; lower "
+                                         "values leave gray patches. Painted areas are redone too.")
+                            with gr.Group(visible=False) as reframe_group:
+                                with gr.Row():
+                                    reframe_ratio = gr.Dropdown(
+                                        ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"],
+                                        value="16:9", label="Target ratio")
+                                    reframe_fit = gr.Radio(
+                                        ["Contain (outpaint)", "Cover (crop)"],
+                                        value="Contain (outpaint)", label="Fit")
+                            edit_autodescribe = gr.Checkbox(
+                                value=False, label="Auto-describe center (caption model)",
+                                info="Outpaint/Reframe: runs automatically when the prompt is EMPTY. "
+                                     "Check it to also prepend a description when you DO have a "
+                                     "prompt. Uses the caption model set in Prompt AI (BLIP or Ollama).")
+                            edit_strength = gr.Slider(
+                                0.3, 1.0, value=0.85, step=0.05, label="Strength",
+                                info="Inpaint/outpaint denoise. Outpaint & reframe: ~0.8 keeps the "
+                                     "edge colors (best blend), ~1.0 = more new detail.")
+                            with gr.Row():
+                                edit_harmonize = gr.Checkbox(
+                                    value=False, label="Harmonize (final img2img pass)",
+                                    info="Light img2img refine over the whole result -> unifies "
+                                         "grain/light and removes the 'added zone' look.")
+                                edit_harmonize_denoise = gr.Slider(
+                                    0.05, 0.5, value=0.2, step=0.05, label="Harmonize denoise")
+                            edit_btn = gr.Button("Generate", variant="primary",
+                                                 elem_id="cz_edit_generate")
+                            inpaint_status = gr.Markdown("")
+
+                        with gr.Tab(EDIT_MODE, visible=omni_on):
+                            # A responsive layout (the columns' min_width = Gradio's
+                            # breakpoints): a header in 2 blocks (instructions + button |
+                            # the model's status), refs 4 / 2 / 1 per row depending on the
+                            # width, controls in 2/3 - 1/3. The .cz-omni-* CSS (cz_assets)
+                            # gives it air.
+                            with gr.Row(elem_classes="cz-omni-head", equal_height=False):
+                                with gr.Column(scale=3, min_width=340):
+                                    gr.Markdown(
+                                        "*Edit an image from an instruction: put it in **Ref 1**, "
+                                        "add up to 3 more references, and cite them in the prompt "
+                                        "as `<ref_image_0>` (Ref 1), `<ref_image_1>` (Ref 2)... "
+                                        "e.g. *put the jacket of `<ref_image_1>` on the person in "
+                                        "`<ref_image_0>`*. With a single image no tag is needed: "
+                                        "just say what to change. FLUX.3 takes up to 10 references; the CLI "
+                                        "and the protocol accept them all, this tab offers 4 slots. "
+                                        "Then click **Edit** below (or Generate with Input mode = "
+                                        "Edit (references)). Steps/guidance: Settings.*")
+                                    omni_check_btn2 = gr.Button("Check edit model availability",
+                                                                size="sm")
+                                with gr.Column(scale=2, min_width=300):
+                                    omni_status2 = gr.Markdown("", elem_classes="cz-omni-status")
+                            with gr.Row(elem_classes="cz-omni-refs"):
+                                with gr.Column(min_width=300):
+                                    ref1 = _crop_input("Ref 1", 220)
+                                with gr.Column(min_width=300):
+                                    ref2 = _crop_input("Ref 2", 220)
+                                with gr.Column(min_width=300):
+                                    ref3 = _crop_input("Ref 3", 220)
+                                with gr.Column(min_width=300):
+                                    ref4 = _crop_input("Ref 4", 220)
+                            # Edit presets: an EMPTY catalogue on klein (the
+                            # "Qwen-Image-Edit fast lazy load" LoRAs): applied on the EDIT
+                            # pipe only, downloaded on the first selection. An ON/OFF box in
+                            # Models > LoRA.
+                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False):
+                                with gr.Column(scale=2, min_width=360):
+                                    edit_lora_dd = gr.Dropdown(
+                                        choices=_edit_lora_choices(), value="None",
+                                        label="Edit LoRA presets",
+                                        info="✓ = on disk, ⬇ = fetched from Hugging Face on first "
+                                             "use. Empty until an edit-task LoRA is published for "
+                                             "FLUX.3 (none yet, 2026-10-28); declare one in config "
+                                             "`edit_loras`. No trigger word: describe the edit.")
+                                    with gr.Row():
+                                        edit_lora_prompt_btn = gr.Button("Use example prompt", size="sm")
+                                        edit_lora_refresh_btn = gr.Button("Refresh presets", size="sm")
+                                with gr.Column(scale=1, min_width=260):
+                                    edit_lora_w = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
+                                                            cz_pipeline.LORA_WEIGHT_MAX,
+                                                            value=1.0, step=0.05,
+                                                            label="Edit LoRA weight",
+                                                            elem_classes="cz-lora-weight")
+                                    edit_lora_status = gr.Markdown("", elem_classes="cz-omni-status")
+                            # The fast edit mode. MOOT on klein: the model is already
+                            # distilled to 4 steps with no CFG, and there exists no FLUX.2
+                            # Lightning LoRA to stack -> edit_speed_choices() is empty and
+                            # the whole row is HIDDEN (the way krea2 hides what it cannot
+                            # do). The components are built but invisible: the handlers stay
+                            # wired, nothing to rewire should a FLUX.2 acceleration LoRA
+                            # appear one day.
+                            # 'Off' is always offered: the row is only of interest when
+                            # there is SOMETHING ELSE than 'Off' to choose.
+                            _speed_choices = cz_pipeline.edit_speed_choices()
+                            _speed_useful = any(c.strip().lower() != "off"
+                                                for c in _speed_choices)
+                            with gr.Row(elem_classes="cz-omni-controls", equal_height=False,
+                                        visible=_speed_useful):
+                                with gr.Column(scale=2, min_width=360):
+                                    edit_speed_dd = gr.Dropdown(
+                                        choices=_speed_choices,
+                                        value=_initial_edit_speed(),
+                                        label="Edit speed",
+                                        info="Stacks an acceleration LoRA and forces its step "
+                                             "count. No FLUX.3 one exists yet, and the distilled "
+                                             "checkpoint already runs 16 steps - so this is "
+                                             "hidden until one ships.")
+                                with gr.Column(scale=1, min_width=260):
+                                    edit_speed_status = gr.Markdown("", elem_classes="cz-omni-status")
+                            omni_edit_btn = gr.Button("✏️ Edit (Ref 1 + prompt -> image)",
+                                                      variant="primary", elem_classes="cz-omni-edit-btn")
+
+                        with gr.Tab("Face Swap"):
+                            gr.Markdown("*Post-process: replace the face in the result with this "
+                                        "source face. Works on any mode (txt2img / img2img / omni). "
+                                        "Needs `insightface` + `onnxruntime-gpu` installed and "
+                                        "`faceswap_model_path` (inswapper .onnx) set in config.txt.*")
+                            faceswap_src = _crop_input("Source face", 240)
+                            faceswap_enable = gr.Checkbox(value=False, label="Apply face swap to result")
+                            faceswap_restore_cb = gr.Checkbox(
+                                value=cz_face.FACESWAP_RESTORE,
+                                label="Restore face - fixes the soft 128px swap",
+                                info="Re-synthesises the face at 512. Downloads the enhancer on "
+                                     "first use (faceswap_restore_model in config.txt).")
+                            faceswap_restore_blend = gr.Slider(0.0, 1.0, value=float(cz_face.FACESWAP_RESTORE_BLEND),
+                                                               step=0.05, label="Restore strength")
+                            faceswap_restore_status = gr.Markdown("")
+                            with gr.Accordion("Blending quality", open=False):
+                                gr.Markdown(
+                                    "*insightface pastes the swapped face through a plain "
+                                    "**rectangle**, so anything in front of the face (a hand, "
+                                    "food, a mic) gets painted over. These masks fix that.*")
+                                faceswap_occlusion_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_OCCLUSION,
+                                    label="Occlusion mask (XSeg) - keeps objects in front of the face",
+                                    info="The single most important setting for scenes where "
+                                         "something touches the face. Downloads dfl_xseg.onnx.")
+                                faceswap_regions_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_REGIONS,
+                                    label="Face-region mask (BiSeNet) - no bleed onto hair or neck",
+                                    info="Restricts the swap to skin/eyes/nose/mouth. "
+                                         "Downloads bisenet_resnet_34.onnx.")
+                                faceswap_color_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_COLOR_MATCH,
+                                    label="Colour match - aligns skin tone and exposure")
+                                faceswap_restore_model = gr.Radio(
+                                    ["codeformer", "gfpgan"], value=cz_face._restore_kind(),
+                                    label="Enhancer",
+                                    info="CodeFormer recovers more detail on a heavily degraded "
+                                         "(128px) swap; GFPGAN is lighter.")
+                                faceswap_fidelity = gr.Slider(
+                                    0.0, 1.0, value=float(cz_face.FACESWAP_RESTORE_FIDELITY),
+                                    step=0.05, label="CodeFormer fidelity",
+                                    info="0 = maximum detail (more generative), "
+                                         "1 = maximum fidelity to the swap. Ignored by GFPGAN.")
+                                faceswap_quality_status = gr.Markdown("")
+
+            # ===== The Advanced column (on the right, hidden by default like Fooocus) =====
+            with gr.Column(scale=2, visible=False) as advanced_col:
+                with gr.Tabs():
+                    with gr.Tab("Settings"):
+                        with gr.Accordion("⭐ Presets", open=False):
+                            gr.Markdown("*A preset bundles prompt, styles, size, steps/CFG, "
+                                        "sampler, **base repo** + checkpoint, transformer and "
+                                        "LoRAs. Load applies them all, switching the base repo "
+                                        "when the preset needs another one (announced — the "
+                                        "next Generate then reloads everything). Create/Update "
+                                        "save the current state.*")
+                            # Auto-creates a basic preset per local model before
+                            # populating the menu (the FP8/INT8-INT4 models are already
+                            # excluded by the list).
+                            _cks = list_checkpoints()
+                            _ensure_model_presets(_cks)
+                            _log_stale_model_presets(_cks)
+                            with gr.Row():
+                                preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
+                                preset_refresh_btn = gr.Button("↻", size="sm", scale=0, min_width=44)
+                                preset_load_btn = gr.Button("Load", size="sm", variant="primary", scale=1)
+                            with gr.Row():
+                                preset_name_tb = gr.Textbox(show_label=False, scale=2, container=False,
+                                                            placeholder="new preset name")
+                                preset_save_btn = gr.Button("Save as new", size="sm", scale=1)
+                                preset_update_btn = gr.Button("Update selected", size="sm", scale=1)
+                                preset_delete_btn = gr.Button("Delete", size="sm", variant="stop",
+                                                              scale=0, min_width=80)
+                            preset_status = gr.Markdown("")
+                        performance = gr.Radio(list(PERFORMANCE),
+                                               # the fallback = the 1st REAL preset. A
+                                               # hardcoded name ends up not existing any
+                                               # more (it was "Turbo (8 steps)"), and a value
+                                               # outside choices is refused by the frontend.
+                                               value=_valid_performance(CONFIG.get("default_performance")),
+                                               label="Performance",
+                                               info="Sets steps and CFG. Distilled = the 16-step flow map "
+                                                    "(guidance inert). Fast = 8 steps, a draft. Base = the "
+                                                    "flux-3-image-klein-base checkpoint, 50 steps with a "
+                                                    "real CFG of 3.5.")
+                        aspect = gr.Dropdown(list(ASPECT_RATIOS),
+                                             value=CONFIG.get("default_aspect_ratio", "1024 x 1024  (1:1)"),
+                                             label="Aspect ratio",
+                                             info="1 MP formats first (about 7 s on a 5090), then "
+                                                  "2K (about 4 MP, 35 to 50 s) and 4K (about 8 MP, "
+                                                  "2 min), all rendered natively by FLUX.3. Width / "
+                                                  "Height below take any custom size, a multiple of "
+                                                  "16, up to 4096 a side.")
+                        force_ratio_cb = gr.Radio(
+                            ["Off", "Crop to fit", "Extend (outpaint)"],
+                            value=("Extend (outpaint)" if (cz_pipeline.FORCE_RATIO and
+                                   cz_pipeline.FORCE_RATIO_MODE == "extend")
+                                   else "Crop to fit" if cz_pipeline.FORCE_RATIO else "Off"),
+                            label="Force aspect ratio on Upscale/img2img",
+                            info="Crop = the loaded image is centre-cropped to the Aspect ratio "
+                                 "above before Upscale/img2img (Fooocus-style, edges are lost). "
+                                 "Extend = the image is EXTENDED to that ratio instead: the "
+                                 "missing bands are outpainted (nothing is lost). "
+                                 "Off = keep the input's native ratio.")
+                        with gr.Row():
+                            # Up to 4096 a side: FLUX.3 renders 2K and 4K natively (3840x2160
+                            # measured clean on a 5090 in 113 s); 4096 is diffusers' own cap on
+                            # a reference image, kept as the ceiling for the generation too.
+                            width = gr.Slider(256, 4096, value=int(CONFIG.get("default_width", 1024)),
+                                              step=16, label="Width")
+                            height = gr.Slider(256, 4096, value=int(CONFIG.get("default_height", 1024)),
+                                               step=16, label="Height")
+                        gen_steps = gr.Slider(2, 40, value=int(CONFIG.get("default_gen_steps", 8)),
+                                              step=1, label="Generation steps (txt2img)")
+                        with gr.Row():
+                            guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
+                                                 step=0.5, label="CFG guidance", scale=2,
+                                                 info="Inert on the distilled checkpoint (a flow map has no "
+                                                      "unconditional branch). A real CFG on flux-3-image-klein-base "
+                                                      "(3.5 advised).")
+                            # FLUX.3 runs its own FlowMatch Euler schedule (constant shift
+                            # 6.93); the distilled checkpoint is a flow map that is told the
+                            # next timestep at every step, so another sampler or a remapped
+                            # schedule breaks it. The two menus stay (presets, XYZ, the CLI
+                            # and metadata read them) but are greyed out, and cz_pipeline
+                            # ignores any other value with a log line.
+                            sampler_dd = gr.Dropdown(
+                                list(SAMPLER_CHOICES), value="euler", interactive=False,
+                                label="Sampler", scale=1,
+                                info="Euler only on FLUX.3: the model's own flow-matching "
+                                     "schedule. Other choices are ignored.")
+                            schedule_dd = gr.Dropdown(
+                                list(SCHEDULE_CHOICES), value="sgm_uniform", interactive=False,
+                                label="Schedule", scale=1,
+                                info="sgm_uniform only on FLUX.3 (the native shift 6.93 schedule). "
+                                     "Other choices are ignored.")
+                        # set_sampler/set_schedule return a status: it is DISPLAYED
+                        # instead of thrown away (otherwise Gradio warns "returned too many
+                        # output values").
+                        sampler_status = gr.Markdown(
+                            f"Sampler: {cz_pipeline.SAMPLER} / {cz_pipeline.SCHEDULE}")
+                        image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
+                                                 step=1, label="Image number (batch)")
+                        seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),
+                                         label="Seed (-1 = random)", precision=0)
+                        with gr.Row():
+                            reuse_seed_btn = gr.Button("♻️ Reuse last seed", size="sm",
+                                                       scale=1, min_width=140)
+                            no_seed_inc_cb = gr.Checkbox(
+                                value=False, scale=1, label="Fix seed (no +1 per image)",
+                                info="Batch reuses the same seed for every image (no increment).")
+
+                    with gr.Tab("Styles"):
+                        style_search = gr.Textbox(show_label=False, container=False,
+                                                  placeholder="Search styles... (e.g. anime, cinematic, sai)")
+                        style_random = gr.Checkbox(
+                            value=False, label="Random style each image",
+                            info="Each render picks a random style from the selected ones "
+                                 "(or from ALL styles if none selected).")
+                        gr.Markdown("*Hover a style to preview it.*")
+                        styles = gr.CheckboxGroup(list(STYLES), value=CONFIG.get("default_styles", []),
+                                                  label="Styles (combinable)", elem_id="cz_styles")
+
+                    with gr.Tab("Prompt AI"):
+                        gr.Markdown("### Caption model (Auto-describe)")
+                        caption_model_dd = gr.Dropdown(
+                            _caption_choices([]),
+                            value=_current_caption_kind(), label="Caption model",
+                            info="Used by Auto-describe (Inpaint/Outpaint) and the Describe "
+                                 "fallback. blip-large = richer captions, local. ollama:<model> = "
+                                 "one of your Ollama vision models (listed once Ollama is "
+                                 "detected): pick a small one, it runs right before the image "
+                                 "model; BLIP takes over if Ollama fails. Loads on next use.")
+                        caption_model_status = gr.Markdown("")
+                        gr.Markdown("### Ollama (optional)")
+                        ollama_url = gr.Textbox(value=OLLAMA_URL, label="Ollama URL",
+                                                info="Local LLM server. Used for Describe (vision) "
+                                                     "and Improve prompt.")
+                        detect_btn = gr.Button("Detect Ollama (vision models)", size="sm", variant="primary")
+                        ollama_model = gr.Dropdown([], label="Vision model (Describe)",
+                                                   interactive=True)
+                        improve_model = gr.Dropdown(
+                            [], label="Improve model (any text model)", interactive=True,
+                            info="Empty = ollama_improve.model in config.txt, else the first "
+                                 "installed model.")
+                        ollama_status = gr.Markdown("*Detecting Ollama... (Detect scans again). If "
+                                                    "Ollama is off, Describe falls back to the "
+                                                    "caption model.*")
+                        with gr.Row():
+                            describe_style_dd = gr.Dropdown(
+                                describe_style_choices(), value=cz_ollama.DESCRIBE_STYLE,
+                                label="Describe style",
+                                info="What Describe and Vision Mix ask the vision model for. "
+                                     "Prompt (prose) is the one measured for rebuilding an image.")
+                            describe_length_dd = gr.Dropdown(
+                                list(DESCRIBE_LENGTHS), value=cz_ollama.DESCRIBE_LENGTH,
+                                label="Length",
+                                info="Short 60, Medium 120, Long 180, Very long 300 words "
+                                     "(Short caption: one sentence).")
+                        with gr.Accordion("Instruction sent to the vision model", open=False):
+                            describe_preview = gr.Textbox(
+                                value=describe_instruction(cz_ollama.DESCRIBE_STYLE,
+                                                           cz_ollama.DESCRIBE_LENGTH),
+                                lines=6, max_lines=14, interactive=False, show_label=False)
+                        gr.Markdown("---")
+                        log_level_dd = gr.Dropdown(["quiet", "info", "debug"],
+                                                   value={0: "quiet", 1: "info", 2: "debug"}.get(cz_core.LOG_LEVEL, "info"),
+                                                   label="Console log level (dev)",
+                                                   info="debug = full params, pipe state, VRAM in the .bat console.")
+                        log_level_status = gr.Markdown("")
+
+                    with gr.Tab("Models"):
+                        offload = gr.Dropdown(choices=list(cz_pipeline.OFFLOAD_CHOICES),
+                                              value=cz_pipeline.OFFLOAD_MODE,
+                                              label="CPU offload (VRAM)",
+                                              info="auto = free-VRAM test at model load picks the fastest SAFE "
+                                                   "mode. Details below.")
+                        with gr.Row():
+                            offload_retest_btn = gr.Button("Re-test VRAM (auto)", size="sm", scale=0)
+                            offload_status_md = gr.Markdown(cz_pipeline.offload_status())
+                        offload_retest_btn.click(lambda: cz_pipeline.retest_offload(),
+                                                 outputs=[offload_status_md])
+                        with gr.Accordion("ℹ️  What is CPU offload?", open=False):
+                            gr.Markdown(
+                                "**CPU offload** moves part of the model weights from VRAM (GPU) to RAM (CPU) "
+                                "between steps so large models fit on low-VRAM cards. It is **not** quantization "
+                                "— weights stay BF16, they just shuttle between RAM and GPU.\n\n"
+                                "- **auto** (default) — at model load, measures the *free* VRAM (all processes "
+                                "counted) and picks `none` only when the model + activations provably fit; "
+                                "otherwise `model`/`sequential`. FLUX.3 is about 19 GB all-in in bf16 (14.4 "
+                                "fp8r, 13.5 nvfp4, BFL's figures) so `auto` usually resolves to `none` on "
+                                "24 GB+ cards and to `model` on 16 GB ones (a GGUF is forced to `model` "
+                                "anyway). The verdict is cached per GPU + model "
+                                "(cache/hw_profile.json) — use **Re-test VRAM** after closing/opening another "
+                                "GPU app.\n"
+                                "- **none** — everything stays in VRAM. **Fastest.** Use it when you have enough "
+                                "VRAM.\n"
+                                "- **model** — offload per submodule. ~half the VRAM, small slowdown. Good balance "
+                                "on 12–16GB cards.\n"
+                                "- **sequential** — aggressive, module-by-module. Runs in ~9GB but much slower "
+                                "(5–10×). For small cards (8–12GB).\n\n"
+                                "⚠️ On Windows, an over-committed model does **not** crash: the NVIDIA driver's "
+                                "*Sysmem Fallback* silently spills it to shared RAM and renders become 50–100× "
+                                "slower with no error. `auto` exists to avoid exactly that; for a hard OOM error "
+                                "instead of a freeze, set *Prefer No Sysmem Fallback* in the NVIDIA Control Panel.")
+
+                        with gr.Accordion("\U0001F4E6 Checkpoints (switch model)", open=True):
+                            ckpt_dir_tb = gr.Textbox(value=cz_pipeline.CHECKPOINTS_DIR, label="Checkpoints folder")
+                            ckpt_extra_dir_tb = gr.Textbox(
+                                value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
+                                label="Extra checkpoints folder (optional)",
+                                placeholder="e.g. D:\\models\\FLUX.3",
+                                info="Merged into the single 'FLUX.3 checkpoint' list above. Leave empty to disable.")
+                            esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
+                                                       label="ESRGAN_DIR (.pth/.safetensors folder)")
+                            with gr.Row():
+                                refresh_btn = gr.Button("Refresh ESRGAN", size="sm")
+                                save_paths_btn = gr.Button("Save paths", size="sm")
+                            paths_status = gr.Markdown("")
+                            with gr.Column():
+                                with gr.Row():
+                                    variant_rb = gr.Radio(
+                                        list(VARIANT_CHOICES), value=_variant_of_repo(),
+                                        label="FLUX.3 checkpoint", scale=2,
+                                        info="A complete base swap, same licence and same "
+                                             "weight. Distilled: 16 steps, no CFG, the "
+                                             "default. Base: undistilled, about 50 steps "
+                                             "with a real CFG and a working negative prompt, "
+                                             "three times slower.")
+                                    precision_rb = gr.Radio(
+                                        list(cz_flux3.PRECISIONS), value=cz_pipeline.PRECISION,
+                                        label="Precision", scale=2,
+                                        info="The official transformer's build: bf16 (11 GB, "
+                                             "every card), fp8r (6.3 GB, fast from RTX 40xx), "
+                                             "nvfp4 (5.3 GB, RTX 50xx Blackwell + flashinfer). "
+                                             "Ignored while a single-file checkpoint is picked.")
+                                precision_status = gr.Markdown("")
+                                _choices0 = _ckpt_choices()
+                                _vals0 = [v for _lab, v in _choices0]
+                                ckpt_dd = gr.Dropdown(
+                                    choices=_choices0,
+                                    value=(cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO in _vals0
+                                           else (_vals0[0] if _vals0 else None)),
+                                    label="Checkpoint (base repo or single file)", scale=3)
+                                with gr.Row():      # the buttons UNDER the dropdown (full width above)
+                                    ckpt_open_btn = gr.Button("\U0001F5BC️ Browse", size="sm", scale=1,
+                                                              elem_id="cz_ckpt_open")
+                                    ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)
+                            civitai_reco_btn = gr.Button(
+                                "📊 Apply CivitAI recommended settings", size="sm",
+                                variant="secondary")
+                            ckpt_status = gr.Markdown("")
+                            with gr.Column():
+                                transformer_tb = gr.Textbox(
+                                    value="", scale=3,
+                                    label="Transformer override (HF repo / diffusers folder)",
+                                    placeholder="HF repo or folder with a FLUX.3 transformer",
+                                    info="For community models with an incomplete tokenizer: "
+                                         "loads only the transformer, keeps base VAE/encoder.")
+                                with gr.Row():
+                                    transformer_apply_btn = gr.Button("Apply override", size="sm",
+                                                                      variant="secondary")
+                            with gr.Column():
+                                # Not supported on FLUX.3 (0.1): the model reads 8 hidden
+                                # states of its own Qwen3-VL-4B and nothing else fits that
+                                # slot yet. The control stays, greyed out, so a preference
+                                # from crispz-klein is shown rather than lost; cz_pipeline
+                                # announces at load time that it is not applied.
+                                te_dd = gr.Dropdown(
+                                    choices=_te_choices(), value=cz_pipeline.TEXT_ENCODER or "",
+                                    allow_custom_value=True, label="Text encoder",
+                                    interactive=False,
+                                    info="Not available on FLUX.3 yet: the model reads its own "
+                                         "Qwen3-VL-4B (8 hidden states) and no replacement fits. "
+                                         "A value set in config/preferences is kept but not applied.")
+                                with gr.Row():
+                                    te_refresh_btn = gr.Button("Refresh encoders", size="sm", scale=1)
+                                te_status = gr.Markdown(_te_hint())
+
+                        with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
+                            lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
+                            lora_extra_dirs_tb = gr.Textbox(
+                                value=";".join(cz_pipeline.LORAS_EXTRA_DIRS),
+                                label="Extra LoRA folders (optional, ';' separated)",
+                                placeholder="e.g. F:\\sdlibs\\models\\Lora\\_FLUX2",
+                                info="Merged into the LoRA lists (slots, edit presets, "
+                                     "protocol caps). Same file name: the main folder wins. "
+                                     "Config `loras_extra_dirs`.")
+                            gr.Markdown(
+                                "*Number of slots is set in Advanced > Generation "
+                                "(LoRA slots), or config `lora_slots`. Weight range is "
+                                f"`{cz_pipeline.LORA_WEIGHT_MIN:g}..{cz_pipeline.LORA_WEIGHT_MAX:g}` "
+                                "(config `lora_weight_min` / `lora_weight_max`) — a "
+                                "**negative** weight inverts the LoRA's effect.*")
+                            # Labelled like the checkpoints: on a 4B base a 9B LoRA
+                            # simply cannot load, and the only way to find out used to be
+                            # to pick it and read the refusal. The VALUE stays the name.
+                            _lchoices = [("None", "None")] + cz_pipeline.lora_choices()
+                            _lvalues = {v for _lab, v in _lchoices}
+                            # The config LoRAs (`default_loras`) are already resolved
+                            # in cz_pipeline.LORAS at import time -> so the slots are
+                            # pre-filled for the UI to reflect the model's real state.
+                            def _lora_slot_default(i):
+                                if i < len(cz_pipeline.LORAS):
+                                    name = os.path.basename(cz_pipeline.LORAS[i][0])
+                                    if name in _lvalues:
+                                        return name, float(cz_pipeline.LORAS[i][1])
+                                return "None", float(cz_pipeline.LORA_WEIGHT)
+
+                            lora_dds, lora_lws, lora_rows, lora_open_btns = [], [], [], []
+                            for _i in range(MAX_LORA_SLOTS):
+                                _dd_val, _lw_val = _lora_slot_default(_i)
+                                with gr.Row(visible=(_i < LORA_SLOTS)) as _row:
+                                    _dd = gr.Dropdown(choices=_lchoices, value=_dd_val,
+                                                      label=f"LoRA {_i + 1}", scale=3)
+                                    _ob = gr.Button("\U0001F5BC️", size="sm", scale=0, min_width=44)
+                                    _lw = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
+                                                    cz_pipeline.LORA_WEIGHT_MAX,
+                                                    value=_lw_val,
+                                                    step=0.05, label=f"Weight {_i + 1}", scale=2,
+                                                    elem_classes="cz-lora-weight")
+                                lora_dds.append(_dd)
+                                lora_lws.append(_lw)
+                                lora_rows.append(_row)
+                                lora_open_btns.append(_ob)
+                            lora_refresh_btn = gr.Button("Refresh LoRA list", size="sm")
+                            lora_keywords_tb = gr.Textbox(label="Keywords / trigger words", lines=2,
+                                                          placeholder="Auto-filled from the selected LoRA(s).")
+                            with gr.Row():
+                                lora_kw_btn = gr.Button("Get keywords", size="sm")
+                                lora_kw_to_prompt_btn = gr.Button("Add to prompt", size="sm", variant="primary")
+                            lora_status = gr.Markdown("")
+                            with gr.Accordion("\U0001F50E Search CivitAI (download a LoRA)",
+                                              open=False):
+                                gr.Markdown(
+                                    "*Search a LoRA by name on CivitAI. FLUX.3 versions come "
+                                    "first (a FLUX.2 Klein LoRA does not load here). Download "
+                                    "goes to the LoRA folder, with a SHA256 check + "
+                                    "preview/trigger words fetched.*")
+                                with gr.Row():
+                                    civ_lora_q = gr.Textbox(
+                                        show_label=False, scale=3, container=False,
+                                        placeholder="LoRA name to search on CivitAI")
+                                    civ_lora_konly = gr.Checkbox(value=True, label="FLUX.3 only",
+                                                                 scale=1)
+                                    civ_lora_search_btn = gr.Button("Search", size="sm",
+                                                                    variant="primary", scale=1,
+                                                                    min_width=90)
+                                civ_lora_dd = gr.Dropdown(choices=[], value=None,
+                                                          label="Candidates (base model in brackets)")
+                                civ_lora_state = gr.State({})
+                                civ_lora_dl_btn = gr.Button("\u2b07 Download to LoRA folder",
+                                                            size="sm")
+                                civ_lora_status = gr.Markdown("")
+                            edit_loras_cb = gr.Checkbox(
+                                value=cz_pipeline.EDIT_LORAS_ENABLED,
+                                label="Edit LoRAs",
+                                info="Applies the edit LoRA chosen under the reference images "
+                                     "(Edit (references) tab) on the EDIT pipe. Off = the preset "
+                                     "is kept but not applied (with/without comparison).")
+
+                        with gr.Accordion("\U0001F3B2 Wildcards", open=False):
+                            gr.Markdown("*`__name__` in the prompt -> a random line from name.txt "
+                                        "(nested, reproducible per seed). Pick a file to view/edit it, "
+                                        "Insert to add it to the prompt, or Create a new one.*")
+                            wild_dir_tb = gr.Textbox(value=cz_prompt.WILDCARDS_DIR, label="Wildcards folder")
+                            with gr.Row():
+                                wild_dd = gr.Dropdown(["None"] + list_wildcards(), value="None",
+                                                      label="Wildcard file", scale=3)
+                                wild_refresh_btn = gr.Button("Refresh", size="sm", scale=1, min_width=90)
+                                wild_insert_btn = gr.Button("Insert __name__", size="sm", scale=1,
+                                                            variant="primary", min_width=140)
+                            wild_editor = gr.Textbox(label="Contents (one option per line)", lines=8,
+                                                     placeholder="Select a file above to view/edit, "
+                                                                 "or type lines for a new one.")
+                            with gr.Row():
+                                wild_save_btn = gr.Button("Save", size="sm")
+                                wild_new_name = gr.Textbox(show_label=False, scale=2, container=False,
+                                                           placeholder="new_wildcard_name (no extension)")
+                                wild_create_btn = gr.Button("Create new", size="sm", variant="primary")
+                            wild_status = gr.Markdown("")
+
+                        with gr.Accordion("\U0001F5BC️ Edit model (multi-reference)", open=False):
+                            gr.Markdown("*The Edit (references) tab is served by the BASE model itself: "
+                                        "FLUX.3 takes a list of reference images (cited as `<ref_image_N>` "
+                                        "in the prompt), so multi-reference "
+                                        "editing needs no second model and no extra VRAM. Changing the "
+                                        "checkpoint changes the editor too - the field below is kept for "
+                                        "API compatibility and is a no-op.*")
+                            # The list = the HF edit repos + the local edit files (the
+                            # checkpoints dir + extra: *edit*, *aio*, *rapid* in
+                            # .gguf/.safetensors). Free text is accepted (another repo /
+                            # path). Applied hot (the omni pipe is reloaded on the next
+                            # edit); the restart is only there to make the tab appear when
+                            # no model was configured.
+                            _omni_cur = (cz_pipeline.OMNI_MODEL or CONFIG.get("zimage_omni_model") or "")
+                            _omni_choices = list(ZIMAGE_BASE_REPOS) \
+                                + cz_pipeline.list_edit_models()
+                            if _omni_cur and _omni_cur not in _omni_choices:
+                                _omni_choices.insert(0, _omni_cur)
+                            omni_model_tb = gr.Dropdown(
+                                choices=_omni_choices, value=_omni_cur or None,
+                                allow_custom_value=True,
+                                label="Edit model (the base model itself on FLUX.3; field kept for the family)",
+                                info="Local edit checkpoints (*edit*, *aio*, *rapid*) from the checkpoints "
+                                     "folders + HF repos. Type any other repo/path. Applied on the next "
+                                     "edit (no restart, except to reveal the tab the first time).")
+                            with gr.Row():
+                                omni_check_btn = gr.Button("Check Omni availability", size="sm")
+                                omni_refresh_btn = gr.Button("Refresh list", size="sm")
+                            omni_status = gr.Markdown("")
+
+                    with gr.Tab("Save"):
+                        save_mode = gr.Radio(choices=["display", "local", "alongside", "custom"],
+                                             value=DEFAULT_SAVE_MODE, label="Save mode")
+                        output_dir = gr.Textbox(value=DEFAULT_OUTPUT_DIR, label="Output folder")
+                        output_format = gr.Dropdown(choices=list(SUPPORTED_FORMATS),
+                                                    value=DEFAULT_OUTPUT_FORMAT, label="Output format")
+
+                        gr.Markdown("### \U0001F5BC️ Asset Browser")
+                        gr.Markdown("*Standalone gallery page (thumbnails + metadata + lightbox) "
+                                    "built into the output folder, opened in a new tab. Reindex to "
+                                    "(re)build it from your saved images.*")
+                        with gr.Row():
+                            ab_thumb_size = gr.Slider(96, 512, value=int(_ab_get("thumbnail_size")),
+                                                      step=32, label="Thumbnail size")
+                            ab_quality = gr.Slider(40, 100, value=int(_ab_get("thumbnail_quality")),
+                                                   step=5, label="Thumbnail quality")
+                        with gr.Row():
+                            ab_blur = gr.Checkbox(value=bool(_ab_get("blur_thumbnails")),
+                                                  label="Blur thumbnails (NSFW)")
+                            ab_gen_thumbs = gr.Checkbox(value=bool(_ab_get("generate_thumbnails")),
+                                                        label="Generate thumbnails")
+                        with gr.Row():
+                            ab_cache_tb = gr.Textbox(
+                                value=str(_ab_get("cache_dir") or ""), scale=3,
+                                label="Thumbnail cache folder",
+                                placeholder=os.path.join(HERE, "cache") + "  (default: app folder, gitignored)",
+                                info="Empty = <app>/cache (fast disk). 'output' = next to the images "
+                                     "(<out>/_index/thumbs). Any path = custom cache (e.g. an SSD).")
+                            ab_cache_save_btn = gr.Button("Save cache folder", size="sm", scale=1)
+                        with gr.Row():
+                            ab_open_btn = gr.Button("\U0001F5BC️ Open Asset Browser",
+                                                    variant="primary", size="sm")
+                            ab_reindex_btn = gr.Button("Rebuild ALL thumbnails (force)", size="sm")
+                        ab_open_link = gr.HTML("")
+                        ab_status = gr.Markdown("")
+
+                    with gr.Tab("Advanced"):
+                        gr.Markdown("### Hugging Face access (gated models)")
+                        hf_token_tb = gr.Textbox(
+                            value="", type="password", label="HF token",
+                            placeholder="hf_... (for gated models, e.g. FLUX.1-Krea-dev)",
+                            info="Saved to preferences.json (gitignored) and applied immediately. "
+                                 "Leave empty to keep the current token.")
+                        hf_token_save_btn = gr.Button("Save token", size="sm", variant="primary")
+                        hf_token_status = gr.Markdown(
+                            "✅ A Hugging Face token is currently set."
+                            if hf_token_is_set() else
+                            "No HF token set (only needed for gated models).")
+
+                        gr.Markdown("### CivitAI access (previews / trigger words)")
+                        civitai_key_tb = gr.Textbox(
+                            value="", type="password", label="CivitAI API key",
+                            placeholder="CivitAI token (optional)",
+                            info="Saved to preferences.json (gitignored). Used by 'Fetch from "
+                                 "CivitAI' in the Asset Browser. Public models work without a key; "
+                                 "a key unlocks gated/NSFW previews and avoids rate limits.")
+                        civitai_key_save_btn = gr.Button("Save key", size="sm", variant="primary")
+                        civitai_key_status = gr.Markdown(
+                            "✅ A CivitAI key is set." if cz_civitai.API_KEY
+                            else "No CivitAI key set (public models still work).")
+
+                        gr.Markdown("### Metadata")
+                        meta_scheme_dd = gr.Dropdown(
+                            choices=[("crispz (json)", "crispz"),
+                                     ("a1111 (plain text — Civitai-compatible)", "a1111")],
+                            value=(CONFIG.get("metadata_scheme") or "crispz").lower(),
+                            label="Metadata scheme (PNG output)",
+                            info="a1111 adds a 'parameters' chunk to PNGs so Civitai reads the "
+                                 "prompt/seed/params. crispz metadata (chunk + sidecar) is kept in both.")
+                        meta_scheme_status = gr.Markdown("")
+
+                        gr.Markdown("### Generation")
+                        wildcards_order_cb = gr.Checkbox(
+                            value=bool(CONFIG.get("wildcards_in_order", False)),
+                            label="Read wildcards in order",
+                            info="Batch: each image takes the NEXT line of the wildcard file "
+                                 "(deterministic) instead of a random one.")
+                        wild_order_status = gr.Markdown("")
+                        live_preview_cb = gr.Checkbox(
+                            value=cz_pipeline.LIVE_PREVIEW_ENABLED,
+                            label="Live preview while rendering",
+                            info="Show the image as it forms, in the Result gallery, during "
+                                 "the denoise. The latents are projected to RGB through a "
+                                 "16x3 matrix -- about 1.5 ms a step, where a real VAE decode "
+                                 "would nearly double an 8-step Turbo render. It is an "
+                                 "approximation: composition and broad colours are right, fine "
+                                 "detail is not. Off removes the whole thing (no callback on "
+                                 "the denoise, no frames). Applied live; config "
+                                 "`live_preview.enabled` sets the startup value.")
+                        save_pre_upscale_cb = gr.Checkbox(
+                            value=bool(CONFIG.get("save_pre_upscale", False)),
+                            label="Also save pre-upscale image",
+                            info="In txt2img + auto-upscale, also save the original txt2img image "
+                                 "(before ESRGAN/refine), tagged 'txt2img'.")
+                        lora_slots_num = gr.Slider(1, MAX_LORA_SLOTS, value=LORA_SLOTS, step=1,
+                                                   label="LoRA slots (Models > LoRA)",
+                                                   info="How many LoRA slots to show. Applied live and "
+                                                        "persisted (preferences.json).")
+                        detailer_denoise_sl = gr.Slider(
+                            0.1, 0.7, value=cz_detailer.DETAILER_DENOISE, step=0.05,
+                            label="Face detailer denoise (🔧 Detail faces)",
+                            info="Strength of the per-face refine pass. 0.3-0.4 sharpens "
+                                 "details; higher starts changing the identity. Applied live.")
+                        hand_denoise_sl = gr.Slider(
+                            0.1, 0.7, value=cz_detailer.HAND_DENOISE, step=0.05,
+                            label="Hand detailer denoise (🖐 Detail hands)",
+                            info="Hands usually need a bit more than faces (0.4-0.5) to fix "
+                                 "fingers; too high invents a different hand. Applied live.")
+
+        # Toggles facon Fooocus
+        advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
+        use_input.change(lambda v: gr.update(visible=bool(v)), use_input, input_group)
+        # PNG Info: read an image's metadata + send it to the fields
+        meta_reader.change(_ui_read_meta, [meta_reader], [input_meta_md, meta_state])
+        # TrustMark decoding on demand (CPU, ~4s on the first call then ~0.1s)
+        meta_wm_btn.click(lambda p: _ui_read_meta(p, check_wm=True),
+                          [meta_reader], [input_meta_md, meta_state])
+        meta_to_prompt_btn.click(
+            lambda m: (gr.update(value=(m or {}).get("prompt", "")),
+                       gr.update(value=(m or {}).get("negative", ""))),
+            [meta_state], [prompt, negative])
+        meta_apply_all_btn.click(_ui_meta_apply_all, [meta_state],
+                                 [input_meta_md, prompt, negative, seed, gen_steps, guidance,
+                                  width, height, sampler_dd, schedule_dd]) \
+            .then(set_sampler, [sampler_dd], [sampler_status]) \
+            .then(set_schedule, [schedule_dd], [sampler_status])
+
+        # Vary (Fooocus style): one click arms a pure img2img (ESRGAN off) at a fixed
+        # denoise, opens the Input Image panel, and leaves the user to press Generate.
+        def _ui_vary(d):
+            return (gr.update(value=True), gr.update(value=False), gr.update(value=True),
+                    gr.update(value=float(d)),
+                    f"🎲 **Vary {'subtle' if d < 0.4 else 'strong'}** armed — img2img only "
+                    f"(ESRGAN off), denoise **{d}**. Drop an image in Input Image, then "
+                    f"press **Generate**.")
+        _vary_outs = [use_input, do_esrgan_cb, do_refine_cb, denoise, report]
+        vary_subtle_btn.click(lambda: _ui_vary(0.25), None, _vary_outs) \
+            .then(lambda v: gr.update(visible=bool(v)), use_input, input_group)
+        vary_strong_btn.click(lambda: _ui_vary(0.6), None, _vary_outs) \
+            .then(lambda v: gr.update(visible=bool(v)), use_input, input_group)
+        meta_to_seed_btn.click(
+            lambda m: gr.update(value=int((m or {}).get("seed"))) if (m or {}).get("seed") is not None
+            else gr.update(),
+            [meta_state], [seed])
+        aspect.change(_set_aspect, [aspect], [width, height]) \
+              .then(_ui_set_force_ratio, [force_ratio_cb, aspect], None)
+        force_ratio_cb.change(_ui_set_force_ratio, [force_ratio_cb, aspect], None)
+        # A preset can carry a LoRA (config: [steps, guidance, lora]) -> it is applied
+        # in slot 1; the displayed slots 2..N are passed in to be preserved.
+        _perf_slots = [c for i in range(1, LORA_SLOTS) for c in (lora_dds[i], lora_lws[i])]
+        performance.change(_set_performance, [performance] + _perf_slots,
+                           [gen_steps, guidance, lora_dds[0], lora_lws[0]])
+        style_search.change(_filter_styles, [style_search, styles], [styles])
+
+        # Actions
+        hf_token_save_btn.click(_save_hf_token, [hf_token_tb], [hf_token_tb, hf_token_status])
+        civitai_key_save_btn.click(_save_civitai_key, [civitai_key_tb],
+                                   [civitai_key_tb, civitai_key_status])
+        meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
+        wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
+        save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
+        live_preview_cb.change(cz_pipeline.set_live_preview, [live_preview_cb], None)
+        detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
+        detailer_denoise_sl.change(_ui_set_detailer_denoise, [detailer_denoise_sl], None)
+        detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
+        hand_denoise_sl.change(_ui_set_hand_denoise, [hand_denoise_sl], None)
+        lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
+        refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
+        save_paths_btn.click(_save_paths_to_prefs,
+                             [esrgan_dir_tb, ckpt_dir_tb, ckpt_extra_dir_tb, lora_dir_tb, wild_dir_tb],
+                             [paths_status])
+        wild_refresh_btn.click(_ui_wild_refresh, [wild_dir_tb], [wild_dd, wild_status])
+        wild_dd.change(_ui_wild_load, [wild_dd], [wild_editor, wild_status])
+        wild_insert_btn.click(_ui_wild_insert, [wild_dd, prompt], [prompt, wild_status])
+        wild_save_btn.click(_ui_wild_save, [wild_dd, wild_editor], [wild_status])
+        wild_create_btn.click(_ui_wild_create, [wild_new_name, wild_editor],
+                              [wild_dd, wild_status, wild_new_name])
+        ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb],
+                               [ckpt_dd, ckpt_status, preset_dd])
+        # ckpt_dd is an OUTPUT as well: choosing a base repo changes the list of
+        # compatible single-file checkpoints. The value returned is the one just chosen ->
+        # no new .change, no loop.
+        ckpt_dd.change(_apply_checkpoint, [ckpt_dd],
+                       [ckpt_status, gen_steps, guidance, performance, ckpt_dd, preset_dd]) \
+            .then(_ui_refresh_text_encoders, None, [te_dd, te_status])
+        # The same six outputs as the menu: the selector does the same base swap,
+        # and the menu is one of them -- it has to be refilled with the other
+        # family's models.
+        variant_rb.change(_apply_variant, [variant_rb],
+                          [ckpt_status, gen_steps, guidance, performance, ckpt_dd,
+                           preset_dd]) \
+            .then(_ui_refresh_text_encoders, None, [te_dd, te_status])
+        precision_rb.change(_ui_set_precision, [precision_rb], [precision_status])
+        # CivitAI community settings -> steps/CFG/sampler/schedule (programmatic
+        # updates do not fire .change, hence the explicit .then calls).
+        civitai_reco_btn.click(_ui_civitai_reco, [ckpt_dd],
+                               [ckpt_status, gen_steps, guidance, sampler_dd, schedule_dd]) \
+            .then(set_sampler, [sampler_dd], [sampler_status]) \
+            .then(set_schedule, [schedule_dd], [sampler_status])
+        transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
+                                    [ckpt_status, gen_steps, guidance, performance])
+        te_dd.change(_ui_set_text_encoder, [te_dd], [te_status])
+        te_refresh_btn.click(_ui_refresh_text_encoders, None, [te_dd, te_status])
+        lora_refresh_btn.click(_refresh_loras, [lora_dir_tb, lora_extra_dirs_tb],
+                               lora_dds + [lora_status])
+        # slots entrelaces: dd1, lw1, dd2, lw2, ... (attendu par _apply_loras/_ui_loras_apply)
+        _lora_slots = [c for _pair in zip(lora_dds, lora_lws) for c in _pair]
+        for _c in lora_dds:
+            _c.change(_ui_loras_apply, _lora_slots, [lora_status, lora_keywords_tb])
+        for _c in lora_lws:
+            _c.change(_apply_loras, _lora_slots, [lora_status])
+        lora_kw_btn.click(_ui_loras_keywords, lora_dds,
+                          [lora_keywords_tb, lora_status])
+        lora_kw_to_prompt_btn.click(_ui_kw_to_prompt, [prompt, lora_keywords_tb], [prompt])
+        civ_lora_search_btn.click(_ui_civitai_lora_search, [civ_lora_q, civ_lora_konly],
+                                  [civ_lora_q, civ_lora_dd, civ_lora_state,
+                                   civ_lora_status])
+        civ_lora_dl_btn.click(_ui_civitai_lora_download, [civ_lora_dd, civ_lora_state],
+                              lora_dds + [civ_lora_status])
+        # ----- Presets (Settings) -----
+        _preset_scalars = [prompt, negative, styles, width, height, gen_steps, guidance,
+                           sampler_dd, schedule_dd, image_number, ckpt_dd, transformer_tb]
+        _preset_io = _preset_scalars + lora_dds + lora_lws
+        preset_refresh_btn.click(lambda: gr.update(choices=list_presets()), None, [preset_dd])
+        preset_load_btn.click(_ui_preset_load, [preset_dd], _preset_io + [preset_status]) \
+            .then(_ui_apply_ckpt_silent, [ckpt_dd], [ckpt_status]) \
+            .then(_ui_apply_transformer_silent, [transformer_tb], [ckpt_status]) \
+            .then(_apply_loras, _lora_slots, [lora_status]) \
+            .then(set_sampler, [sampler_dd], [sampler_status]) \
+            .then(set_schedule, [schedule_dd], [sampler_status])
+        preset_save_btn.click(_ui_preset_save, [preset_name_tb] + _preset_io, [preset_dd, preset_status])
+        preset_update_btn.click(_ui_preset_save, [preset_dd] + _preset_io, [preset_dd, preset_status])
+        preset_delete_btn.click(_ui_preset_delete, [preset_dd], [preset_dd, preset_status])
+        omni_model_tb.change(_ui_set_omni_model, [omni_model_tb], [omni_status])
+        omni_check_btn.click(_ui_check_omni, None, [omni_status])
+        omni_refresh_btn.click(
+            lambda cur: gr.update(choices=(([cur] if cur else [])
+                                           + list(ZIMAGE_BASE_REPOS)
+                                           + [m for m in cz_pipeline.list_edit_models() if m != cur])),
+            [omni_model_tb], [omni_model_tb])
+        omni_check_btn2.click(_ui_check_omni, None, [omni_status2])
+        # Edit presets: .input (a user action) rather than .change, because the answer
+        # updates the dropdown itself (the label ⬇ -> ✓ after a download).
+        edit_lora_dd.input(_ui_edit_lora_pick, [edit_lora_dd, edit_lora_w],
+                           [edit_lora_dd, edit_lora_status, edit_lora_w])
+        edit_lora_w.release(_ui_edit_lora_apply, [edit_lora_dd, edit_lora_w],
+                            [edit_lora_dd, edit_lora_status])
+        edit_lora_prompt_btn.click(_ui_edit_lora_prompt, [edit_lora_dd, prompt], [prompt])
+        edit_lora_refresh_btn.click(lambda: gr.update(choices=_edit_lora_choices()),
+                                    None, [edit_lora_dd])
+        edit_loras_cb.change(_ui_edit_loras_enabled, [edit_loras_cb], [edit_lora_status])
+        edit_speed_dd.change(_ui_edit_speed, [edit_speed_dd], [edit_speed_status])
+        ab_reindex_btn.click(_ui_ab_reindex,
+                             [output_dir, ab_thumb_size, ab_quality, ab_blur, ab_gen_thumbs],
+                             [ab_open_link, ab_status])
+        # Open Asset Browser in a new tab (fast: manifest now, thumbnails in background).
+        ab_cache_save_btn.click(_ui_set_ab_cache, [ab_cache_tb], [ab_status])
+        ab_open_btn.click(_ui_gallery_open, [output_dir], [ab_status, gallery_url]).then(
+            None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
+        # The 🖼️ icons: open the Asset Browser focused on the selected checkpoint /
+        # LoRA.
+        _open_js = "(u) => { if (u) window.open(u, '_blank'); }"
+        ckpt_open_btn.click(lambda n: _asset_focus_url("models", n), [ckpt_dd],
+                            [ckpt_status, gallery_url]).then(None, [gallery_url], None, js=_open_js)
+        for _dd, _ob in zip(lora_dds, lora_open_btns):
+            _ob.click(lambda n: _asset_focus_url("loras", n), [_dd],
+                      [lora_status, gallery_url]).then(None, [gallery_url], None, js=_open_js)
+        log_level_dd.change(set_log_level, [log_level_dd], [log_level_status])
+        caption_model_dd.change(_ui_set_caption_model, [caption_model_dd], [caption_model_status])
+        detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        detect_btn.click(_ui_detect_improve_models, [ollama_url], [improve_model])
+        ollama_model.change(_ui_remember_vision_model, [ollama_model], None)
+        describe_style_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
+                                 [describe_preview])
+        describe_length_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
+                                  [describe_preview])
+        describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
+        improve_btn.click(_ui_improve, [prompt, improve_model, ollama_url], [prompt, improve_status])
+        improve_dir_btn.click(_ui_toggle_panel, [improve_dir_open],
+                              [improve_dir_open, improve_dir_row])
+        improve_dir_go.click(_ui_improve, [prompt, improve_model, ollama_url, improve_directives],
+                             [prompt, improve_status])
+        improve_neg_btn.click(_ui_improve_negative, [negative, improve_model, ollama_url],
+                              [negative, improve_status])
+        improve_neg_dir_btn.click(_ui_toggle_panel, [improve_neg_dir_open],
+                                  [improve_neg_dir_open, improve_neg_dir_row])
+        improve_neg_dir_go.click(_ui_improve_negative,
+                                 [negative, improve_model, ollama_url, improve_neg_directives],
+                                 [negative, improve_status])
+        compose_btn.click(_ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
+                          [prompt, compose_status])
+        rembg_btn.click(_ui_remove_bg, [rembg_img, history, save_mode, output_dir],
+                        [out, report, history, history_gallery])
+        faceswap_restore_cb.change(set_faceswap_restore,
+                                   [faceswap_restore_cb, faceswap_restore_blend],
+                                   [faceswap_restore_status])
+        faceswap_restore_blend.change(set_faceswap_restore,
+                                      [faceswap_restore_cb, faceswap_restore_blend],
+                                      [faceswap_restore_status])
+        _fs_quality_inputs = [faceswap_occlusion_cb, faceswap_regions_cb, faceswap_color_cb,
+                              faceswap_restore_model, faceswap_fidelity]
+        for _c in _fs_quality_inputs:
+            _c.change(set_faceswap_quality, _fs_quality_inputs, [faceswap_quality_status])
+        # The unified Inpaint / Outpaint / Reframe tab: the mode shows the right
+        # controls.
+        edit_mode.change(
+            lambda mo: (gr.update(visible="expand" in mo.lower()),
+                        gr.update(visible="lora" in mo.lower()),
+                        gr.update(visible="reframe" in mo.lower())),
+            [edit_mode], [expand_group, outpaint_lora_group, reframe_group])
+        center_btn.click(lambda: ["Left", "Right", "Top", "Bottom"], None, [inpaint_outpaint])
+        edit_btn.click(_ui_edit,
+                       [edit_mode, inpaint_editor, inpaint_outpaint, reframe_ratio, reframe_fit,
+                        edit_autodescribe, edit_harmonize, edit_harmonize_denoise,
+                        prompt, negative, styles, guidance, offload, gen_steps,
+                        edit_strength, seed, save_mode, output_dir, output_format, history,
+                        outpaint_lora_w],
+                       [out, report, history, history_gallery])
+        # Fooocus-style Stop: it runs alongside Generate (a separate thread) and sets
+        # the stop flag + interrupts the running denoise loop.
+        stop_btn.click(request_stop, None, [report])
+        clear_hist_btn.click(_ui_clear_history, None, [history, history_gallery])
+        load_out_btn.click(_ui_load_outputs, [output_dir], [history, history_gallery])
+        # The output folder's gallery -> the Asset Browser in a new tab
+        gallery_btn.click(_ui_gallery_open, [output_dir], [gallery_status, gallery_url]).then(
+            None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
+        preset.change(_apply_preset, [preset],
+                      [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
+        # Sampler (euler/unipc) + schedule (sgm_uniform/beta/karras/exp): applies the
+        # chosen scheduler to the cached pipes (no reload).
+        sampler_dd.change(set_sampler, [sampler_dd], [sampler_status])
+        schedule_dd.change(set_schedule, [schedule_dd], [sampler_status])
+        # Seed (Fooocus-style): reuse the last render's concrete seed + lock the seed.
+        reuse_seed_btn.click(lambda: gr.update(value=int(cz_pipeline._LAST_SEED)), None, [seed])
+        no_seed_inc_cb.change(cz_pipeline.set_no_seed_increment, [no_seed_inc_cb], None)
+        _gen_inputs = [prompt, negative, styles, style_random, use_input, inp, input_mode,
+                       ref1, ref2, ref3, ref4,
+                       faceswap_enable, faceswap_src,
+                       width, height, gen_steps, image_number,
+                       seed, guidance, offload, esrgan, do_esrgan_cb, do_refine_cb, refine_first_cb, factor, denoise, refine_steps,
+                       tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
+                       history, auto_upscale_cb]
+        _gen_outputs = [out, report, history, history_gallery]
+        # show_progress_on=report: gradio's spinner COVERS every output component
+        # while the event runs, and this one yields a frame per denoise step -- the
+        # gallery would strobe, image and spinner replacing each other all the way.
+        btn.click(_with_live_preview(_ui_generate), inputs=_gen_inputs,
+                  outputs=_gen_outputs, show_progress_on=[report])
+        # The Edit (references) tab's Edit button: same inputs/outputs, forced routing.
+        omni_edit_btn.click(_ui_edit_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        if JOB_QUEUE_ENABLED:
+            _q_panel = [queue_state, queue_sel, queue_md, queue_add_btn]
+            queue_add_btn.click(_ui_queue_add, [*_gen_inputs, queue_state], _q_panel)
+            queue_up_btn.click(lambda it, s: _ui_queue_move(it, s, -1),
+                               [queue_state, queue_sel], _q_panel)
+            queue_down_btn.click(lambda it, s: _ui_queue_move(it, s, +1),
+                                 [queue_state, queue_sel], _q_panel)
+            queue_rm_btn.click(_ui_queue_remove, [queue_state, queue_sel], _q_panel)
+            queue_clear_btn.click(_ui_queue_clear, [queue_state], _q_panel)
+            queue_run_btn.click(_ui_queue_run, [queue_state, history],
+                                [*_q_panel, out, report, history, history_gallery])
+            # A soft pause: finishes the running job then suspends (Stop, for its
+            # part, interrupts the render in mid-flight; the interrupted job stays in the
+            # queue)
+            queue_pause_btn.click(_q_request_pause, None, [report])
+        if XYZ_ENABLED:
+            xyz_build_btn.click(_ui_xyz_build,
+                                [*_gen_inputs, xyz_xa, xyz_xv, xyz_ya, xyz_yv, xyz_za, xyz_zv,
+                                 queue_state],
+                                [*_q_panel, xyz_status])
+            if XYZ_SUGGEST:
+                for _dd, _tb, _sg in ((xyz_xa, xyz_xv, xyz_xs), (xyz_ya, xyz_yv, xyz_ys),
+                                      (xyz_za, xyz_zv, xyz_zs)):
+                    _dd.change(_ui_xyz_axis_changed, [_dd], [_tb])
+                    _sg.click(_ui_xyz_fill, [_dd, _tb], [_tb])
+        # A click on an image of the result -> a Download button with the real file name.
+        out.select(_pick_download, None, [result_dl])
+        # Vision Mix & Generate: merges the refs into one prompt, then generates (txt2img).
+        vmix_gen_btn.click(
+            _ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
+            [prompt, compose_status]
+        ).then(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        # On page load: detects Ollama and picks the remembered vision model back up.
+        demo.load(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        demo.load(_ui_detect_improve_models, [ollama_url], [improve_model])
+        if JOB_QUEUE_ENABLED:
+            # ... and re-seeds the queue from disk: the module-level snapshot taken when
+            # build_ui ran goes stale on the first mutation (see _ui_queue_reload).
+            demo.load(_ui_queue_reload, None, _q_panel)
+    global _DEMO
+    _DEMO = demo  # to authorise on the fly the output folders changed in the UI
+    return demo
+

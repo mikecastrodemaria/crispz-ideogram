@@ -1,0 +1,317 @@
+crispz-flux3 - config tutorial
+================================
+
+HOW IT WORKS
+------------
+Settings live in a JSON file loaded at startup. Priority:
+  1) config.txt        -> your LOCAL copy (gitignored, never pushed). Edit this one.
+  2) config-sample.txt -> the generic template shipped in the repo (fallback).
+  3) built-in defaults -> used if a key (or both files) is missing.
+
+First time: copy config-sample.txt to config.txt, then edit config.txt.
+  Windows : copy config-sample.txt config.txt
+  Linux   : cp config-sample.txt config.txt
+Restart the app after editing. (config.txt is NOT version-controlled, so your
+local paths/tweaks stay private.)
+
+
+KEYS
+----
+ollama_url              Ollama server URL (Describe + Improve prompt).
+                        e.g. "http://127.0.0.1:11434"
+ollama_describe_prompt  Empty = Describe uses the style picked in Prompt AI
+                        (Describe style + Length; the accordion under them shows
+                        the exact instruction). Any text here adds a "Custom
+                        (config.txt)" style. The pre-1.36 sample (comma-separated
+                        tags) counts as empty.
+ollama_improve_prompt   Instruction to rewrite/enrich the current prompt. Empty =
+                        built-in (keeps the prompt's form). Must contain {prompt}
+                        (replaced by your prompt). Edit the tone here (e.g. ask for
+                        photographic detail, a language, etc.).
+ollama_compose_prompt   Instruction for the Vision Mix tab: merges the per-image
+                        descriptions into ONE prompt. Empty = built-in. Should
+                        contain {descriptions} (replaced by the list of captions).
+ollama_num_ctx          Context Ollama loads the model with (default 8192: an image
+                        and a long answer fit). A Modelfile default can be 131072 =
+                        about twice the VRAM. 0 = leave Ollama's value.
+ollama_num_predict      Cap on the answer length in tokens (default 700): a looping
+                        model otherwise never stops. 0 = no cap.
+ollama_describe_temperature
+                        Describe sampling temperature (default 0.3 = faithful;
+                        null = the model's own).
+ollama_vision_blocklist List of model-name substrings to EXCLUDE from the vision
+                        model list (Describe / Vision Mix), even if Ollama reports
+                        them as vision-capable. e.g. ["qwen3.6"] to hide a model
+                        that claims vision but doesn't work well.
+ollama_cpu              true -> run the Ollama vision/LLM on CPU (num_gpu=0): zero
+                        VRAM shared with the model (slower captions). Good if your GPU
+                        is tight when using Describe / Vision Mix during generation.
+ollama_keep_alive       How long Ollama keeps the model in VRAM after a call.
+                        0 (default) = unload immediately so the VRAM is freed
+                        before the model generates (avoids GPU competition on one
+                        card). Use "30s"/"5m" or -1 (keep) if you have VRAM to
+                        spare and want faster repeated Describe/Vision Mix.
+
+default_prompt          Prompt prefilled at startup.
+default_negative_prompt Negative prompt prefilled at startup.
+default_styles          List of style names checked by default, e.g.
+                        ["Fooocus Cinematic", "SAI Anime"].
+default_aspect_ratio    One of the Settings aspect labels, e.g. "1024 x 1024  (1:1)".
+default_performance     One of the performance_presets names below.
+performance_presets     Editable Performance presets: name -> [steps, guidance].
+                        Add/rename your own (e.g. "Juggernaut": [28, 6.0]).
+model_profiles          Per-model auto-tuning: a substring of the model name ->
+                        {steps, guidance}. When you pick a checkpoint / set a
+                        transformer override, steps + CFG auto-adjust to the first
+                        matching profile (e.g. "juggernaut" -> CFG 6). 0 guidance =
+                        Turbo-style; >0 = Base/CFG models.
+default_model_profile   {steps, guidance} used when no model_profiles key matches.
+default_width/height    txt2img size (multiples of 16).
+default_gen_steps       txt2img steps.
+default_guidance        CFG. INERT on FLUX.2 Klein: the model is step-wise distilled,
+                        diffusers ignores guidance_scale and the pipelines expose no
+                        negative_prompt. Kept at 1.0 so the UI does not suggest a CFG.
+default_sampler         Default sampler: euler (native flow-matching), unipc (UniPC
+                        multistep), or lcm (LCM flow-matching: few steps, guidance
+                        ~0-1 -> distilled models). FLUX.2 Klein imposes custom sigmas
+                        -> DPM++ 2M / DPM2a / dpmpp_sde are incompatible (not
+                        exposed). Also settable in the UI (next to the CFG).
+default_schedule        Sigma schedule (ComfyUI's "scheduler"): sgm_uniform (the native
+                        flow-matching one), beta, karras, exponential. 'simple' is accepted
+                        as an alias of sgm_uniform: it is the SAME curve (the sigmas the
+                        pipeline hands the scheduler are linspace(1, 1/steps, steps), which
+                        is what ComfyUI calls 'simple') -- enough to copy a CivitAI recipe
+                        over without translating it. Also settable in the UI (next to the
+                        sampler).
+default_image_number    Batch size at startup (1-30).
+default_seed            -1 = random.
+
+default_factor          Upscale factor (img2img/upscale).
+default_denoise         Refine denoise strength (0..0.8).
+default_refine          Default state of the "Refine (img2img)" checkbox (true/false).
+                        false = ESRGAN upscale only by default (skip the slow refine).
+default_refine_first    Default state of "Refine before upscale (faster)" (true/false).
+                        true = refine at native res THEN ESRGAN (~4-16x faster refine).
+default_refine_steps    Refine steps (klein: 4).
+default_tile/overlap    ESRGAN tiling (0 = off) to cap VRAM.
+default_refine_tile/overlap   Diffusion tiling for 4K+ (0 = whole image).
+attention_slice_above   Side (px) above which attention slicing is turned on (whole-image
+                        2K+ -> avoids the VRAM spill). Below it (1024 tiles, txt2img) slicing
+                        is OFF = fast SDPA attention. 1664 by default. On a big card you can
+                        raise it (e.g. 2048) so it never slices.
+auto_refine_tile_above  Side (px) above which a "whole image" refine (refine_tile=0) is
+                        auto-tiled (see auto_refine_tile). Default = attention_slice_above
+                        (1664): above that a whole-image pass would be sliced (slow, ~120s at
+                        2K) and risks the 4K spill.
+auto_refine_tile        Tile size for that auto-tiling. "auto" (default) = picked to MINIMISE
+                        the tiled area (n tiles x tile^2), which is the real cost of the pass.
+                        Measured at 4096x4096: 896 -> 36.7s against 46.9s at 1024, for the same
+                        number of tiles and seams (at 1024 the grid overflows and covers 1.56x
+                        the area of the image). An integer freezes the size (e.g. 1024 = the
+                        old behaviour). Bounds tunable through auto_refine_tile_min /
+                        auto_refine_tile_max (768 / 1024).
+refine_tile_denoise_cap Denoise ceiling for the TILED refine (4K+). In tiles, every tile is
+                        re-diffused with the global prompt -> at a high denoise (Creative) the
+                        diffusion RECREATES the subject (say, the cup) IN each tile =
+                        duplications. So the per-tile denoise is capped (0.40 by default) to
+                        let the existing content guide the diffusion (the Ultimate SD Upscale
+                        way). 0 = no ceiling. The "whole image" refine keeps the denoise you
+                        asked for (a single pass -> no duplication is possible). Lower it to
+                        0.30 if you still see the subject repeat across the tiles.
+refine_tile_prompt      Prompt used PER TILE for the tiled refine. The global prompt describes
+                        the WHOLE composition (not the tile) -> handing it to every tile pushes
+                        the diffusion to recreate the subject (say, the cup) inside background
+                        tiles. Default "" = an EMPTY prompt per tile (each tile just sharpens
+                        its local detail = no duplication). "global" or "scene" = reuse the
+                        scene prompt (the old behaviour). Any other text = a generic prompt
+                        applied to every tile, e.g. "high detail, sharp focus, fine texture".
+                        With an empty prompt you can raise refine_tile_denoise_cap again
+                        without reintroducing duplication.
+default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
+
+checkpoints_dir         Folder of single-file FLUX.2 models (.safetensors). Scanned
+                        into the Models > Checkpoints dropdown to switch model (like
+                        ESRGAN). Empty -> ./checkpoints next to app.py.
+loras_dir               Folder of LoRA .safetensors. Scanned into Models > LoRA.
+                        Empty -> ./loras next to app.py.
+wildcards_dir           Folder of wildcard .txt files. In the prompt, __name__ is
+                        replaced by a random line from <folder>/name.txt (e.g.
+                        __color__). Nested wildcards supported, reproducible per
+                        seed. Empty -> ./wildcards next to app.py.
+default_lora_weight     Default LoRA strength a slot starts at (default 1.0). Clamped
+                        into lora_weight_min..lora_weight_max.
+lora_weight_min         Min/max of the LoRA "Weight" sliders (default -2.0 / 2.0).
+lora_weight_max         NEGATIVE weights are allowed and useful: the LoRA then pushes
+                        AWAY from what it was trained on (a "skinny slider" at -1 gives
+                        the opposite effect). 0 = no effect. Past about +/-1.5 most LoRAs
+                        burn or deform the image. Set lora_weight_min to 0 to forbid
+                        negatives. Bad values or min >= max -> falls back to -2..2.
+lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
+                        Each slot = a dropdown + weight; all combine at generation.
+zimage_omni_model       REMOVED on crispz-flux3. There is no separate edit model:
+zimage_omni_base        Flux2KleinPipeline takes a list of reference images, so the
+                        Edit (references) tab and the protocol op 'edit' run on the
+                        BASE model. Changing the checkpoint changes the editor too.
+                        Do not re-add these keys when merging from the upstream forks.
+
+--- Face Swap: blending quality (UI: Face Swap > Blending quality) ---
+Background: inswapper outputs a 128px face and insightface pastes it through a plain
+RECTANGLE. That rectangle ignores whatever is in front of the face, so a hand, some
+food, a mic or a strand of hair over the mouth gets repainted by the generated pixels.
+The masks below replace that paste-back. Each model is downloaded once into 'faceswap'
+and, if unavailable, its pass is skipped with a log line (the swap still runs).
+
+faceswap_occlusion      true (default) = keep pixels that occlude the face. THE setting
+                        for shots where something touches the face. Model: dfl_xseg.onnx.
+faceswap_occluder_path  Override the local path of dfl_xseg.onnx.
+faceswap_occluder_url   Where to fetch it (default: facefusion/models-3.0.0).
+faceswap_regions        true (default) = restrict the swap to skin/brows/eyes/glasses/
+                        nose/mouth/lips, so it does not bleed onto hair, neck, clothes
+                        or background. Model: bisenet_resnet_34.onnx.
+faceswap_parser_path    Override the local path of bisenet_resnet_34.onnx.
+faceswap_parser_url     Where to fetch it.
+faceswap_color_match    true (default) = match the swapped face's LAB mean/std to the
+                        original face, so the source photo's skin tone and exposure do
+                        not show through. No model needed.
+faceswap_restore        true (default) = re-synthesise the face at 512 (a 128px swap is
+                        soft on any large image).
+faceswap_restore_blend  0..1, strength of that restore pass (default 0.8).
+faceswap_restore_model  "codeformer" (default, recovers more detail) | "gfpgan" (lighter).
+                        Falls back to gfpgan if CodeFormer cannot be fetched.
+faceswap_restore_fidelity
+                        CodeFormer only. 0 = maximum detail (more generative), 1 = maximum
+                        fidelity to the swapped pixels. A 128px swap is a heavy
+                        degradation, so 0.5-0.7 works best (default 0.7).
+faceswap_codeformer_path / faceswap_codeformer_url
+                        Local path / download URL for codeformer.onnx.
+faceswap_restore_path / faceswap_restore_url
+                        Local path / download URL for gfpgan_1.4.onnx.
+
+NOTE (GPU): if BOTH 'onnxruntime' and 'onnxruntime-gpu' are installed, the CPU build
+shadows the GPU one at import (same module name) and every ONNX pass -- face swap,
+restore, masks, rembg -- silently runs on CPU. install.bat/install.sh now filter the
+CPU build out. To check an existing venv:
+  .venv/Scripts/python -c "import onnxruntime as o; print(o.get_available_providers())"
+CUDAExecutionProvider must be listed. If not:
+  .venv/Scripts/python -m pip uninstall -y onnxruntime
+  .venv/Scripts/python -m pip install --force-reinstall --no-deps onnxruntime-gpu
+(the reinstall is required: uninstalling the CPU build also removes the shared module
+directory that onnxruntime-gpu relies on).
+
+default_save_mode       "display" (no save) | "local" | "alongside" | "custom".
+default_output_dir      Folder for "local"/"custom" save modes. Absolute paths are
+                        allowed (e.g. another drive). WINDOWS PATHS IN JSON: use "/" or
+                        "\\" -- a single "\" is an illegal JSON escape and makes the WHOLE
+                        config.txt fail to load silently (every setting falls back to
+                        config-sample.txt). Right: "E:/images/out" or
+                        "E:\\images\\out". Wrong: "E:\images\out".
+                        Changing the "Output folder" field in the UI at runtime is fine
+                        too: the folder is auto-authorised for the Asset Browser (no more
+                        "File not allowed"), no restart needed.
+default_output_format   "png" | "jpg" | "webp".
+asset_browser.cache_dir Where the Asset Browser caches thumbnails. Empty (default) =
+                        <app>/cache — the app folder (gitignored), usually on a fast disk,
+                        so the grid stays fast even when the output folder is a slow
+                        HDD/NAS. 'output' = old behaviour, next to the images
+                        (<out>/_index/thumbs). Any path = custom cache (e.g. an SSD):
+                        thumbnails go to <cache_dir>/crispz-thumbs/<slug>/ (one slug per
+                        output folder). Also settable in the UI (Save > Asset Browser,
+                        'Thumbnail cache folder' — restart to SERVE from a new path).
+                        Safe to delete any time (rebuilt on demand).
+auth                    Login page for the Gradio UI. Empty (default) = no login, fine
+                        for localhost. "user:password" (several: "a:pw1,b:pw2") shows a
+                        login page before anything else - REQUIRED before exposing the
+                        app on a LAN or through a tunnel (cloudflared), or anyone with
+                        the URL can generate and browse/delete your images. Same via
+                        --auth user:pw or the CRISPZ_AUTH environment variable.
+civitai_api_key         Optional CivitAI API token. In the Asset Browser (LoRAs/Models
+                        tabs), "Fetch from CivitAI" looks a model up by its SHA256, then
+                        saves <name>.preview.png + <name>.civitai.json (trigger words +
+                        example images; a video example (.mp4) is saved as its first
+                        frame). A key unlocks gated/NSFW previews; most public
+                        models work without one.
+date_subfolders         true (default) -> save into out/YYYY-MM-DD/ subfolders
+                        (like Fooocus). The galleries/Asset Browser scan recursively.
+save_pre_upscale        false (default). true -> in txt2img or Edit (references) + auto-upscale,
+                        ALSO save the original image (before ESRGAN/refine), tagged 'txt2img'
+                        or 'omni', next to the final upscaled one. Toggle in Advanced >
+                        Generation.
+wildcards_in_order      false (default) -> __name__ picks a RANDOM line (reproducible per
+                        seed). true -> in a batch, image i takes line (i % nb_lines) of the
+                        wildcard file (deterministic sweep). Toggle in Advanced > Generation.
+metadata_scheme         "crispz" (default) | "a1111". a1111 also writes an A1111/Civitai
+                        'parameters' text chunk into PNGs so Civitai reads the prompt +
+                        seed + params. crispz's own chunk + sidecar .json are kept either
+                        way. Switchable live in Advanced > Metadata.
+filename_pattern        Output filename (no extension). Placeholders:
+                        {date}  YYYYMMDD-HHMMSS
+                        {tag}   upscaled / txt2img / img2img / omni / faceswap (+ source name)
+                        {seed}  the seed used (or "rand")
+                        {w} {h} output size
+                        {index} _1.._N for batches
+                        Files are made unique (_2, _3...) so nothing is overwritten.
+
+log_level               "quiet" | "info" | "debug". debug = full params/state/VRAM
+                        in the console (also: run.bat --debug, or --log-level debug).
+
+hf_token                Hugging Face token for gated models (empty = anonymous).
+live_preview            Live preview during the denoise: {"enabled": true,
+                        "every_n_steps": 1, "max_side": 512}. The image appears in its
+                        own box above the result while it forms. Cheap (a 16x3 matmul on
+                        the latent grid, ~1.5 ms a step) and approximate: composition and
+                        broad colours, not fine detail. enabled=false removes it entirely.
+default_gen_steps       txt2img steps.
+default_guidance        CFG. 0 = Z-Image Turbo. Z-Image Base: ~3.5-5.
+default_sampler         Default sampler: euler (native flow-matching), unipc (UniPC
+                        multistep), or lcm (LCM flow-matching: few steps, guidance
+                        ~0-1 -> distilled/Turbo models). Z-Image imposes custom sigmas
+                        -> DPM++ 2M / DPM2a / dpmpp_sde are incompatible (not
+                        exposed). Also settable in the UI (next to the CFG).
+default_schedule        Sigma schedule (ComfyUI's "scheduler"): sgm_uniform (Z-Image's
+                        native one), beta, karras, exponential. 'simple' is accepted as an
+                        alias of sgm_uniform: it is the SAME curve (the sigmas Z-Image
+                        imposes are linspace(1, 1/steps, steps), which is what ComfyUI calls
+                        'simple') -- enough to copy a CivitAI recipe over without translating
+                        it. Also settable in the UI (next to the sampler).
+default_image_number    Batch size at startup (1-30).
+default_seed            -1 = random.
+caption_model           Auto-describe model: "blip-large" (default, richer, local)
+                        | "blip-base" (lighter) | "ollama:<vision model>" (listed in
+                        Prompt AI once Ollama is detected; blip-large takes over if
+                        Ollama fails - prefer a small model, it runs right before
+                        the image model). Used by the Describe fallback and
+                        Inpaint/Outpaint Auto-describe. Also selectable in Prompt AI
+                        > Caption model (persisted).
+ollama_improve          {"enabled": true, "endpoint": "", "model": "", "timeout": 120,
+                        "temperature": 0.7, "keep_alive": 0, "positive_instruction": "",
+                        "negative_instruction": "", "default_negative": "", "format": "auto"}
+                        Improve prompt / Improve negative. enabled=false hides the
+                        buttons. endpoint "" = ollama_url; model "" = the Improve
+                        model picked in Prompt AI, else the first installed.
+                        keep_alive 0 unloads right after the answer. Empty
+                        instructions = built-in (a custom ollama_improve_prompt is
+                        still honored). default_negative: start of Improve negative
+                        on an empty box. format: auto | tags | prose | off.
+checkpoints_extra_dir   Optional second checkpoints folder, merged into the single
+                        "Klein checkpoint" dropdown ("" = disabled).
+
+job_queue               {"enabled": true}
+                        Job queue panel: "+ Queue" snapshots ALL current settings
+                        (incl. model/LoRAs/sampler); "Run queue" chains the jobs;
+                        Stop pauses (remaining jobs kept). enabled=false removes
+                        the panel entirely (no components, zero cost).
+xyz_grid                {"enabled": true, "max_jobs": 100, "thumb": 512,
+                         "suggest": true}
+                        X/Y/Z comparison grid (needs job_queue). Every combo
+                        becomes a queued job; an annotated contact sheet is
+                        assembled per Z value (X columns x Y rows, thumb px cells)
+                        in <output>/xyz_<timestamp>/. max_jobs caps the combo
+                        count. suggest=false disables the contextual value
+                        suggestions (placeholder + fill button).
+tag_autocomplete        {"enabled": true, "max_results": 8, "sources": [urls]}
+                        Prompt/negative autocomplete. CSVs in sources are
+                        downloaded once into tags/ (any .csv dropped there is
+                        also used: "name,category,count,aliases" or one word per
+                        line), merged with your local __wildcards__. Dropdown
+                        under the caret: arrows + Tab/Enter, Escape. enabled=false
+                        downloads nothing and injects no script (zero cost).

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Stage 1: fast, no heavy dependency. Catches the typos and the broken JSON in
+  # ~20 s, even on a day when the tests stage below fails to install.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Byte-compile every module (app + cz_* + tools)
+        run: |
+          python -m compileall -q app.py cz_*.py tools/*.py
+      - name: Validate config + styles JSON
+        run: |
+          python -c "import json; json.load(open('config-sample.txt', encoding='utf-8')); print('config-sample.txt OK')"
+          python -c "import json, glob; [json.load(open(f, encoding='utf-8')) for f in glob.glob('styles/*.json')]; print('styles/*.json OK')"
+      - name: config-sample covers every CONFIG key read by the code
+        run: python tools/check_config_keys.py
+      - name: requirements-lock covers every declared dependency
+        run: python tools/check_lock.py
+
+  # Stage 2: the real suite. CPU torch (no GPU on the runners), diffusers pinned as it
+  # is locally. The tests that need a GPU skip themselves.
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          # torchvision WITH torch, from the same index: a downstream dependency
+          # (insightface/basicsr) otherwise pulls it from PyPI, where it is built
+          # against CUDA torch -> "operator torchvision::nms does not exist" at
+          # import time, which takes transformers' vision classes down with it.
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt pytest
+      - name: Run test suite
+        run: python tools/run_tests.py -v

@@ -137,7 +137,16 @@ def prechecks():
     repo = P.BASE_REPO
     r["repo"] = repo
     token = P._hf_token()
+    src = "hf_token (config) or HF_TOKEN (env)" if token else None
+    if not token:
+        try:
+            from huggingface_hub import get_token
+            token = get_token()
+            src = "huggingface_hub login (hf auth login)" if token else None
+        except Exception:
+            pass
     r["hf_token_set"] = bool(token)
+    r["hf_token_source"] = src or "none"
     if not os.path.isdir(repo):
         try:
             from huggingface_hub import auth_check
@@ -145,9 +154,15 @@ def prechecks():
             r["gated_access"] = "OK"
         except Exception as e:
             r["gated_access"] = f"REFUSED: {type(e).__name__}: {e}"
-            _say(f"No access to {repo}: {type(e).__name__}. Accept the licence on "
-                 f"https://huggingface.co/{repo} with your HF account, then set hf_token "
-                 "(config) or HF_TOKEN (env).")
+            _say(f"No access to {repo}: {type(e).__name__}.")
+            if not token:
+                _say("  NO TOKEN FOUND: neither hf_token in config.txt, nor HF_TOKEN in the "
+                     "environment, nor an `hf auth login`.")
+            else:
+                _say(f"  A token was sent (from {src}) and refused: the licence is not "
+                     f"accepted on THIS repo with that account, or the token is a "
+                     "fine-grained one without 'read access to public gated repos'.")
+            _say(f"  Licence: https://huggingface.co/{repo} (the -diffusers repo itself).")
             RESULTS["steps"]["0_prechecks"] = r
             _save()
             sys.exit(2)

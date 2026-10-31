@@ -204,3 +204,49 @@ def test_mask_skip_keeps_a_real_mask():
     finally:
         T.Ideogram4AttnProcessor.__call__ = orig
     assert got[0] is None and got[1] is part
+
+
+def test_model_offload_moves_only_the_text_encoder():
+    """'model' offload on Ideogram = the encoder alone leaves the card: in before the
+    call, back at the first transformer, never per step; no accelerate hook anywhere
+    (diffusers' chain moved the conditional transformer back and forth every step, 2.8
+    s/step against 1.7 on the 5090, and its encoder hook never fired, so the encoder ran
+    on the CPU). Execution device = CPU here: what is checked is WHEN the encoder moves,
+    that the transformers never do, and that the image does not change."""
+    import numpy as np
+    from ideogram_tiny import tiny_pipe
+    pipe = tiny_pipe()
+    ref = pipe(prompt="GRAND OPENING", width=256, height=256, num_inference_steps=3,
+               generator=_gen(3), output_type="np").images
+    raw = pipe._pipe
+    pipe.enable_model_cpu_offload(device="cpu")
+    assert pipe._all_hooks and not getattr(raw, "_all_hooks", None)
+    for name in ("text_encoder", "transformer", "unconditional_transformer", "vae"):
+        assert not hasattr(getattr(raw, name), "_hf_hook"), name
+
+    moves = []
+    te_to = raw.text_encoder.to
+    tr_to = raw.transformer.to
+    raw.text_encoder.to = lambda *a, **k: moves.append(("te", str(a[0]))) or te_to(*a, **k)
+    raw.transformer.to = lambda *a, **k: moves.append(("tr", str(a[0]))) or tr_to(*a, **k)
+    try:
+        out = pipe(prompt="GRAND OPENING", width=256, height=256, num_inference_steps=3,
+                   generator=_gen(3), output_type="np").images
+    finally:
+        del raw.text_encoder.to, raw.transformer.to
+    assert moves == [("te", "cpu"), ("te", "cpu")], moves   # in (to dev=cpu), back once
+    assert not pipe._te_on_gpu
+    assert float(np.abs(np.asarray(out) - np.asarray(ref)).max()) < 1e-5
+
+    # diffusers' own model offload comes back on the raw pipe (a LoRA load): replaced.
+    raw.enable_model_cpu_offload(device="cpu")
+    assert raw._all_hooks
+    pipe(prompt="x", width=256, height=256, num_inference_steps=2, generator=_gen(0))
+    assert not getattr(raw, "_all_hooks", None)
+    assert not hasattr(raw.transformer, "_hf_hook")
+    assert pipe._offload_device is not None
+
+    # release_vram(offload=True) path and switching back to 'none'.
+    pipe.maybe_free_model_hooks()
+    pipe.remove_all_hooks()
+    assert not pipe._all_hooks and pipe._offload_device is None and not pipe._tr_pre

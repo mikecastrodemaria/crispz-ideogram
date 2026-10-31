@@ -288,7 +288,8 @@ class IdeogramPipe:
     forwarded to the real pipeline (transformer, vae, scheduler, load_lora_weights,
     enable_model_cpu_offload, maybe_free_model_hooks...)."""
 
-    _OWN = {"_pipe", "repo", "variant", "_said", "_cfg"}
+    _OWN = {"_pipe", "repo", "variant", "_said", "_cfg", "_all_hooks", "_tr_pre",
+            "_te_on_gpu", "_offload_device"}
 
     def __init__(self, pipe, repo=DEFAULT_REPO):
         object.__setattr__(self, "_pipe", pipe)
@@ -296,6 +297,10 @@ class IdeogramPipe:
         object.__setattr__(self, "variant", "ideogram")
         object.__setattr__(self, "_said", set())
         object.__setattr__(self, "_cfg", {"is_distilled": False})
+        for k in ("_tr_pre", "_offload_device"):
+            object.__setattr__(self, k, None)
+        object.__setattr__(self, "_all_hooks", [])
+        object.__setattr__(self, "_te_on_gpu", False)
 
     def __getattr__(self, name):
         if name == "encode_prompt":
@@ -324,6 +329,86 @@ class IdeogramPipe:
     def to(self, *args, **kwargs):
         self._pipe.to(*args, **kwargs)
         return self
+
+    # --- 'model' offload = the TEXT ENCODER only -----------------------------------------
+    # diffusers' enable_model_cpu_offload is a poor fit for Ideogram 4, twice over:
+    #   - it chains text_encoder -> transformer -> unconditional_transformer -> vae, each
+    #     model sending the previous one back to the CPU when it runs. Both transformers
+    #     run at every step, so the conditional one went to the CPU and back every step:
+    #     5.2 GB each way (5090, 2026-10-31: 2.8 s/step at 1024 against 1.7 in 'none');
+    #   - its hook on the text encoder never fires: the pipeline calls the encoder's
+    #     layers one by one (_get_text_encoder_hidden_states), never its forward(), so
+    #     the 8B encoder simply ran ON THE CPU.
+    # Here the two transformers and the VAE stay on the card; the encoder is moved in
+    # explicitly before a call and sent back as soon as the first transformer runs (or at
+    # the end of the call). Same method name, so every enable_model_cpu_offload() of
+    # cz_pipeline gets it. No accelerate hook on any component, so diffusers' LoRA loader
+    # does not see an offload to "restore" its own way.
+    def enable_model_cpu_offload(self, gpu_id=None, device=None):
+        p = self._pipe
+        self.remove_all_hooks()
+        dev = torch.device(device) if device is not None else torch.device(
+            "cuda" if gpu_id is None else f"cuda:{int(gpu_id)}")
+        for name in ("transformer", "unconditional_transformer", "vae",
+                     "prompt_enhancer_head"):
+            m = getattr(p, name, None)
+            if isinstance(m, torch.nn.Module):
+                m.to(dev)
+        te = getattr(p, "text_encoder", None)
+        if te is None:
+            return
+        te.to("cpu")
+        object.__setattr__(self, "_offload_device", dev)
+        object.__setattr__(self, "_all_hooks", ["text_encoder"])   # cz_pipeline counts it
+        object.__setattr__(self, "_te_on_gpu", False)
+
+        def tr_pre(module, args):
+            if self._te_on_gpu:
+                self._encoder_out()
+        handles = []
+        for name in ("transformer", "unconditional_transformer"):
+            m = getattr(p, name, None)
+            if m is not None:
+                handles.append(m.register_forward_pre_hook(tr_pre))
+        object.__setattr__(self, "_tr_pre", handles)
+
+    def _encoder_in(self):
+        if self._offload_device is not None and not self._te_on_gpu:
+            self._pipe.text_encoder.to(self._offload_device)
+            object.__setattr__(self, "_te_on_gpu", True)
+
+    def _encoder_out(self):
+        if self._te_on_gpu:
+            self._pipe.text_encoder.to("cpu")
+            object.__setattr__(self, "_te_on_gpu", False)
+
+    def remove_all_hooks(self):
+        for h in list(self._tr_pre or []):
+            try:
+                h.remove()
+            except Exception:
+                pass
+        object.__setattr__(self, "_tr_pre", None)
+        object.__setattr__(self, "_all_hooks", [])
+        object.__setattr__(self, "_te_on_gpu", False)
+        object.__setattr__(self, "_offload_device", None)
+        self._pipe.remove_all_hooks()
+
+    def maybe_free_model_hooks(self):
+        """End of a call / release_vram(offload=True): the encoder back on the CPU (the
+        transformers stay, that is the point)."""
+        if self._offload_device is not None:
+            self._encoder_out()
+        else:
+            self._pipe.maybe_free_model_hooks()
+
+    def _keep_encoder_offload(self):
+        """Should diffusers' own model offload come back on the raw pipeline (a LoRA
+        loader, a merge from crispz-flux3), it is replaced, said once."""
+        if self._offload_device is not None and getattr(self._pipe, "_all_hooks", None):
+            self._say_once("reoffload", "offload: diffusers' model offload had come back; "
+                                        "encoder-only offload reapplied")
+            self.enable_model_cpu_offload(device=self._offload_device)
 
     def _say_once(self, key, msg):
         if key not in self._said:
@@ -374,7 +459,12 @@ class IdeogramPipe:
         if callback_on_step_end is not None:
             kw["callback_on_step_end"] = callback_on_step_end
             kw["callback_on_step_end_tensor_inputs"] = ["latents"]
-        out = self._pipe(**kw)
+        self._keep_encoder_offload()
+        self._encoder_in()
+        try:
+            out = self._pipe(**kw)
+        finally:
+            self._encoder_out()        # stopped before the first transformer, or an error
         images = out.images if hasattr(out, "images") else out[0]
         return types.SimpleNamespace(images=images) if return_dict else (images,)
 

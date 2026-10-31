@@ -303,6 +303,33 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - Suite CPU : 525 passent, les mêmes 44 échecs FLUX.3, 1 skip ; smoke 22/22.
 - À relancer : la mesure complète, 2048 compris.
 
+### Deuxième passage sur la 5090 (31/10/2026) et offload « encodeur seul »
+
+- Le run est parti en 'model' : le repli du premier passage était mémorisé dans
+  `cache/hw_profile.json` (« cached verdict »). Le script le signale désormais en tête.
+- Mesures ('model' de diffusers, accélération d'attention active) : chargement 23,5 s ;
+  1024 en 134 s à chaud (2,8 s/step), pic 13,1 Go ; le même sans l'accélération
+  177 s (3,7 s/step), soit x1,32, écart moyen 8,7 sur 255 (images à juger) ; 2048 en
+  464 s (9,7 s/step), pic 29,85 Go sur 31,8 (probablement le décodage VAE plein format,
+  pas de débordement visible) ; Stop au step 15 sur 48, image rendue 4,8 s après ;
+  aperçu : erreur 45 contre 79. Noyaux SDPA à head_dim 256 : `efficient` seulement
+  (ni flash ni cuDNN), avec ou sans masque.
+- **Offload 'model' de diffusers inadapté, remplacé** (`IdeogramPipe.enable_model_cpu_offload`) :
+  1. sa chaîne `text_encoder -> transformer -> unconditional_transformer -> vae` renvoie
+     le transformer conditionnel en RAM à chaque step (5,2 Go dans chaque sens) ;
+  2. son crochet sur l'encodeur ne se déclenche jamais : le pipeline appelle les couches
+     de l'encodeur une par une (`_get_text_encoder_hidden_states`), jamais son
+     `forward()`. L'encodeur 8B tournait donc sur le CPU.
+  Désormais : transformers et VAE restent sur la carte, l'encodeur seul y entre avant
+  l'appel et repart au premier transformer (ou en fin d'appel, Stop compris). Aucun
+  crochet accelerate, donc le chargeur de LoRA de diffusers ne réinstalle pas son propre
+  offload (s'il revenait, il est remplacé et c'est dit une fois). Test :
+  `test_model_offload_moves_only_the_text_encoder` (un aller-retour par image, jamais par
+  step, transformers immobiles, image identique).
+- Suite CPU : 526 passent, les mêmes 44 échecs FLUX.3 (vérifié nom par nom), 1 skip.
+- À mesurer : 1024 et 2048 en 'model' nouvelle formule, puis 1024 en 'none' pour comparer.
+  Pistes si le pic à 2048 reste à 30 Go : décodage VAE en tuiles au-delà d'un seuil.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

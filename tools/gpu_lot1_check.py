@@ -176,6 +176,18 @@ def prechecks():
     r["sdpa_kernels"] = _sdpa_kernels()
     _say(f"SDPA kernels usable at head_dim 256 (Ideogram 4): {r['sdpa_kernels']}")
     import cz_pipeline as P
+    try:
+        with open(P._hw_profile_path(), encoding="utf-8") as f:
+            prof = json.load(f)
+        r["hw_profile"] = prof
+        if "downgrade" in json.dumps(prof).lower():
+            _say(f"NOTE: {P._hw_profile_path()} holds a cached offload downgrade: 'auto' "
+                 "will start in 'model'. Delete the file (or pass --offload) to decide "
+                 "afresh.")
+    except FileNotFoundError:
+        r["hw_profile"] = None
+    except Exception as e:
+        r["hw_profile"] = f"unreadable: {e}"
     repo = P.BASE_REPO
     r["repo"] = repo
     token = P._hf_token()
@@ -376,6 +388,7 @@ def main():
         dt = time.time() - t0
         used, total = _smi_used_gb()
         r = {"seconds": round(dt, 1), "offload": P._effective_offload(),
+             "offload_asked": P.OFFLOAD_MODE,
              "alloc_gb": _gb(torch.cuda.memory_allocated()),
              "reserved_gb": _gb(torch.cuda.memory_reserved()),
              "driver_used_before_gb": base_used, "driver_used_gb": used,
@@ -492,7 +505,7 @@ def _write_report():
     ld = s.get("1_load", {})
     if ld:
         L += ["## Loading", "", "| | value |", "|---|---|"]
-        for k in ("seconds", "offload", "alloc_gb", "reserved_gb", "driver_used_before_gb",
+        for k in ("seconds", "offload_asked", "offload", "alloc_gb", "reserved_gb", "driver_used_before_gb",
                   "driver_used_gb", "error"):
             if k in ld:
                 L.append(f"| {k} | {ld[k]} |")

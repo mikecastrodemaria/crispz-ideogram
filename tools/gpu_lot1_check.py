@@ -9,7 +9,8 @@ as it is done, so a crash still leaves the earlier figures):
                  (torch allocated / reserved, and the driver's figure, which also counts
                  the CUDA context and bitsandbytes' own buffers).
   2. 1024x1024   48 steps, twice: the first image pays the CUDA warm-up, the second one
-                 is the steady state. Time, s/step, VRAM peak.
+                 is the steady state. Time, s/step, VRAM peak. Then once more with the
+                 fast attention OFF (raw pipeline call): speed-up and pixel difference.
   3. 2048x2048   48 steps, once (native 2K). Same figures.
   4. STOP        a 1024 render stopped from another thread through request_stop(), as
                  the UI's Stop button does: delay before the call returns, and an image
@@ -33,6 +34,7 @@ Usage (Windows, from the repo root):
   --steps N        48 by default (the official schedule)
   --seed N         12345 by default
   --skip-2048      skips the 2048x2048 render
+  --skip-raw       skips the 1024 render without the fast attention (A/B check)
   --force          runs even if another process holds the GPU (you have been warned)
 """
 import json
@@ -171,6 +173,8 @@ def prechecks():
     import transformers
     r["diffusers"] = diffusers.__version__
     r["transformers"] = transformers.__version__
+    r["sdpa_kernels"] = _sdpa_kernels()
+    _say(f"SDPA kernels usable at head_dim 256 (Ideogram 4): {r['sdpa_kernels']}")
     import cz_pipeline as P
     repo = P.BASE_REPO
     r["repo"] = repo
@@ -209,6 +213,39 @@ def prechecks():
     _say(f"prechecks OK: {r['gpu']}, torch {r['torch']} (CUDA {r['cuda']}), "
          f"bitsandbytes {r['bitsandbytes']}, repo {repo}")
     return P
+
+
+def _sdpa_kernels():
+    """Which SDPA kernels accept Ideogram 4's attention shape (bf16, head_dim 256), with
+    and without a boolean mask. Without flash or efficient, attention falls back to the
+    math kernel, whose memory grows with the square of the sequence."""
+    import torch
+    import torch.nn.functional as F
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+    except Exception as e:
+        return f"unknown ({e})"
+    try:
+        q = torch.randn(1, 18, 512, 256, device="cuda", dtype=torch.bfloat16)
+        mask = torch.ones(1, 1, 512, 512, device="cuda", dtype=torch.bool)
+    except Exception as e:
+        return f"unknown ({type(e).__name__})"
+    out = {}
+    for name, be in (("flash", SDPBackend.FLASH_ATTENTION),
+                     ("efficient", SDPBackend.EFFICIENT_ATTENTION),
+                     ("cudnn", getattr(SDPBackend, "CUDNN_ATTENTION", None))):
+        if be is None:
+            continue
+        for tag, m in (("", None), ("+mask", mask)):
+            try:
+                with sdpa_kernel(be):
+                    F.scaled_dot_product_attention(q, q, q, attn_mask=m)
+                out[name + tag] = "yes"
+            except Exception:
+                out[name + tag] = "no"
+    del q, mask
+    torch.cuda.empty_cache()
+    return out
 
 
 # --- Frames of the live preview: the app's callback, with a recorder on top --------------
@@ -262,6 +299,7 @@ def render(P, tag, size, steps, seed):
     t0 = time.time()
     img = P.generate(PROMPT, size, size, steps, seed)
     torch.cuda.synchronize()
+    import cz_ideogram
     dt = time.time() - t0
     path = os.path.join(OUT, f"{tag}.png")
     img.save(path)
@@ -271,7 +309,8 @@ def render(P, tag, size, steps, seed):
          "peak_alloc_gb": _gb(torch.cuda.max_memory_allocated()),
          "peak_reserved_gb": _gb(torch.cuda.max_memory_reserved()),
          "driver_used_after_gb": used, "driver_total_gb": total,
-         "offload": P._effective_offload(), "image": os.path.relpath(path, ROOT)}
+         "offload": P._effective_offload(), "fast_attention": cz_ideogram.FAST_ATTENTION,
+         "image": os.path.relpath(path, ROOT)}
     _say(f"{tag}: {r['size']} in {r['seconds']} s ({r['s_per_step']} s/step), "
          f"peak {r['peak_reserved_gb']} GB reserved")
     return img, r
@@ -387,6 +426,35 @@ def main():
             _say(f"{tag} FAILED: {type(e).__name__}: {e}")
         _save()
 
+    # 2b. The same warm 1024 WITHOUT the fast attention (the raw pipeline call): the
+    # speed-up, and the proof that the image does not change.
+    if "--skip-raw" not in sys.argv:
+        import cz_ideogram
+        import numpy as np
+        from PIL import Image
+        try:
+            cz_ideogram.set_fast_attention(False)
+            raw, r = render(P, "gen1024_raw_attention", 1024, steps, seed)
+            fast_path = os.path.join(OUT, "gen1024_warm.png")
+            if os.path.isfile(fast_path):
+                a = np.asarray(Image.open(fast_path).convert("RGB"), dtype=np.int16)
+                b = np.asarray(raw.convert("RGB"), dtype=np.int16)
+                d = np.abs(a - b)
+                r["vs_fast_mean_abs_diff"] = round(float(d.mean()), 3)
+                r["vs_fast_max_abs_diff"] = int(d.max())
+                warm = RESULTS["steps"].get("2_gen1024_warm", {}).get("seconds")
+                if warm:
+                    r["speedup_fast_vs_raw"] = round(r["seconds"] / warm, 2)
+                _say(f"raw vs fast attention: mean pixel diff {r['vs_fast_mean_abs_diff']}, "
+                     f"speed-up x{r.get('speedup_fast_vs_raw')}")
+            RESULTS["steps"]["2_gen1024_raw_attention"] = r
+        except Exception as e:
+            RESULTS["steps"]["2_gen1024_raw_attention"] = {"error": f"{type(e).__name__}: {e}"}
+            _say(f"raw attention render FAILED: {type(e).__name__}: {e}")
+        finally:
+            cz_ideogram.set_fast_attention(True)
+        _save()
+
     # 3. 2048
     if "--skip-2048" not in sys.argv:
         try:
@@ -440,6 +508,13 @@ def _write_report():
                 L.append(f"| {k} | {v['size']} | {v['seconds']} | {v['s_per_step']} | "
                          f"{v['peak_alloc_gb']} | {v['peak_reserved_gb']} | "
                          f"{v['driver_used_after_gb']} | {v['offload']} |")
+        raw = s.get("2_gen1024_raw_attention", {})
+        if "vs_fast_mean_abs_diff" in raw:
+            L.append(f"Fast attention vs raw call (1024, same seed): speed-up "
+                     f"x{raw.get('speedup_fast_vs_raw')}, pixel difference mean "
+                     f"{raw['vs_fast_mean_abs_diff']} / max {raw['vs_fast_max_abs_diff']} (0-255).")
+        if pre.get("sdpa_kernels"):
+            L.append(f"SDPA kernels at head_dim 256: {pre['sdpa_kernels']}")
         L.append("")
     st = s.get("4_stop")
     if st:

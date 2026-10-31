@@ -173,3 +173,51 @@ def test_shipped_defaults_are_ideogram_not_flux3():
     assert "2K  2048 x 2048  (1:1)" in cz_ui.ASPECT_RATIOS
     src = open(os.path.join(here, "cz_ui.py"), encoding="utf-8").read()
     assert "gen_steps = gr.Slider(2, 80," in src
+
+
+def test_vram_downgrade_frees_the_old_pipe_before_reloading():
+    """The guard fires at step 1 -> generate() reloads in 'model'. The old pipe must be
+    unreachable BEFORE the reload: generate()'s own local kept it alive and the reload
+    stacked a second 15 GB copy (5090, 2026-10-31: 29.9 GB, 90 s/step)."""
+    import gc
+    import types
+    import weakref
+    from PIL import Image
+
+    class FakePipe:
+        calls = 0
+
+        def __call__(self, **kw):
+            FakePipe.calls += 1
+            if FakePipe.calls == 1:
+                P._VRAM_DOWNGRADE = True          # what the step-1 guard does
+            return types.SimpleNamespace(images=[Image.new("RGB", (64, 64))])
+
+    first = FakePipe()
+    ref = weakref.ref(first)
+    alive_at_reload = []
+    pipes = [first]
+    del first
+
+    def fake_get_pipe(kind="txt2img"):
+        if not pipes:                             # the reload
+            gc.collect()
+            alive_at_reload.append(ref() is not None)
+            return FakePipe()
+        return pipes.pop()
+
+    saved = (P.get_pipe, P.cz_hw.record_downgrade, P.OFFLOAD_MODE, P._AUTO_OFFLOAD,
+             P._set_slicing)
+    try:
+        P.get_pipe = fake_get_pipe
+        P.cz_hw.record_downgrade = lambda *a, **k: None
+        P.OFFLOAD_MODE = "auto"
+        P._set_slicing = lambda *a, **k: None
+        img = P.generate.__wrapped__("x", 64, 64, 2, 1) if hasattr(P.generate, "__wrapped__") \
+            else P.generate("x", 64, 64, 2, 1)
+    finally:
+        (P.get_pipe, P.cz_hw.record_downgrade, P.OFFLOAD_MODE, P._AUTO_OFFLOAD,
+         P._set_slicing) = saved
+        P._VRAM_DOWNGRADE = False
+    assert img is not None and FakePipe.calls == 2
+    assert alive_at_reload == [False], "the old pipe was still referenced at reload"

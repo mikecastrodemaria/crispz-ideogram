@@ -150,3 +150,57 @@ def test_live_preview_uses_the_ideogram_projection():
     finally:
         P.preview_end()
         P.LIVE_PREVIEW_ENABLED = was
+
+
+def test_fast_attention_gives_the_same_image():
+    """No text padding + no all-True mask = the same image as the raw call (2048 text
+    slots, a mask on every attention): padding sits in its own segment, text positions
+    start at 0, image positions are fixed. Only the attention kernel changes."""
+    import numpy as np
+    was = cz_ideogram.FAST_ATTENTION
+    seen = []
+    pipe = _pipe()
+    real = pipe._pipe.__class__.__call__
+
+    def spy(self, *a, **kw):
+        seen.append(kw.get("max_sequence_length"))
+        return real(self, *a, **kw)
+    try:
+        pipe._pipe.__class__.__call__ = spy
+        cz_ideogram.set_fast_attention(False)
+        slow = pipe(prompt='a poster that says "GRAND OPENING"', width=256, height=256,
+                    num_inference_steps=3, generator=_gen(7), output_type="np").images
+        cz_ideogram.set_fast_attention(True)
+        fast = pipe(prompt='a poster that says "GRAND OPENING"', width=256, height=256,
+                    num_inference_steps=3, generator=_gen(7), output_type="np").images
+    finally:
+        pipe._pipe.__class__.__call__ = real
+        cz_ideogram.set_fast_attention(was)
+    n = cz_ideogram.prompt_token_count(pipe._pipe, 'a poster that says "GRAND OPENING"')
+    assert seen == [None, n] and 0 < n < 100, (seen, n)
+    procs = {type(m.processor).__name__ for m in pipe._pipe.transformer.modules()
+             if hasattr(m, "processor") and m.processor is not None}
+    assert procs == {"_AllTrueMaskSkip"}, procs
+    diff = float(np.abs(np.asarray(fast) - np.asarray(slow)).max())
+    print(f"fast vs raw: max pixel diff {diff:.2e}")
+    assert diff < 2e-2, diff
+
+
+def test_mask_skip_keeps_a_real_mask():
+    """A mask that is not all True (a batch of prompts of different lengths) is passed
+    through untouched."""
+    cls = cz_ideogram._mask_skip_processor_class()
+    got = []
+    p = cls()
+    import diffusers.models.transformers.transformer_ideogram4 as T
+    orig = T.Ideogram4AttnProcessor.__call__
+    try:
+        T.Ideogram4AttnProcessor.__call__ = lambda self, a, h, m, r: got.append(m) or h
+        full = torch.ones(1, 1, 4, 4, dtype=torch.bool)
+        part = full.clone()
+        part[..., 0] = False
+        p(None, torch.zeros(1), full, None)
+        p(None, torch.zeros(1), part, None)
+    finally:
+        T.Ideogram4AttnProcessor.__call__ = orig
+    assert got[0] is None and got[1] is part

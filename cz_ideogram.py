@@ -69,6 +69,96 @@ MAX_RATIO = 6.0
 
 _log_handler = logging.getLogger("crispz.ideogram")
 
+# --- Attention: no padding, no mask when there is nothing to mask ----------------------
+# Measured on the 5090 (2026-10-31, nf4, offload none): 1.7 s/step at 1024 and a VRAM
+# saturation at the first 2048 step. Two causes, both in how the raw pipeline is called:
+#   - max_sequence_length defaults to 2048: the conditional sequence is 2048 text slots
+#     (left padding for a ~100-token prompt) + the image tokens, i.e. 6144 tokens at
+#     1024 px and 18432 at 2048 px, and the text encoder also reads 2048 tokens;
+#   - a boolean segment mask is passed to every attention call, even when it is all
+#     True (always on the unconditional branch, and on the conditional one once the
+#     padding is gone). With a mask, SDPA cannot take the flash kernel and may fall back
+#     to the math one, whose attention matrix is heads x L^2: 18 x 18432^2 in bf16 is
+#     12 GB per call at 2048 px, before the softmax copy.
+# FAST_ATTENTION sizes the text region to the prompt's exact token count and drops a
+# mask that is all True. Same result: padding tokens sit in their own segment (masked
+# out), text positions start at 0 whatever the padding, the image positions are fixed.
+# Checked bit-near on the tiny pipeline (tests/test_ideogram_engine.py). Off: env
+# IDEOGRAM_FAST_ATTENTION=0 (or set_fast_attention(False)).
+FAST_ATTENTION = os.environ.get("IDEOGRAM_FAST_ATTENTION", "1").strip() not in ("0", "false", "no")
+
+
+def set_fast_attention(v):
+    global FAST_ATTENTION
+    FAST_ATTENTION = bool(v)
+
+
+def _mask_skip_processor_class():
+    from diffusers.models.transformers.transformer_ideogram4 import Ideogram4AttnProcessor
+
+    class _AllTrueMaskSkip(Ideogram4AttnProcessor):
+        """Ideogram4AttnProcessor that passes no mask when the mask is all True. One
+        instance per transformer: the mask is built once per forward and shared by the
+        34 blocks, so the all() check (one sync) runs once per forward, not per block."""
+        _seen = None
+        _all_true = False
+
+        def __call__(self, attn, hidden_states, attention_mask, image_rotary_emb):
+            if attention_mask is not None:
+                if attention_mask is not self._seen:
+                    self._seen = attention_mask
+                    self._all_true = bool(attention_mask.all())
+                if self._all_true:
+                    attention_mask = None
+            return super().__call__(attn, hidden_states, attention_mask, image_rotary_emb)
+    return _AllTrueMaskSkip
+
+
+def install_mask_skip(pipe):
+    """Puts the mask-skipping processor on both transformers (idempotent). Returns the
+    number of attention modules switched."""
+    try:
+        from diffusers.models.transformers.transformer_ideogram4 import (
+            Ideogram4AttnProcessor, Ideogram4Attention)
+    except Exception:
+        return 0
+    cls = None
+    n = 0
+    for name in ("transformer", "unconditional_transformer"):
+        tr = getattr(pipe, name, None)
+        if tr is None:
+            continue
+        proc = None
+        for m in tr.modules():
+            if not isinstance(m, Ideogram4Attention):
+                continue
+            cur = getattr(m, "processor", None)
+            if cur is None or type(cur).__name__ == "_AllTrueMaskSkip":
+                continue
+            if type(cur) is not Ideogram4AttnProcessor:
+                continue                     # someone else's processor: leave it alone
+            if proc is None:
+                cls = cls or _mask_skip_processor_class()
+                proc = cls()
+                proc.__dict__.update(cur.__dict__)     # keeps the attention backend
+            m.processor = proc
+            n += 1
+    return n
+
+
+def prompt_token_count(pipe, prompt):
+    """The token count Ideogram4Pipeline.encode_prompt will see for `prompt` (chat
+    template, no special tokens added), or None when it cannot be computed."""
+    tok = getattr(pipe, "tokenizer", None)
+    if tok is None or not isinstance(prompt, str):
+        return None
+    try:
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        text = tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        return int(tok(text, return_tensors="pt", add_special_tokens=False)["input_ids"].shape[-1])
+    except Exception:
+        return None
+
 
 def _log(msg):
     """cz_core's logger without importing cz_core (keeps this module standalone)."""
@@ -273,6 +363,14 @@ class IdeogramPipe:
               "num_images_per_prompt": int(num_images_per_prompt or 1),
               "generator": generator, "output_type": output_type,
               "prompt_upsampling": bool(prompt_upsampling)}
+        if FAST_ATTENTION and not prompt_upsampling:
+            # (prompt_upsampling reuses max_sequence_length as its max_new_tokens.)
+            n = prompt_token_count(self._pipe, kw["prompt"])
+            if n and n <= 2048:
+                kw["max_sequence_length"] = n
+            if install_mask_skip(self._pipe):
+                self._say_once("fast", "attention: text region sized to the prompt, "
+                                       "all-True masks dropped (flash / efficient SDPA)")
         if callback_on_step_end is not None:
             kw["callback_on_step_end"] = callback_on_step_end
             kw["callback_on_step_end_tensor_inputs"] = ["latents"]

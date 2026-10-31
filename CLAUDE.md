@@ -269,6 +269,40 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
   l'image finale). Sortie : `bench/lot1/` (`report.md`, `results.json`, images).
   Validé à blanc sur CPU avec un Ideogram miniature sauvé sur disque.
 
+### Premier passage sur la 5090 (31/10/2026, Mike, app fermée, offload auto)
+
+- Accès gated : OK après acceptation de la licence sur le repo `-diffusers` lui-même
+  (accepter sur `ideogram-4-nf4` ne suffit pas) et `hf auth login`.
+- Chargement : 139,6 s au premier lancement, dont 2 min 06 de téléchargement (14,8 Go à
+  117 Mo/s) ; 18,1 s depuis le cache. Au repos : 15,03 Go alloués par torch, 18,56 Go
+  vus par le pilote (sur 31,84).
+- 1024x1024, 48 steps, offload none : 82,6 s à froid (1,72 s/step), 86,1 s à chaud ;
+  pic 20,21 Go réservés. Lent : environ 5 Go d'attention pour 6144 tokens.
+- Aperçu live, dernier step contre l'image finale : erreur 43,1 avec la projection
+  Ideogram contre 73,5 avec la matrice FLUX telle quelle (sur 0-255). Correctif confirmé
+  dans le sens attendu, écart encore à regarder sur les images.
+- 2048x2048 : premier step 65 s en offload none, la garde VRAM a basculé en 'model' et
+  rechargé, puis 29,9 Go en VRAM et 90 s/step (débordement en mémoire partagée).
+  Mesure arrêtée, deux causes trouvées et corrigées :
+  1. **Fuite au repli 'model'** : `generate()` gardait la référence locale à l'ancien
+     pipe pendant `free_vram()` puis le rechargement : deux copies de 15 Go. Le local
+     est lâché avant (`test_vram_downgrade_frees_the_old_pipe_before_reloading`, qui
+     échoue sur l'ancien code). Même motif dans `_refine_whole` : à revoir au lot 3,
+     l'appelant y tient aussi le pipe.
+  2. **Attention gonflée** : le pipeline brut réserve 2048 places de texte (rembourrage
+     à gauche pour un prompt d'une centaine de tokens) : 6144 tokens à 1024 px, 18432 à
+     2048 px, et l'encodeur lit aussi 2048 tokens. Il passe en plus un masque booléen à
+     chaque attention, même entièrement vrai (toujours sur la branche non
+     conditionnelle) : SDPA ne peut pas prendre le noyau flash et peut retomber sur le
+     noyau math, en heads x L² (18 x 18432² en bf16 = 12 Go par appel à 2048 px).
+     `cz_ideogram.FAST_ATTENTION` (défaut ; `IDEOGRAM_FAST_ATTENTION=0` pour couper)
+     dimensionne la zone texte au nombre exact de tokens du prompt et retire un masque
+     entièrement vrai. Même image : écart max 1,2e-6 sur le miniature en float32.
+- `gpu_lot1_check.py` complété : diagnostic des noyaux SDPA à head_dim 256 avec et sans
+  masque, et un rendu 1024 sans l'accélération (A/B : gain et écart en pixels).
+- Suite CPU : 525 passent, les mêmes 44 échecs FLUX.3, 1 skip ; smoke 22/22.
+- À relancer : la mesure complète, 2048 compris.
+
 ## 9. Sources
 
 - diffusers 0.42.1 : `pipelines/ideogram4/pipeline_ideogram4.py`, `prompt_enhancer.py`

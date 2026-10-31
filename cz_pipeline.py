@@ -4741,8 +4741,14 @@ def generate(prompt, width, height, steps, seed, negative_prompt=""):
             **_cfg(negative_prompt),
             **_step_end_kwargs(int(steps), w, h),
         ).images[0]
-        if not _consume_vram_downgrade():
+        if not _VRAM_DOWNGRADE:
             break
+        # Drop OUR reference before free_vram runs: while this local still holds the
+        # old pipe, its weights cannot leave the card and the reload stacks a second
+        # copy on top (seen on the 5090, 2026-10-31: 29.9 GB after the downgrade to
+        # 'model', then 90 s/step in shared memory).
+        pipe = None
+        _consume_vram_downgrade()
         pipe = get_pipe("txt2img")   # reload with the downgraded offload
     _log(f"txt2img done in {time.time() - t0:.1f}s")
     if DEVICE == "cuda":
@@ -5190,8 +5196,11 @@ def _refine_whole(pipe, image, denoise, steps, prompt, seed):
             **_cfg(None),
             **_step_end_kwargs(int(steps), w, h),
         ).images[0]
-        if not _consume_vram_downgrade():
+        if not _VRAM_DOWNGRADE:
             return out
+        pipe = None                  # see generate(); the CALLER's argument may still
+                                     # hold the pipe here: to recheck at lot 3 (img2img)
+        _consume_vram_downgrade()
         pipe = get_pipe("img2img")   # reload with the downgraded offload
     return out
 

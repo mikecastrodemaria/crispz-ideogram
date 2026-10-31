@@ -303,6 +303,18 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - Suite CPU : 525 passent, les mêmes 44 échecs FLUX.3, 1 skip ; smoke 22/22.
 - À relancer : la mesure complète, 2048 compris.
 
+### CI GitHub (31/10/2026)
+
+- Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à
+  `config-sample.txt`, lu par `cz_ui` depuis le lot 1).
+- Job `tests` : **rouge assumé jusqu'au lot 6, décision de Mike.** Les 12 fichiers en
+  échec sont ceux des 44 tests FLUX.3 connus. Pas de liste d'échecs attendus, pas de
+  xfail : ne pas « réparer » le CI avant le lot 6. Conséquence acceptée : le CI ne
+  signale pas une régression pendant les lots 2 à 5, donc lancer la suite en local et
+  comparer à la liste des 44 (`pytest tests -q`, mêmes noms) avant chaque push.
+  `tools/run_tests.py` lance chaque fichier comme un script et s'arrête à la première
+  erreur : dans ces 12 fichiers, des tests sains ne tournent pas en CI.
+
 ## 9. Sources
 
 - diffusers 0.42.1 : `pipelines/ideogram4/pipeline_ideogram4.py`, `prompt_enhancer.py`

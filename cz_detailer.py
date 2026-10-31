@@ -1,4 +1,4 @@
-"""crispz-flux3 - the auto face detailer (in the style of ADetailer / Fooocus "Enhance").
+"""crispz-ideogram - the auto face detailer (in the style of ADetailer / Fooocus "Enhance").
 
 After a render, it detects the faces (insightface buffalo_l, already loaded for the Face
 Swap) and puts EVERY face through img2img at high resolution:

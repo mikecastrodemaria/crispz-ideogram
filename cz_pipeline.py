@@ -1,9 +1,9 @@
-"""crispz-flux3 - the FLUX.3 Image Klein core (diffusers ModularPipeline, BF16): loading
+"""crispz-ideogram - the FLUX.3 Image Klein core (diffusers ModularPipeline, BF16): loading
 the pipeline (txt2img / img2img / inpaint / multi-reference edit, ONE object, see
 cz_flux3.Flux3Pipe) + LoRAs / checkpoints / transformer, generation and orchestration
 (generate / txt2img_run / process_one / outpaint / inpaint) + the mutable runtime state.
 
-FLUX.3 port (crispz-flux3 0.1): the model is loaded by cz_flux3.load(), which wraps the
+FLUX.3 port (crispz-ideogram 0.1): the model is loaded by cz_flux3.load(), which wraps the
 modular pipeline behind the Flux2Klein calling convention this module was written
 against. So the call sites below did not change; what changed is listed in FORK.md
 (loading, guards by model FAMILY rather than hidden size, no text-encoder swap, Euler
@@ -20,7 +20,7 @@ Fork of crispz-qwen-edit (Qwen-Image). Mapping:
   - inpaint / reframe        -> Flux2KleinInpaintPipeline
   - img2img (refine/upscale) -> Flux2KleinInpaintPipeline + a full WHITE mask
                                 (the base pipeline does NOT expose `strength`)
-  (crispz-flux3: all four are the ONE cz_flux3.Flux3Pipe; get_pipe hands the base back
+  (crispz-ideogram: all four are the ONE cz_flux3.Flux3Pipe; get_pipe hands the base back
   under every kind, and `strength` / `mask_image` are honoured by the adapter itself)
 
 klein-4B is DISTILLED (`is_distilled: true`). Measured on 2026-09-05 (tests/
@@ -94,7 +94,7 @@ if DEVICE == "cuda":
 # so no existing config breaks, and they are reported when they answer.
 # NB: the Python VARIABLES keep their names (ZIMAGE_TRANSFORMER...) - cz_ui, cz_cli and
 # cz_protocol import them, that is the module's API contract (see the docstring).
-# crispz-flux3: its own keys. The klein_* ones are NOT read: they point at FLUX.2 repos and
+# crispz-ideogram: its own keys. The klein_* ones are NOT read: they point at FLUX.2 repos and
 # checkpoints, which do not load in a FLUX.3 pipeline.
 CFG_MODEL_KEY = "flux3_model"
 CFG_TRANSFORMER_KEY = "flux3_transformer"
@@ -126,7 +126,7 @@ if _is_single_file(_zmodel):
 else:
     BASE_REPO = _zmodel
 if not cz_flux3.is_flux3_repo(BASE_REPO):
-    _log(f"config: '{BASE_REPO}' is not a FLUX.3 repo (crispz-flux3 only runs FLUX.3 Image "
+    _log(f"config: '{BASE_REPO}' is not a FLUX.3 repo (crispz-ideogram only runs FLUX.3 Image "
          f"Klein) -> using {DEFAULT_BASE_REPO}")
     BASE_REPO = DEFAULT_BASE_REPO
 
@@ -529,7 +529,7 @@ def _cfg(negative=None, guidance=None):
 # Encoding a prompt sends the text encoder through the GPU. Under 'model' offload that
 # transfer is paid on EVERY pipeline call -- including the detailer's passes, which
 # redo the SAME prompt once per face and per hand.
-# Measured on crispz-flux3 (9B GGUF, model offload): prompt+setup 5.2-6.1 s per pass
+# Measured on crispz-ideogram (9B GGUF, model offload): prompt+setup 5.2-6.1 s per pass
 # without the cache against 1.7-1.8 s with it, for 0.3 s of diffusion. 2.1x per hand.
 # Without offload the win drops to ~8 % (the encoder is already resident, nothing to
 # move).
@@ -599,7 +599,7 @@ def _cached_prompt_embeds(pipe, prompt, kw):
 
 
 def _qwen_call(pipe, **kw):
-    """Calls the pipeline (a cz_flux3.Flux3Pipe in crispz-flux3), absorbing the API gaps
+    """Calls the pipeline (a cz_flux3.Flux3Pipe in crispz-ideogram), absorbing the API gaps
     with upstream: the guidance policy (distilled = 1.0, base = the slider), the prompt
     embedding cache, the stray CFG kwargs. The Flux3Pipe takes `strength` and `mask_image`
     itself, so the white-mask trick below is never needed on it.
@@ -1345,7 +1345,7 @@ _FLUX2_DIM_SIGS = (("double_stream_modulation_img.lin.weight", 6),
                    ("double_stream_modulation_txt.lin.weight", 6),
                    ("single_stream_modulation.lin.weight", 3),
                    ("single_stream_modulation.linear.weight", 3))
-# crispz-flux3: ONE width. FLUX.3 Image Klein is 3072 wide, exactly like FLUX.2-klein-4B;
+# crispz-ideogram: ONE width. FLUX.3 Image Klein is 3072 wide, exactly like FLUX.2-klein-4B;
 # the 4096 lane is FLUX.2-klein-9B and nothing else. So the width tells FLUX.3 and the 4B
 # apart from NOTHING: the family is read from the tensor names first (_file_family,
 # _flux3_file_refusal), and the width only serves to NAME a 9B file in a message.
@@ -1539,7 +1539,7 @@ def _variant_fix(dim):
                 f"checkpoint' dropdown, or config '{CFG_MODEL_KEY}').")
     if dim in _FLUX2_VARIANTS:
         return ("run it in crispz-klein: FLUX.2 Klein and FLUX.3 share neither layers "
-                "nor weights, so no setting of crispz-flux3 loads it.")
+                "nor weights, so no setting of crispz-ideogram loads it.")
     return f"point '{CFG_MODEL_KEY}' at the matching base repo."
 
 
@@ -1708,7 +1708,7 @@ def _safetensors_unsupported(path):
         error, at worst a flat image.
     ComfyUI-style 'scaled' FP8 / INT8 are NO LONGER rejected: they go through the dequant
     loader (_safetensors_dequant + _load_dequant_state_dict).
-    crispz-flux3: the FAMILY is checked first (tensor names), the width no longer is: a
+    crispz-ideogram: the FAMILY is checked first (tensor names), the width no longer is: a
     FLUX.2-klein-4B file is as wide as FLUX.3 and would pass a width check.
 """
     bad = _family_refusal(path)
@@ -2289,7 +2289,7 @@ def _gguf_layout(path):
         names = [t.name for t in GGUFReader(path).tensors]
         if not names:
             return "unknown"
-        # crispz-flux3: a FLUX.3 file is told by its block names (the same reading as
+        # crispz-ideogram: a FLUX.3 file is told by its block names (the same reading as
         # the .safetensors family guard), whatever 'general.architecture' says.
         if cz_flux3.family_from_keys(names) == "flux3":
             return "flux3"
@@ -2357,7 +2357,7 @@ def _walk_checkpoints(d):
     return sorted(out)
 
 
-# --- crispz-flux3: which single files are FLUX.3 transformers -----------------------
+# --- crispz-ideogram: which single files are FLUX.3 transformers -----------------------
 # crispz-klein sorted single files by HIDDEN SIZE (3072 = 4B, 4096 = 9B). That test is
 # blind here: FLUX.3 Image Klein is ALSO 3072 wide, so a FLUX.2-klein-4B checkpoint
 # would pass it and die gigabytes later in load_state_dict. The family is read from the
@@ -2413,7 +2413,7 @@ def _flux3_file_refusal(path):
         return _family_refusal(path)
     if fam != "flux3":
         return ("no FLUX.3 transformer tensor in it (a VAE, a text encoder, or "
-                "another model family); crispz-flux3 only loads FLUX.3 Image Klein "
+                "another model family); crispz-ideogram only loads FLUX.3 Image Klein "
                 "transformers")
     if not _is_gguf_path(path):
         # A comfy-quant format with no dequant here (w6a8_int8 = 6-bit weights with group
@@ -2426,7 +2426,7 @@ def _flux3_file_refusal(path):
         except Exception:
             odd = []
         if odd:
-            return (f"comfy-quant '{odd[0]}' build (6-bit or packed weights): crispz-flux3 "
+            return (f"comfy-quant '{odd[0]}' build (6-bit or packed weights): crispz-ideogram "
                     f"dequantizes the INT8 and FP8 'scaled' builds only. Take the INT8, "
                     f"bf16 or GGUF file of the same page, or BFL's fp8r / nvfp4 variant "
                     f"(Precision selector)")
@@ -2465,7 +2465,7 @@ def list_checkpoints():
             out.append(rel)
     if flux2_skips:
         _log(f"{flux2_skips} FLUX.2 checkpoint(s) skipped in the checkpoint folder(s): "
-             f"they run in crispz-klein. crispz-flux3 lists FLUX.3 Image Klein "
+             f"they run in crispz-klein. crispz-ideogram lists FLUX.3 Image Klein "
              f"transformers only.")
     return sorted(out)
 
@@ -3370,7 +3370,7 @@ def restore_offload(pipe, why=""):
         else:
             pipe.to(DEVICE)
     except Exception as e:
-        _log(f"pipeline left on the CPU and NOT restored ({e}): restart crispz-flux3")
+        _log(f"pipeline left on the CPU and NOT restored ({e}): restart crispz-ideogram")
         return False
     _log(f"pipeline was left on the CPU{' after ' + why if why else ''} -> offload "
          f"'{off}' restored in place (no reload)")
@@ -3752,7 +3752,7 @@ def _load_transformer(path=None, base=None):
             if odd:
                 raise RuntimeError(
                     f"{os.path.basename(path)}: comfy-quant '{odd[0]}' build (6-bit or "
-                    f"packed weights, group scales). crispz-flux3 dequantizes the INT8 and "
+                    f"packed weights, group scales). crispz-ideogram dequantizes the INT8 and "
                     f"FP8 'scaled' builds only: take the INT8, bf16 or GGUF file of the "
                     f"same page, or BFL's fp8r / nvfp4 variant (Precision selector).")
             dq = _safetensors_dequant(path)
@@ -5344,7 +5344,7 @@ def source_meta(items, key="source"):
 def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
               size=None, model=None, styles=None, extra=None):
     """Builds the generation metadata dict (for the sidecar/PNG)."""
-    m = {"app": "crispz-flux3", "mode": mode, "prompt": prompt or "",
+    m = {"app": "crispz-ideogram", "mode": mode, "prompt": prompt or "",
          "negative": negative or "", "date": _now_stamp()}
     if seed is not None and int(seed) >= 0:
         m["seed"] = int(seed)

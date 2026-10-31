@@ -62,7 +62,7 @@
             3.5
         ]
     },
-    "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (FIRST match wins, in order: keep '-base' before the plain name). Do NOT add a 'klein' key: it is a substring of 'flux-3-image-klein' and would hand the FLUX.2 4-step profile to FLUX.3 (crispz-flux3 skips it and says so).",
+    "_model_profiles_help": "Auto steps/guidance when a checkpoint is selected, matched by substring on the file name (FIRST match wins, in order: keep '-base' before the plain name). Do NOT add a 'klein' key: it is a substring of 'flux-3-image-klein' and would hand the FLUX.2 4-step profile to FLUX.3 (crispz-ideogram skips it and says so).",
     "model_profiles": {
         "flux-3-image-klein-base": {
             "steps": 50,
@@ -131,7 +131,7 @@
     "default_overlap": 32,
     "default_refine_tile": 0,
     "default_refine_overlap": 64,
-    "_text_encoder_help": "NOT applied on crispz-flux3 (0.1): FLUX.3 reads 8 hidden states of its own Qwen3-VL-4B and no other encoder fits that slot yet. The key is kept so a config.txt from crispz-klein stays valid; a value here is announced as ignored at load time and the image metadata says text_encoder_not_applied.",
+    "_text_encoder_help": "NOT applied on crispz-ideogram (0.1): FLUX.3 reads 8 hidden states of its own Qwen3-VL-4B and no other encoder fits that slot yet. The key is kept so a config.txt from crispz-klein stays valid; a value here is announced as ignored at load time and the image metadata says text_encoder_not_applied.",
     "text_encoder": "",
     "_text_encoders_dir_help": "Folder scanned for the Text encoder list (one sub-folder per encoder, each with a config.json). Empty = 'text_encoders', 'text_encoder' or 'clip' next to the checkpoints folder or its parent.",
     "text_encoders_dir": "",
@@ -227,7 +227,7 @@
     "_gguf_arch_help": "Architectures accepted for .gguf checkpoints, read from the file header (general.architecture). Comma-separated. Only matching files are listed in the checkpoint dropdown; the rest are skipped at startup with a reason, instead of failing after a long load. NB: the label does NOT distinguish FLUX.1 from FLUX.2 (both may say \"flux\"), so the TENSOR LAYOUT is the real judge — a FLUX.1 city96 GGUF is rejected as 'foreign' even though its label passes. Known values: \"flux2\"/\"flux\", \"qwen_image\", \"krea2\" (its OWN architecture, needs ComfyUI, not loadable here), plus llama/gemma3/... for LLM GGUFs. A GGUF whose header cannot be read is kept (never discard a valid model on a doubt).",
     "civitai_api_key": "",
     "auth": "",
-    "_auth_help": "Login page for the UI. Empty = no login (fine on localhost). Set to \"user:password\" (several accounts: \"a:pw1,b:pw2\") BEFORE exposing crispz-flux3 on your LAN or through a tunnel (cloudflared etc.) - otherwise anyone with the URL can generate images and browse/delete your outputs. Also settable via --auth or the CRISPZ_AUTH env var.",
+    "_auth_help": "Login page for the UI. Empty = no login (fine on localhost). Set to \"user:password\" (several accounts: \"a:pw1,b:pw2\") BEFORE exposing crispz-ideogram on your LAN or through a tunnel (cloudflared etc.) - otherwise anyone with the URL can generate images and browse/delete your outputs. Also settable via --auth or the CRISPZ_AUTH env var.",
     "civitai_batch": {
         "enabled": true,
         "sleep": 0.5,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke / non-regression test for crispz-flux3 (no GPU, no model load).
+"""Smoke / non-regression test for crispz-ideogram (no GPU, no model load).
 
 Exercises the pure helpers + UI build. Run with the project venv:
   .venv\\Scripts\\python tools\\smoke_test.py
@@ -29,7 +29,7 @@ def check(name, cond):
         print(f"  [FAIL] {name}")
 
 
-print("== crispz-flux3 smoke test ==")
+print("== crispz-ideogram smoke test ==")
 
 # Styles: prompt template + merged negative
 p, n = app._apply_styles("a cat", "blurry", ["Fooocus Cinematic"]) if "Fooocus Cinematic" in app.STYLES \

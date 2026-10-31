@@ -1,6 +1,6 @@
 """crispz family - CLI protocol v1: JSON spec in, JSON out.
 
-Contract shared by the whole family (crispz-studio, crispz-qwen-edit, crispz-klein, crispz-flux3,
+Contract shared by the whole family (crispz-studio, crispz-qwen-edit, crispz-klein, crispz-flux3, crispz-ideogram,
 crispz-krea*, and comics2crispz which drives them):
 
     czp caps                       -> this tool's capabilities + running instance
@@ -48,7 +48,7 @@ from cz_core import CONFIG, APP_VERSION, _log
 from prompt_variants import has_variants
 
 PROTOCOL = 1
-TOOL = "crispz-flux3"
+TOOL = "crispz-ideogram"
 # The op vocabulary of protocol v1: frozen, identical in every family
 # tool. czp accepts all of it on the command line so that an op THIS tool
 # does not implement still gets a JSON answer with exit code 3 - a machine

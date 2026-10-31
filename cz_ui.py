@@ -1,4 +1,4 @@
-"""crispz-flux3 - the Gradio interface (build_ui) + the UI handlers + the shared
+"""crispz-ideogram - the Gradio interface (build_ui) + the UI handlers + the shared
 orchestration (run / _editor_* / presets / timing) pulled out of app.py (step 8).
 
 This module wires all the cz_* modules together (core/pipeline/esrgan/face/prompt/ollama/
@@ -2224,7 +2224,7 @@ def _vram_hint(e):
         return ""
     return ("  \n**VRAM full**, even after clearing the cache: close the other GPU apps "
             "(ComfyUI...), lower Image number, the upscale factor or the number of "
-            "references. If the next render fails too, restart crispz-flux3.")
+            "references. If the next render fails too, restart crispz-ideogram.")
 
 
 def _with_live_preview(fn):
@@ -2515,7 +2515,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     if "CUDA" in str(e) or "out of memory" in str(e).lower():
                         msg += ("  \n**VRAM full** (another GPU app like ComfyUI still loaded? "
                                 "spill -> Windows TDR timeout). Close the other GPU apps, **restart "
-                                "crispz-flux3** (the CUDA context is dead), lower refine_tile / factor.")
+                                "crispz-ideogram** (the CUDA context is dead), lower refine_tile / factor.")
                     # The images already produced stay displayed/saved.
                     return _done(images, "  \n".join(reports + [msg]), img_paths)
                 images.append(last_result)
@@ -4120,7 +4120,7 @@ def build_ui():
     # Omni (multi-reference) is only offered when an Omni/Edit model is configured.
     omni_on = bool((cz_pipeline.OMNI_MODEL or "").strip())
 
-    with gr.Blocks(title=f"crispz-flux3 {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
+    with gr.Blocks(title=f"crispz-ideogram {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
                    js=js_full, head=_ui_head()) as demo:
         # The output folder's gallery opens in a new tab (the Asset Browser), through
         # the button under the preview. No inline gallery panel.

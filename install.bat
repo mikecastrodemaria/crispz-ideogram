@@ -20,7 +20,7 @@ set PYTHONUTF8=1
 
 REM The diffusers symbol expected for this model family. The ONLY line that differs
 REM between crispz-studio (ZImage), crispz-krea2 (Krea2), crispz-qwen-edit (Qwen),
-REM crispz-klein (FLUX.2) and crispz-flux3 (FLUX.3). FLUX.3 has no pipeline class:
+REM crispz-klein (FLUX.2) and crispz-ideogram (FLUX.3). FLUX.3 has no pipeline class:
 REM diffusers serves it as a MODULAR block chain, and the distilled auto blocks are
 REM what cz_flux3 builds on (present from diffusers 0.42.1, see requirements.txt).
 set CHECK_MODULE=diffusers.modular_pipelines

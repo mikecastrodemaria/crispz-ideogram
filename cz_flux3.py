@@ -1,4 +1,4 @@
-"""crispz-flux3 - the FLUX.3 Image Klein engine (diffusers ModularPipeline).
+"""crispz-ideogram - the FLUX.3 Image Klein engine (diffusers ModularPipeline).
 
 FLUX.3 does not ship a classic pipeline class: diffusers serves it through
 `Flux3DistilledModularPipeline` / `Flux3ModularPipeline`, a chain of blocks
@@ -50,7 +50,7 @@ FLUX3_BASE = "black-forest-labs/flux-3-image-klein-base"
 FLUX3_REPOS = (FLUX3_DISTILLED, FLUX3_BASE)
 
 # The transformer's hidden width (24 heads x 128). The same as FLUX.2-klein-4B's, which is
-# why nothing in crispz-flux3 tells models apart by width (see family_from_keys).
+# why nothing in crispz-ideogram tells models apart by width (see family_from_keys).
 HIDDEN_SIZE = 3072
 
 # The distilled checkpoint is a flow map: 16 steps, no CFG. The base one: 50 steps,

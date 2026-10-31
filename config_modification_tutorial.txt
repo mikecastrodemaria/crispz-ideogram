@@ -1,4 +1,4 @@
-crispz-flux3 - config tutorial
+crispz-ideogram - config tutorial
 ================================
 
 HOW IT WORKS
@@ -148,7 +148,7 @@ lora_weight_max         NEGATIVE weights are allowed and useful: the LoRA then p
                         negatives. Bad values or min >= max -> falls back to -2..2.
 lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
                         Each slot = a dropdown + weight; all combine at generation.
-zimage_omni_model       REMOVED on crispz-flux3. There is no separate edit model:
+zimage_omni_model       REMOVED on crispz-ideogram. There is no separate edit model:
 zimage_omni_base        Flux2KleinPipeline takes a list of reference images, so the
                         Edit (references) tab and the protocol op 'edit' run on the
                         BASE model. Changing the checkpoint changes the editor too.

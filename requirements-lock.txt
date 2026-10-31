@@ -1,4 +1,4 @@
-# crispz-flux3 : a locked environment, an ISOLATED venv.
+# crispz-ideogram : a locked environment, an ISOLATED venv.
 #
 # WHY THIS FILE
 # requirements.txt gives the bounds ("what has to work"). This file gives the

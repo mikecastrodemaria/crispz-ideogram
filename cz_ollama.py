@@ -1,4 +1,4 @@
-"""crispz-flux3 - Ollama integration (Describe / Improve / Vision Mix).
+"""crispz-ideogram - Ollama integration (Describe / Improve / Vision Mix).
 
 Pulled out of app.py. It calls Ollama's local HTTP API (/api/tags, /api/show,
 /api/generate). It depends only on cz_core (config, log, b64). The UI handlers

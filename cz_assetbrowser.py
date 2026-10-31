@@ -1,4 +1,4 @@
-"""crispz-flux3 - Asset Browser (standalone SPA in the output folder).
+"""crispz-ideogram - Asset Browser (standalone SPA in the output folder).
 
 Pulled out of app.py. It writes index.html (the SPA) + _index/manifest.json + the
 thumbnails into the output folder, scans recursively (the date subfolders), and deletes an

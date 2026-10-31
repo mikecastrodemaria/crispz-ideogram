@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update crispz-flux3 (Unix): fetches the GitHub commits then brings the
+# Update crispz-ideogram (Unix): fetches the GitHub commits then brings the
 # dependencies back in line with the lock, WITHOUT breaking the existing install.
 #
 #   --force-deps   reinstall the deps even when nothing has changed
@@ -17,7 +17,7 @@ for a in "$@"; do
   esac
 done
 
-echo "=== crispz-flux3 - update ==="
+echo "=== crispz-ideogram - update ==="
 RUNPY=python3
 export PYTHONUTF8=1   # trustmark's sdist setup.py is not cp1252-safe
 [ -x ".venv/bin/python" ] && RUNPY=".venv/bin/python"

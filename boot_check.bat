@@ -1,5 +1,5 @@
 @echo off
-REM Generic boot check for crispz-flux3 (replaces the old rtx5090 scripts).
+REM Generic boot check for crispz-ideogram (replaces the old rtx5090 scripts).
 REM
 REM Diagnoses the machine BEFORE launching the app, whatever the card
 REM (RTX 50xx / 40xx / 30xx / 20xx...), and stops dead when the configuration
@@ -20,7 +20,7 @@ REM WARNING about --lan / --web: the app has NO authentication at all and serves
 REM the output folder + the model folders. See "Scope" in SECURITY.md.
 
 setlocal enabledelayedexpansion
-title crispz-flux3 - Boot Check
+title crispz-ideogram - Boot Check
 cd /d "%~dp0"
 
 set "NORUN=0"
@@ -45,7 +45,7 @@ goto argloop
 :argdone
 
 echo ====================================================
-echo    crispz-flux3 - Boot Check
+echo    crispz-ideogram - Boot Check
 echo ====================================================
 echo.
 
@@ -183,7 +183,7 @@ set "CF_PORT=7860"
 if defined EXPOSE (
     echo ----------------------------------------------------
     echo  [SECURITY] Network exposure requested ^(--!EXPOSE!^).
-    echo  crispz-flux3 has NO authentication and serves your output folder
+    echo  crispz-ideogram has NO authentication and serves your output folder
     echo  as well as your model folders. Only expose it on a network you
     echo  trust. See the "Scope" section of SECURITY.md.
     echo ----------------------------------------------------
@@ -223,7 +223,7 @@ if "!NORUN!"=="1" (
     endlocal & exit /b 0
 )
 echo ====================================================
-echo    Checks OK. Starting crispz-flux3...
+echo    Checks OK. Starting crispz-ideogram...
 echo ====================================================
 timeout /t 2 /nobreak >nul
 call "%~dp0run.bat" %PASSTHRU%

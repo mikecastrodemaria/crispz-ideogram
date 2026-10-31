@@ -1,4 +1,4 @@
-"""crispz-flux3 - Real-ESRGAN (loaded through spandrel) + a tile/overlap-add upscale.
+"""crispz-ideogram - Real-ESRGAN (loaded through spandrel) + a tile/overlap-add upscale.
 
 Pulled out of app.py. A "leaf" module: it depends only on cz_core (config/paths/log/
 device) + numpy/torch/PIL. The mutable state (ESRGAN_DIR + the cache of the loaded models)

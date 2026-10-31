@@ -1,4 +1,4 @@
-"""crispz-flux3 - FLUX.2 Klein txt2img + multi-reference editing + an upscaler/detailer
+"""crispz-ideogram - FLUX.2 Klein txt2img + multi-reference editing + an upscaler/detailer
 (standalone, without ComfyUI).
 
 A thin entry point. All the code has been cut into cz_* modules:

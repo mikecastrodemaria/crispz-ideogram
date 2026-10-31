@@ -1,4 +1,4 @@
-"""crispz-flux3 - image saving, metadata and output filenames.
+"""crispz-ideogram - image saving, metadata and output filenames.
 
 Pulled out of app.py. Pure I/O: it depends only on cz_core (config/paths/log) + PIL.
 _gen_meta (which builds the metadata dict from the model state) stays in app.py and

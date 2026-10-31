@@ -42,7 +42,7 @@ if "%ESRGAN_DIR%"=="" (
     )
 )
 
-echo === crispz-flux3 - run ===
+echo === crispz-ideogram - run ===
 echo Python     = !RUNPY!
 echo ESRGAN_DIR = !ESRGAN_DIR!
 if defined CRISPZ_LOG_LEVEL echo Log level  = !CRISPZ_LOG_LEVEL!  (run.bat --debug)

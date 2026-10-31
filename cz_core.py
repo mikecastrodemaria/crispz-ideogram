@@ -1,4 +1,4 @@
-"""crispz-flux3 - core foundation (config, paths, logging, device).
+"""crispz-ideogram - core foundation (config, paths, logging, device).
 
 Pulled out of app.py. No dependency on the rest of the project (app.py and the other
 modules import cz_core, never the other way round). It holds:
@@ -33,7 +33,7 @@ import torch
 from PIL import Image
 
 # The application's version (shown in the title; one CHANGELOG.md entry per version).
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.0-dev"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")
@@ -427,7 +427,7 @@ def download_with_progress(url, dst, label=None, block=65536, timeout=30):
     label = label or os.path.basename(dst)
     tmp = dst + ".tmp"
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": "crispz-flux3"})
+    req = urllib.request.Request(url, headers={"User-Agent": "crispz-ideogram"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r, open(tmp, "wb") as f:
             total = int(r.headers.get("Content-Length") or 0)

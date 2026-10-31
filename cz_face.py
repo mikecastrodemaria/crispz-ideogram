@@ -1,4 +1,4 @@
-﻿"""crispz-flux3 - FaceSwap (InsightFace/inswapper) + GFPGAN restoration, local BLIP
+﻿"""crispz-ideogram - FaceSwap (InsightFace/inswapper) + GFPGAN restoration, local BLIP
 captioning (with an Ollama fallback) and rembg background removal.
 
 Pulled out of app.py. An optional "leaf" module (gated features): it depends only on

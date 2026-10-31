@@ -1,4 +1,4 @@
-"""crispz-flux3 - prompt helpers: styles (Fooocus) + wildcards (__name__).
+"""crispz-ideogram - prompt helpers: styles (Fooocus) + wildcards (__name__).
 
 Pulled out of app.py. It depends only on cz_core (HERE/CONFIG/_prefs) + the stdlib. The
 UI handlers (the wildcard manager, the style search) stay in app.py.

@@ -1,4 +1,4 @@
-"""crispz-flux3 - the CLI (batch / scripting mode) + a persistent HTTP server (FastAPI).
+"""crispz-ideogram - the CLI (batch / scripting mode) + a persistent HTTP server (FastAPI).
 
 Pulled out of app.py (step 8). It imports the UI and the orchestration from cz_ui (which
 wires all the cz_* together); it redefines nothing of the pipeline. app.py merely calls
@@ -316,7 +316,7 @@ def cli_main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="crispz-flux3 CLI (txt2img + upscale). No args: launches the Gradio UI.",
+        description="crispz-ideogram CLI (txt2img + upscale). No args: launches the Gradio UI.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--cli", action="store_true", help="Force CLI mode (otherwise: launches the UI)")

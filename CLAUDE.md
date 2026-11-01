@@ -500,6 +500,33 @@ outlines 1.3.3 installé :
   img2img plafonné à ~1 Mpx) ; barre de progression de diffusers affichée sur le total
   des steps en img2img (cosmétique).
 
+### Bilan du lot 3 (01/11/2026) : VALIDÉ par Mike
+
+Acceptation remplie : tests CPU (`tests/test_ideogram_emulated.py` et chemins de l'app),
+puis `tools/gpu_lot3_check.py` sur la 5090 (offload 'auto' -> 'model' encodeur seul,
+48 steps, guidance 7, init = `bench/lot2/hand.png`, l'affiche du lot 2 en 720x1024).
+5 rendus sur 5, sans erreur ni repli d'offload, 3 min 41 au total ; images jugées
+correctes par Mike (texte gardé en img2img, zone hors masque intacte, raccords propres).
+
+| | temps | taille |
+|---|---|---|
+| img2img 0,3 (~14 steps, chargement ~20 s compris) | 29,1 s | 720x1024 |
+| img2img 0,6 (~29 steps) | 26,1 s | 720x1024 |
+| inpaint (48 steps) | 40,4 s | 720x1024 |
+| outpaint à droite | 57,0 s | 936x1024 |
+| reframe 16:9 | 62,5 s | 1376x768 |
+
+Environ 0,85 à 0,9 s/step à 0,7 Mpx, cohérent avec le lot 1 (1,27 s/step à 1 Mpx). Les
+durées des deux img2img confirment que le planning est bien tronqué selon `strength`.
+
+Points ouverts, aucun bloquant :
+- `_refine_whole` au repli 'model' : l'appelant tient le pipe (rare, img2img plafonné
+  à ~1 Mpx) ;
+- barre de progression de diffusers sur le total des steps en img2img (cosmétique) ;
+- presets d'upscale à 12 à 16 steps hérités de FLUX.3 distillé : non mesurés sur
+  Ideogram (upscale par tuiles non lancé sur la carte), à régler si le rendu déçoit ;
+- détailleur visages et mains non lancé sur la carte (même chemin que l'inpaint).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

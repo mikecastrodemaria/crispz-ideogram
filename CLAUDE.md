@@ -475,6 +475,31 @@ outlines 1.3.3 installé :
   à essayer à la main dans l'app ; moteur Ollama jamais lancé contre un vrai serveur ;
   API Ideogram (magic prompt) jamais appelée avec une clé, et Describe cloud : lot 4.
 
+### Lot 3 (01/11/2026) : img2img et inpaint émulés, acceptation CPU atteinte
+
+- `IdeogramPipe._prepare_emulated` : SDEdit sur la fin du planning propre d'Ideogram
+  (sigmas logit-normaux recalculés avec les fonctions de diffusers, mu selon la
+  résolution, std 1,5, aucun décalage du scheduler), `strength` = fraction des steps
+  (règle de crispz-flux3, au moins un step), image encodée en tokens Ideogram (inverse
+  exact du décodage), `scheduler.set_timesteps` enveloppé le temps de l'appel, guidance
+  décalée pour que la fin à 3,0 reste en fin. Masque : mélange latent à chaque step,
+  max-pool sur la grille de 16 px ; masque tout blanc = img2img simple.
+- Débloque refine, upscale par tuiles, inpaint, outpaint, reframe, détailleur.
+  `cz_protocol` : img2img et inpaint à True, `supports.emulated`. UI : mention
+  « émulé » ; mode « Outpaint LoRA » (FLUX.3) retiré du menu.
+- Tests CPU (`tests/test_ideogram_emulated.py`, 8) : fin du planning, extrêmes de
+  strength, image plus proche à faible strength, tokens hors masque EXACTEMENT gardés
+  (comparés en latent : le décodeur VAE a une attention globale, les pixels ne se
+  comparent pas), masque plein, Stop qui rend l'image partielle, max-pool, édition
+  toujours refusée. Chemins de l'app testés (inpaint_run, _refine_whole, reframe,
+  outpaint directionnel). Dossier extra des checkpoints : parcours récursif vérifié par
+  un test (les fichiers uniques Ideogram y sont trouvés puis écartés, raison au log).
+- `tools/gpu_lot3_check.py` : img2img 0,3 / 0,6, inpaint, outpaint, reframe sur la
+  5090 (dry run CPU fait). Suite : 564 passent, les mêmes 44 échecs, 1 skip.
+- Reste ouvert : `_refine_whole` au repli 'model' (l'appelant tient le pipe ; rare,
+  img2img plafonné à ~1 Mpx) ; barre de progression de diffusers affichée sur le total
+  des steps en img2img (cosmétique).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

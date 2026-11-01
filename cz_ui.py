@@ -4349,6 +4349,7 @@ def build_ui():
                         info="Edit (references) = FLUX.3 edits from the images of the Edit tab, cited in the prompt as `<ref_image_0>`, `<ref_image_1>`... (no tag needed with a single image)")
                     with gr.Tabs():
                         with gr.Tab("Upscale or img2img"):
+                            gr.Markdown("*Ideogram 4 has no native img2img or inpaint: crispz-ideogram EMULATES them (SDEdit on the tail of its own schedule; latent blending under the mask). Denoise = the fraction of the steps that runs.*")
                             with gr.Row():
                                 inp = _crop_input("Drop image here / click to upload", 300)
                                 with gr.Column():
@@ -4435,15 +4436,18 @@ def build_ui():
                                                        "First use downloads the u2net model.*")
 
                         with gr.Tab("Inpaint / Outpaint"):
+                            gr.Markdown("*Ideogram 4 has no native img2img or inpaint: crispz-ideogram EMULATES them (SDEdit on the tail of its own schedule; latent blending under the mask). Denoise = the fraction of the steps that runs.*")
                             gr.Markdown("*One editor for everything: **Brush** = inpaint the painted "
                                         "area · **Expand sides** = outpaint Left/Right/Top/Bottom "
-                                        "(inpaint blend, or the FLUX.3 **Outpaint LoRA** on a gray "
-                                        "canvas: it sees the whole picture and continues it) · "
+                                        "(inpaint blend) · "
                                         "**Reframe** = new aspect ratio. Steps follow the model "
                                         "(Performance). Describe the result in the prompt.*")
                             edit_mode = gr.Radio(
+                                # "Expand sides (outpaint LoRA)" is FLUX.3's Outpaint LoRA:
+                                # the LoRA family guard refuses it on Ideogram 4, so the
+                                # mode is not offered (its handler stays, for merges).
                                 ["Brush (inpaint)", "Expand sides (outpaint)",
-                                 "Expand sides (outpaint LoRA)", "Reframe (ratio)"],
+                                 "Reframe (ratio)"],
                                 value="Brush (inpaint)", label="Mode")
                             inpaint_editor = gr.ImageEditor(
                                 type="pil", label="Image + mask (paint for Brush mode; click the "
@@ -4822,7 +4826,9 @@ def build_ui():
                                 value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                                 label="Extra checkpoints folder (optional)",
                                 placeholder="e.g. D:\\models\\FLUX.3",
-                                info="Merged into the single 'FLUX.3 checkpoint' list above. Leave empty to disable.")
+                                info="Merged into the checkpoint list above. Single-file Ideogram 4 transformers "
+                                     "(ComfyUI fp8 / int8 / nvfp4) are skipped and logged: diffusers "
+                                     "has no converter for them. Leave empty to disable.")
                             esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
                                                        label="ESRGAN_DIR (.pth/.safetensors folder)")
                             with gr.Row():

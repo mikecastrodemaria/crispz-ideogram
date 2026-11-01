@@ -99,10 +99,12 @@ def test_sampler_left_alone():
     _run(go)
 
 
-def test_protocol_caps_for_lot1():
+def test_protocol_caps():
+    """Lot 3: img2img and inpaint are on, and announced as EMULATED."""
     caps = cz_protocol.caps_dict()["supports"]
     assert caps["negative"] is False
-    assert caps["img2img"] is False and caps["inpaint"] is False
+    assert caps["img2img"] is True and caps["inpaint"] is True
+    assert sorted(caps["emulated"]) == ["img2img", "inpaint"]
     assert caps["edit"] is False and caps["refs"] is False
     assert cz_protocol.TOOL == "crispz-ideogram"
 
@@ -234,3 +236,65 @@ def test_auto_offload_prefers_encoder_only_under_40_gb():
     assert f("model", "tight", 24.0) == ("model", "tight")
     assert f("sequential", "tiny", 8.0) == ("sequential", "tiny")
     assert f("none", "fits", None) == ("none", "fits")
+
+
+# --- Lot 3: the app's img2img / inpaint paths reach the emulated adapter --------------
+def _img(w=256, h=256):
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (w, h), (40, 90, 200))
+    ImageDraw.Draw(im).ellipse([w // 4, h // 4, 3 * w // 4, 3 * h // 4], fill=(240, 200, 20))
+    return im
+
+
+def test_inpaint_run_goes_through_the_emulated_inpaint():
+    from PIL import Image, ImageDraw
+    mask = Image.new("L", (256, 256), 0)
+    ImageDraw.Draw(mask).rectangle([128, 0, 255, 255], fill=255)
+    out = _run(lambda: P.inpaint_run(_img(), mask, "a red door", 4, 0.8, 3))
+    assert out.size == (256, 256)
+    kw = CALLS[-1]
+    assert kw["mask_image"] is not None and kw["strength"] == 0.8
+
+
+def test_refine_whole_is_an_img2img():
+    def go():
+        return P._refine_whole(P.get_pipe("img2img"), _img(320, 256), 0.35, 8, "x", 1)
+    out = _run(go)
+    assert out.size == (320, 256)
+    kw = CALLS[-1]
+    assert kw["strength"] == 0.35 and kw.get("mask_image") is None
+
+
+def test_reframe_and_directional_outpaint_run():
+    out = _run(lambda: P.reframe(_img(256, 256), 16, 9, "contain", "x", 3, 1))
+    assert out.width > out.height
+    assert CALLS[-1]["mask_image"] is not None
+    out2 = _run(lambda: P.outpaint_directions(_img(256, 256), None, ["right"], "x", 3, 1))
+    assert out2.width > 256
+
+
+def test_extra_checkpoint_folder_and_subfolders_are_scanned(tmp_path, monkeypatch):
+    """Mike's setup (2026-11-01): single files under the EXTRA folder, in subfolders. They
+    must be found (recursive walk of both folders), and an Ideogram single file must be
+    skipped WITH its reason in the log, never silently."""
+    import torch
+    from safetensors.torch import save_file
+    main, extra = tmp_path / "main", tmp_path / "extra"
+    (extra / "ideogram" / "comfy").mkdir(parents=True)
+    main.mkdir()
+    t = {"llm_cond_proj.weight": torch.zeros(2, 2), "embed_image_indicator.weight": torch.zeros(2, 2)}
+    save_file(t, str(extra / "ideogram" / "comfy" / "ideogram4_fp8Scaled.safetensors"))
+    save_file({"x": torch.zeros(1)}, str(main / "not_a_model.safetensors"))
+    logs = []
+    monkeypatch.setattr(P, "CHECKPOINTS_DIR", str(main))
+    monkeypatch.setattr(P, "CHECKPOINTS_EXTRA_DIR", str(extra))
+    monkeypatch.setattr(P, "_log", lambda m, *a, **k: logs.append(m))
+    P._FAMILY_CACHE.clear() if hasattr(P, "_FAMILY_CACHE") else None
+    assert P._checkpoint_dirs() == [str(main), str(extra)]
+    assert P._walk_checkpoints(str(extra)) == ["ideogram/comfy/ideogram4_fp8Scaled.safetensors"]
+    listed = P.list_checkpoints()
+    assert listed == []
+    said = [m for m in logs if "ideogram4_fp8Scaled.safetensors" in m]
+    assert said and "single-file Ideogram 4" in said[0], logs
+    assert P.resolve_checkpoint("ideogram4_fp8Scaled.safetensors").endswith(
+        os.path.join("ideogram", "comfy", "ideogram4_fp8Scaled.safetensors"))

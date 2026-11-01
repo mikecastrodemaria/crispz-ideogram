@@ -20,9 +20,10 @@ diffusers 0.42.1 as a classic DiffusionPipeline, `Ideogram4Pipeline`:
     pipe(prompt=, image=, mask_image=, strength=, width=, height=, num_inference_steps=,
          generator=, guidance_scale=, callback_on_step_end=, output_type=).images
 
-Lot 1 (this file) covers text-to-image. `strength` / `mask_image` / `image` raise a
-named NotImplementedError: img2img and inpaint are emulated in lot 3 (SDEdit + latent
-blending, the cz_flux3 techniques), editing goes through the cloud in lot 4.
+Text to image (lot 1), and img2img / inpaint EMULATED (lot 3): `image` + `strength`
+runs SDEdit on the tail of Ideogram's own schedule, `mask_image` adds latent blending
+(see _prepare_emulated). `image` alone (a reference to edit) raises a named
+NotImplementedError: editing goes through crispz-flux3 or the cloud (lot 4).
 
 What the adapter adds over the raw pipeline:
   - the guidance slider keeps the SHAPE of the official schedule (a 6.25 % tail at 3/7
@@ -104,6 +105,10 @@ SCHEDULE_TAIL = 3.0
 SCHEDULE_TAIL_FRACTION = 3 / 48
 
 MIN_SIDE, MAX_SIDE, GRID = 256, 2048, 16
+
+# Ideogram4Pipeline.__call__'s own schedule defaults (mu before the resolution shift,
+# std of the logit-normal): the emulated img2img recomputes the same sigmas.
+PIPE_MU, PIPE_STD = 0.0, 1.5
 MAX_RATIO = 6.0
 
 _log_handler = logging.getLogger("crispz.ideogram")
@@ -602,6 +607,115 @@ class IdeogramPipe:
                 head.to("cpu")
                 self._encoder_out()
 
+    # --- img2img / inpaint, emulated (lot 3) ----------------------------------------------
+    # Ideogram4Pipeline has neither: it always starts from pure noise on its own sigma
+    # schedule. SDEdit on a flow-matching model is x_t = (1 - sigma) * x0 + sigma * noise:
+    # the image is encoded to Ideogram's tokens, noised to the sigma of the first kept
+    # step, and only the tail of the schedule runs. The schedule is Ideogram's own
+    # (logit-normal, resolution-aware mu, std 1.5; the scheduler applies no shift on top),
+    # recomputed here with diffusers' functions to know that sigma before the call, then
+    # cut at the same index inside it (scheduler.set_timesteps is wrapped for the call).
+    # The strength is a FRACTION OF THE STEPS, diffusers' and crispz-flux3's rule (0.35 =
+    # the last ~35 % of the steps); at least one step always runs. The per-step guidance is
+    # rotated so the tail of the official schedule (the low-guidance last steps) still
+    # lands on the last steps. Inpaint: after each step the tokens outside the mask are
+    # put back to the init image noised to the sigma just reached (latent blending, the
+    # crispz-flux3 technique); the mask is max-pooled to the 16-pixel token grid.
+    def _encode_tokens(self, image, width, height, device):
+        """Normalized Ideogram tokens (1, h/16 * w/16, 128) of `image` at width x height:
+        the exact inverse of the pipeline's decode (bn, then (p, p, c) packing)."""
+        import numpy as np
+        from PIL import Image
+        vae = self._pipe.vae
+        img = image.convert("RGB")
+        if img.size != (width, height):
+            img = img.resize((width, height), Image.LANCZOS)
+        x = torch.from_numpy(np.asarray(img, dtype=np.float32) / 127.5 - 1.0)
+        x = x.permute(2, 0, 1)[None].to(device, vae.dtype)
+        with torch.no_grad():
+            r = vae.encode(x).latent_dist.mode().float()
+        b, c, hh, ww = r.shape
+        tok = r.view(b, c, hh // 2, 2, ww // 2, 2).permute(0, 2, 4, 3, 5, 1)
+        tok = tok.reshape(b, (hh // 2) * (ww // 2), 4 * c)
+        mean = vae.bn.running_mean.view(1, 1, -1).to(tok.device, torch.float32)
+        std = torch.sqrt(vae.bn.running_var.float() + vae.config.batch_norm_eps)
+        return (tok - mean) / std.view(1, 1, -1).to(tok.device)
+
+    @staticmethod
+    def _mask_tokens(mask_image, width, height, device):
+        """(1, seq, 1): 1 = repaint, 0 = keep; a token is repainted as soon as ANY of its
+        pixels is (max-pool), so a thin stroke never vanishes below the grid."""
+        import numpy as np
+        from PIL import Image
+        m = mask_image.convert("L")
+        if m.size != (width, height):
+            m = m.resize((width, height), Image.NEAREST)
+        t = torch.from_numpy(np.asarray(m, dtype=np.float32) / 255.0)[None, None]
+        t = torch.nn.functional.max_pool2d(t, kernel_size=GRID, stride=GRID)
+        return t.flatten(2).transpose(1, 2).to(device)
+
+    @staticmethod
+    def _is_full_mask(mask_image):
+        try:
+            return mask_image.convert("L").getextrema()[0] >= 250
+        except Exception:
+            return False
+
+    def _prepare_emulated(self, kw, init, mask_image, strength, steps, w, h, sched,
+                          generator, user_cb):
+        """Fills kw (latents, rotated guidance) for an img2img / inpaint call and returns
+        (step callback, restore) -- restore undoes the scheduler wrap after the call."""
+        from diffusers.pipelines.ideogram4.pipeline_ideogram4 import (
+            _logit_normal_sigmas, _resolution_aware_mu)
+        p = self._pipe
+        dev = self._offload_device or p._execution_device
+        s = 1.0 if strength is None else float(min(max(float(strength), 0.0), 1.0))
+        full = _logit_normal_sigmas(steps, _resolution_aware_mu(h, w, PIPE_MU), std=PIPE_STD)
+        start = min(int(max(steps - steps * s, 0)), steps - 1)
+        sigma0 = float(full[start])
+        npp = int(kw.get("num_images_per_prompt") or 1)
+        x0 = self._encode_tokens(init, w, h, dev).expand(npp, -1, -1).contiguous()
+        g = generator[0] if isinstance(generator, (list, tuple)) else generator
+        noise = torch.randn(x0.shape, generator=g, dtype=torch.float32,
+                            device=g.device if g is not None else "cpu").to(x0.device)
+        kw["latents"] = (1.0 - sigma0) * x0 + sigma0 * noise
+        kw["guidance_schedule"] = list(sched[start:]) + list(sched[:start])
+        sch = p.scheduler
+        real_set = sch.set_timesteps
+
+        def set_timesteps(*a, **k):
+            if k.get("sigmas") is not None:
+                k["sigmas"] = list(k["sigmas"])[start:]
+            return real_set(*a, **k)
+        sch.set_timesteps = set_timesteps
+
+        def restore():
+            try:
+                del sch.set_timesteps
+            except AttributeError:
+                pass
+        mask = None
+        if mask_image is not None and not self._is_full_mask(mask_image):
+            mask = self._mask_tokens(mask_image, w, h, x0.device)
+        kind = "inpaint" if mask is not None else "img2img"
+        _log(f"{kind} (emulated): strength {s:.2f}, {steps - start} of {steps} steps from "
+             f"sigma {sigma0:.3f}")
+        if mask is None:
+            return user_cb, restore
+
+        def blend(pipe, i, t, cb_kwargs):
+            lat = cb_kwargs["latents"]
+            sig = pipe.scheduler.sigmas
+            nxt = float(sig[i + 1]) if i + 1 < len(sig) else 0.0
+            known = (1.0 - nxt) * x0 + nxt * noise
+            cb_kwargs["latents"] = mask * lat + (1.0 - mask) * known.to(lat.dtype)
+            if user_cb is not None:
+                out = user_cb(pipe, i, t, cb_kwargs)
+                if isinstance(out, dict):
+                    cb_kwargs = out
+            return cb_kwargs
+        return blend, restore
+
     def _say_once(self, key, msg):
         if key not in self._said:
             self._said.add(key)
@@ -613,12 +727,12 @@ class IdeogramPipe:
                  prompt_embeds=None, negative_prompt_embeds=None,
                  callback_on_step_end=None, callback_on_step_end_tensor_inputs=None,
                  output_type="pil", prompt_upsampling=False, return_dict=True, **_ignored):
-        if strength is not None or mask_image is not None:
-            raise NotImplementedError(
-                "Ideogram 4.0 has no img2img / inpaint: crispz-ideogram emulates them in "
-                "lot 3 (not delivered yet). Until then refine, upscale-refine, inpaint, "
-                "outpaint and the detailer are off on this model.")
-        if image is not None:
+        emulated = strength is not None or mask_image is not None
+        if emulated:
+            init = image[0] if isinstance(image, (list, tuple)) and image else image
+            if init is None:
+                raise ValueError("img2img / inpaint need an image to start from")
+        elif image is not None:
             raise NotImplementedError(
                 "Ideogram 4.0 does not edit images (text to image only). Local editing: "
                 "send the image to crispz-flux3; cloud editing (Ideogram 4.5) comes in lot 4.")
@@ -629,6 +743,10 @@ class IdeogramPipe:
             raise ValueError("Ideogram 4: pass the prompt as text (embeddings depend on the "
                              "image grid and are rebuilt by the pipeline).")
         steps = int(num_inference_steps or DEFAULTS["ideogram"]["steps"])
+        if emulated:
+            # Output size = the asked one, else the image's own (on Ideogram's grid).
+            width = width or init.size[0]
+            height = height or init.size[1]
         w, h = fit_size(width, height)
         if (width and height) and (w, h) != (int(width), int(height)):
             self._say_once(("size", int(width), int(height)),
@@ -650,6 +768,11 @@ class IdeogramPipe:
                 self._say_once("fast", "attention: text region sized to the prompt, "
                                        "all-True masks dropped (flash / efficient SDPA), "
                                        "text-conditioning norm on the text rows only")
+        restore = None
+        if emulated:
+            callback_on_step_end, restore = self._prepare_emulated(
+                kw, init, mask_image, strength, steps, w, h, sched, generator,
+                callback_on_step_end)
         if callback_on_step_end is not None:
             kw["callback_on_step_end"] = callback_on_step_end
             kw["callback_on_step_end_tensor_inputs"] = ["latents"]
@@ -659,6 +782,8 @@ class IdeogramPipe:
             out = self._pipe(**kw)
         finally:
             self._encoder_out()        # stopped before the first transformer, or an error
+            if restore is not None:
+                restore()
         images = out.images if hasattr(out, "images") else out[0]
         return types.SimpleNamespace(images=images) if return_dict else (images,)
 

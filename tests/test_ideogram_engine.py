@@ -87,12 +87,16 @@ def test_interrupt_returns_an_image():
     assert out.images[0].size == (256, 256)          # the next call starts clean
 
 
-@pytest.mark.parametrize("kw", [{"strength": 0.4}, {"mask_image": Image.new("L", (8, 8))},
-                                {"image": Image.new("RGB", (8, 8))}])
-def test_lot3_and_lot4_paths_are_refused_by_name(kw):
+def test_editing_is_refused_by_name_and_emulation_needs_an_image():
+    """Lot 3 emulates img2img / inpaint (tests/test_ideogram_emulated.py); a reference
+    image to EDIT (image without strength or mask) is still refused, by name."""
     with pytest.raises(NotImplementedError) as e:
-        _pipe()(prompt="x", width=256, height=256, num_inference_steps=1, **kw)
-    assert "lot" in str(e.value)
+        _pipe()(prompt="x", width=256, height=256, num_inference_steps=1,
+                image=Image.new("RGB", (8, 8)))
+    assert "lot 4" in str(e.value)
+    for kw in ({"strength": 0.4}, {"mask_image": Image.new("L", (8, 8))}):
+        with pytest.raises(ValueError, match="need an image"):
+            _pipe()(prompt="x", width=256, height=256, num_inference_steps=1, **kw)
 
 
 def test_negative_prompt_is_dropped_not_fatal():

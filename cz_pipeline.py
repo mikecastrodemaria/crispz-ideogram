@@ -686,7 +686,10 @@ def _qwen_call(pipe, **kw):
                      f"there (measured bit-for-bit identical from 1.0 to 8.0). It does "
                      f"apply on a single-file checkpoint, though.")
             kw["guidance_scale"] = 1.0 if distilled else want
-    if "strength" in kw and kw.get("image") is not None and "mask_image" not in kw:
+    # (Not on the FLUX.3 / Ideogram adapters: they take `strength` themselves, and a
+    # white mask would only cost a mask build there.)
+    if ("strength" in kw and kw.get("image") is not None and "mask_image" not in kw
+            and not isinstance(pipe, (engine.IdeogramPipe, cz_flux3.Flux3Pipe))):
         img = kw["image"]
         ref = img[0] if isinstance(img, (list, tuple)) else img
         kw["mask_image"] = Image.new("L", ref.size, 255)

@@ -61,10 +61,12 @@ OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 # it). Static on purpose: `caps` must answer without importing the pipeline
 # (torch). Krea 2 has no img2img / inpaint pipeline -> variation (upscale
 # with factor 1) and inpaint are refused with exit 3, never faked.
-# crispz-ideogram (lot 1): Ideogram 4.0 has neither img2img nor inpaint in diffusers.
-# Both come back in lot 3, EMULATED (SDEdit + latent blending); until then they are
-# refused with exit 3, never faked.
-FAMILY_CAPS = {"img2img": False, "inpaint": False}
+# crispz-ideogram: Ideogram 4.0 has neither img2img nor inpaint in diffusers; both are
+# EMULATED since lot 3 (SDEdit on the tail of Ideogram's own schedule, latent blending
+# for the mask, cz_ideogram._prepare_emulated). `caps` says so in supports.emulated: a
+# caller that needs a native pipeline can tell.
+FAMILY_CAPS = {"img2img": True, "inpaint": True}
+EMULATED_CAPS = ("img2img", "inpaint")
 
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
@@ -229,7 +231,8 @@ def caps_dict():
                          "edit": _omni_configured(),
                          "edit_presets": bool(_edit_lora_catalog()),
                          "inpaint": FAMILY_CAPS["inpaint"],
-                         "img2img": FAMILY_CAPS["img2img"]},
+                         "img2img": FAMILY_CAPS["img2img"],
+                         "emulated": list(EMULATED_CAPS)},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras"),

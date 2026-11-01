@@ -59,6 +59,13 @@ PRECISIONS = ("nf4",)
 # tensor names, never a width.
 HIDDEN_SIZE = 4608
 
+# Offload 'auto': below this much VRAM, 'none' is turned into 'model' (= the text encoder
+# alone off the card, see IdeogramPipe.enable_model_cpu_offload). Measured on the 5090
+# (32 GB): 'model' renders 1024 in 61 s with a 23.4 GB peak at 2048; 'none' keeps 5.5 GB
+# more resident for the encoder, which brings 2048 back to ~29 GB of 31.8. The cost of
+# 'model' is one encoder round trip per image, already inside the 61 s.
+AUTO_NONE_MIN_VRAM_GB = 40.0
+
 # Official guidance schedule for 48 steps: 7.0 x 45 then 3.0 x 3.
 SCHEDULE_PEAK = 7.0
 SCHEDULE_TAIL = 3.0

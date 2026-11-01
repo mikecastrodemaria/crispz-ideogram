@@ -365,6 +365,11 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - Mesuré (`--only-2048`, 'model' encodeur seul) : **pic du débruitage 23,35 Go** (contre
   29,88), 393,7 s soit **8,2 s/step** (contre 9,6 au run précédent), décodage VAE 1,1 s.
   Marge de 8,5 Go sur 31,84.
+- **Offload 'auto'** (décision de Mike) : quand le test VRAM conclut 'none' sur une carte
+  de moins de 40 Go (`cz_ideogram.AUTO_NONE_MIN_VRAM_GB`), Ideogram passe en 'model'
+  encodeur seul, avec la raison dans le log. Un 'none' explicite n'est jamais touché.
+  Test : `test_auto_offload_prefers_encoder_only_under_40_gb`. Suite : 528 passent, les
+  mêmes 44 échecs, 1 skip ; smoke 22/22.
 
 ### CI GitHub (31/10/2026)
 

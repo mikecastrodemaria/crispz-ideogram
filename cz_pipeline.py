@@ -2956,9 +2956,22 @@ def _resolve_auto(retest=False):
         "auto", footprint_gb=_model_footprint_gb(),
         model_id=(ZIMAGE_TRANSFORMER or BASE_REPO), dtype="bf16",
         profile_path=_hw_profile_path(), retest=retest)
+    mode, why = _ideogram_auto(mode, why, _total_vram_gb())
     _AUTO_OFFLOAD = mode
     _log(f"offload auto -> {mode} ({why})")
     return mode
+
+
+def _ideogram_auto(mode, why, total_gb):
+    """Ideogram 4: 'auto' prefers 'model' (encoder-only offload) over 'none' on cards
+    under engine.AUTO_NONE_MIN_VRAM_GB. The VRAM test only knows the weights fit; the
+    2048 px denoise needs the 5.5 GB the encoder would hold for nothing between prompts.
+    An explicit 'none' is never touched (this runs for 'auto' only)."""
+    if mode == "none" and total_gb and total_gb < engine.AUTO_NONE_MIN_VRAM_GB:
+        return "model", (f"{why}; Ideogram 4 on {total_gb:.0f} GB: text encoder offloaded "
+                         f"to keep 2048 px renders clear of the VRAM ceiling, explicit "
+                         f"'none' to override")
+    return mode, why
 
 
 def offload_status():

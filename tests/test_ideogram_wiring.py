@@ -221,3 +221,16 @@ def test_vram_downgrade_frees_the_old_pipe_before_reloading():
         P._VRAM_DOWNGRADE = False
     assert img is not None and FakePipe.calls == 2
     assert alive_at_reload == [False], "the old pipe was still referenced at reload"
+
+
+def test_auto_offload_prefers_encoder_only_under_40_gb():
+    """'auto' -> 'model' (the encoder alone off the card) when the VRAM test says 'none'
+    on a card under 40 GB: 2048 px peaks at 23.4 GB that way on the 5090, ~29 GB with the
+    encoder resident. Bigger cards, and every other verdict, are left as they are."""
+    f = P._ideogram_auto
+    assert f("none", "fits", 31.8)[0] == "model"
+    assert "explicit 'none'" in f("none", "fits", 31.8)[1]
+    assert f("none", "fits", 48.0) == ("none", "fits")
+    assert f("model", "tight", 24.0) == ("model", "tight")
+    assert f("sequential", "tiny", 8.0) == ("sequential", "tiny")
+    assert f("none", "fits", None) == ("none", "fits")

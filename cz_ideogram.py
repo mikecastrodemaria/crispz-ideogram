@@ -71,6 +71,33 @@ AUTO_NONE_MIN_VRAM_GB = 40.0
 PROMPT_ENHANCER_REPO = "diffusers/qwen3-vl-8b-instruct-lm-head"
 MAGIC_MAX_NEW_TOKENS = 1536
 
+# Describe (lot 2): the text encoder is the WHOLE Qwen3-VL-8B, vision tower included (699
+# visual.* tensors in the nf4 file), so with the LM head it can look at an image. Only
+# the image preprocessor config comes from the public Qwen repo (a few KB).
+VISION_PROCESSOR_REPO = "Qwen/Qwen3-VL-8B-Instruct"
+DESCRIBE_MAX_SIDE = 1024
+# Boxes are asked in Qwen3-VL's own grounding format (bbox_2d = [x1, y1, x2, y2] in
+# 0..1000, what it was trained to emit) and converted to Ideogram's [y0, x0, y1, x1]
+# afterwards (cz_magic.clean): asking a model to emit the swapped order invites mistakes.
+DESCRIBE_SYSTEM = (
+    "You describe an image as a structured JSON caption that an image renderer will use "
+    "to recreate it. Output ONE minified single-line JSON object and NOTHING else.\n\n"
+    "SCHEMA, keys in this order:\n"
+    '{"high_level_description":"...","style_description":{"aesthetics":"...",'
+    '"lighting":"...","medium":"...","art_style":"...","color_palette":["#RRGGBB"]},'
+    '"compositional_deconstruction":{"background":"...","elements":[ ... ]}}\n'
+    "- for a photograph use \"photo\" (camera, lens, framing) instead of \"art_style\", "
+    "placed before \"medium\", and medium \"photograph\";\n"
+    "- object element: {\"type\":\"obj\",\"bbox_2d\":[x1,y1,x2,y2],\"desc\":\"...\"}\n"
+    "- text element: {\"type\":\"text\",\"bbox_2d\":[x1,y1,x2,y2],\"text\":\"VERBATIM\","
+    "\"desc\":\"...\"}\n\n"
+    "RULES: bbox_2d in relative 0..1000 coordinates of the image. Transcribe EVERY visible "
+    "text exactly, one text element per block, line breaks as \\n. medium is one of "
+    "graphic_design, illustration, photograph, 3d_render, painting. color_palette: the 3 to "
+    "8 dominant colours as uppercase #RRGGBB. Each desc is 15 to 50 words, concrete and "
+    "standalone (shape, colour, material, position). The background is the surroundings "
+    "only, never an element. Valid JSON: double quotes, no trailing commas.")
+
 # Official guidance schedule for 48 steps: 7.0 x 45 then 3.0 x 3.
 SCHEDULE_PEAK = 7.0
 SCHEDULE_TAIL = 3.0
@@ -340,7 +367,7 @@ class IdeogramPipe:
     enable_model_cpu_offload, maybe_free_model_hooks...)."""
 
     _OWN = {"_pipe", "repo", "variant", "_said", "_cfg", "_all_hooks", "_tr_pre",
-            "_te_on_gpu", "_offload_device"}
+            "_te_on_gpu", "_offload_device", "_vl_processor"}
 
     def __init__(self, pipe, repo=DEFAULT_REPO):
         object.__setattr__(self, "_pipe", pipe)
@@ -504,6 +531,58 @@ class IdeogramPipe:
         try:
             with torch.no_grad():
                 return self._pipe.upsample_prompt(prompt, **kw)[0]
+        finally:
+            if offloaded:
+                head.to("cpu")
+                self._encoder_out()
+
+    def _enhancer(self):
+        """The generative Qwen3-VL (encoder body + LM head), built once, shared with
+        diffusers' upsample_prompt (same attribute)."""
+        p = self._pipe
+        if getattr(p, "_prompt_enhancer", None) is None:
+            from diffusers.pipelines.ideogram4.prompt_enhancer import build_prompt_enhancer
+            p._prompt_enhancer = build_prompt_enhancer(p.text_encoder,
+                                                      self.ensure_prompt_enhancer())
+        return p._prompt_enhancer
+
+    def _processor(self):
+        proc = getattr(self, "_vl_processor", None)
+        if proc is None:
+            from transformers import AutoProcessor
+            proc = AutoProcessor.from_pretrained(VISION_PROCESSOR_REPO)
+            object.__setattr__(self, "_vl_processor", proc)
+        return proc
+
+    def describe_image(self, image, max_new_tokens=MAGIC_MAX_NEW_TOKENS, device=None):
+        """An image -> a JSON caption text (boxes as bbox_2d, see DESCRIBE_SYSTEM), with the
+        Qwen3-VL-8B already loaded as the text encoder, its vision tower and the LM head.
+        Greedy decoding: the same image gives the same caption. Local only."""
+        head = self.ensure_prompt_enhancer()
+        enhancer = self._enhancer()
+        proc = self._processor()
+        img = image.convert("RGB")
+        if max(img.size) > DESCRIBE_MAX_SIDE:
+            k = DESCRIBE_MAX_SIDE / float(max(img.size))
+            img = img.resize((max(28, round(img.width * k)), max(28, round(img.height * k))))
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": DESCRIBE_SYSTEM}]},
+            {"role": "user", "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": "Describe this image as the JSON caption."}]}]
+        dev = self._offload_device or device or self._pipe._execution_device
+        offloaded = self._offload_device is not None
+        self._encoder_in()
+        head.to(dev)
+        try:
+            inputs = proc.apply_chat_template(messages, tokenize=True,
+                                              add_generation_prompt=True, return_dict=True,
+                                              return_tensors="pt").to(dev)
+            with torch.no_grad():
+                out = enhancer.generate(**inputs, max_new_tokens=int(max_new_tokens),
+                                        do_sample=False)
+            new = out[:, inputs["input_ids"].shape[1]:]
+            return proc.batch_decode(new, skip_special_tokens=True)[0].strip()
         finally:
             if offloaded:
                 head.to("cpu")

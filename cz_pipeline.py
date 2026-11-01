@@ -4738,6 +4738,17 @@ def magic_prompt_local(prompt, width, height, seed=None):
 
 
 @_gpu_serial
+def describe_local(image):
+    """Lot 2: an image -> a JSON caption with the loaded Qwen3-VL-8B (its vision tower and
+    the LM head). Returns the raw text; cz_magic.describe cleans and validates it."""
+    pipe = get_pipe("txt2img")
+    t0 = time.time()
+    out = pipe.describe_image(image, device=DEVICE)
+    _log(f"describe (local Qwen3-VL) done in {time.time() - t0:.1f}s")
+    return out
+
+
+@_gpu_serial
 def generate(prompt, width, height, steps, seed, negative_prompt=""):
     """FLUX.3 txt2img: generates an image from a prompt. Distilled checkpoint: 16 steps,
     no CFG; base checkpoint: ~50 steps, the guidance slider is a real CFG and the negative

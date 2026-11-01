@@ -94,6 +94,13 @@ def clean(raw, strip_bboxes=False):
         raise MagicPromptError(f"the magic prompt returned invalid JSON ({e}): "
                                f"{text[a:a + 160]!r}")
     cap.pop("aspect_ratio", None)
+    for el in (cap.get("compositional_deconstruction") or {}).get("elements") or []:
+        if isinstance(el, dict) and "bbox_2d" in el:
+            # Qwen3-VL's grounding order [x1, y1, x2, y2] -> Ideogram's [y0, x0, y1, x1].
+            b = cz_caption.parse_bbox(el.pop("bbox_2d"))
+            if b:
+                x1, y1, x2, y2 = b
+                el["bbox"] = [min(y1, y2), min(x1, x2), max(y1, y2), max(x1, x2)]
     if strip_bboxes:
         for el in (cap.get("compositional_deconstruction") or {}).get("elements") or []:
             if isinstance(el, dict):
@@ -237,3 +244,17 @@ def expand(prompt, width, height, seed=None, which=None, model=None):
         _log(f"magic prompt ({which}): {len(warnings)} schema warning(s): "
              + "; ".join(warnings[:3]))
     return text, warnings, which
+
+
+def describe(image):
+    """An image -> (caption_text, warnings), locally with the loaded Qwen3-VL-8B. The cloud
+    Describe of Ideogram belongs to the cloud functions (lot 4)."""
+    if image is None:
+        raise MagicPromptError("no image to describe")
+    import cz_pipeline
+    raw = cz_pipeline.describe_local(image)
+    text, warnings = clean(raw)
+    if warnings:
+        _log(f"describe: {len(warnings)} schema warning(s): " + "; ".join(warnings[:3]))
+    return text, warnings
+

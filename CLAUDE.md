@@ -412,6 +412,41 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
 - Un `config.txt` local écrit avant le lot 1 garde 16 steps / guidance 1,0 : à vérifier
   chez Mike avant d'utiliser l'app.
 
+### Lot 2 en cours (01/11/2026) : légendes JSON
+
+- **Schéma de référence** : celui d'ideogram-oss/ideogram4 (docs/prompting.md +
+  `caption_verifier.py`), plus riche que le sous-ensemble du magic prompt de diffusers :
+  `style_description` (photo OU art_style, palette <= 16), éléments avec `bbox`
+  [y0, x0, y1, x1] en 0..1000 et palette <= 5, ordre des clés strict, hex #RRGGBB
+  majuscules, JSON minifié UTF-8. Le §2 parlait de `colour_palette` : la clé réelle est
+  `color_palette`. Code Apache-2.0 repris tel quel dans `third_party/ideogram4/`
+  (vérificateur, prompt v1), licence et provenance à côté.
+- Filtre de sécurité : intégré aux POIDS (le modèle dessine lui-même une carte grise
+  « Image blocked by safety filter »), pas de classifieur dans diffusers ; Hive n'existe
+  que comme appel cloud optionnel dans le script de référence d'Ideogram. Faux positifs
+  fréquents en texte libre, documentés par Ideogram (vu chez Mike sur une affiche
+  anodine). Licence §4 : interdiction de contourner ou désactiver les filtres. Variante
+  « NSFW » demandée par Mike : refusée pour cette raison.
+- 2a `cz_caption` (construction, relecture, validation, boîtes, couleurs) ; une légende
+  JSON contourne styles Fooocus et variantes {a|b} (`cz_prompt`, dit dans le log).
+- 2b `cz_design` : 9 presets (affiche A, logo, carte 85x55, livre 2:3, slide 16:9,
+  packaging, miniature YouTube, story 9:16, bannière 6:1), tailles natives.
+- 2c `cz_magic` : magic prompt local (Qwen3-VL-8B + tête `diffusers/qwen3-vl-8b-instruct-
+  lm-head`, `outlines` ajouté aux dépendances), Ollama (schéma passé en `format`), API
+  Ideogram (désactivée par défaut, ligne `CLOUD:` dans le log à chaque appel).
+- 2d `cz_caption_ui` : accordéon sous le prompt (presets, moteur, formulaire, tableau des
+  éléments, plateau où l'on trace les boîtes à la souris, palette, JSON brut, « Use as
+  prompt »). Vérifié dans Chromium : preset, boîte tracée posée sur le bon élément,
+  JSON valide dans le prompt.
+- 2e Describe local : l'encodeur nf4 contient la tour vision de Qwen3-VL (699 tenseurs
+  `visual.*`) ; image -> légende avec boîtes demandées en `bbox_2d` (format natif Qwen,
+  x1, y1, x2, y2) puis converties dans l'ordre Ideogram. Describe cloud : lot 4.
+- `tools/gpu_lot2_check.py` : légende à la main + magic prompt local + Describe sur la
+  5090, détecteur de carte « blocked », `--fp-test` (texte libre contre JSON).
+- Suite CPU : 553 passent, les mêmes 44 échecs, 1 skip ; smoke 22/22.
+- Reste : la mesure GPU du lot 2 (magic prompt et Describe locaux jamais exécutés sur
+  les vrais poids), puis le bilan.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

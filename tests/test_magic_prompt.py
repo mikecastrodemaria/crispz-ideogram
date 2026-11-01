@@ -168,3 +168,42 @@ def test_local_magic_prompt_plumbing_on_the_tiny_pipe():
     assert isinstance(a, str) and a == b
     assert moves == ["cpu", "cpu", "cpu", "cpu"]        # in + out, twice (dev = cpu here)
     assert not pipe._te_on_gpu
+
+
+def test_describe_converts_qwen_boxes_to_ideogram_order(monkeypatch):
+    """Qwen3-VL emits bbox_2d = [x1, y1, x2, y2]; the caption wants [y0, x0, y1, x1]."""
+    import cz_pipeline
+    from PIL import Image
+    raw = json.dumps({"high_level_description": "A sign.",
+                      "compositional_deconstruction": {"background": "A wall.", "elements": [
+                          {"type": "text", "bbox_2d": [100, 200, 900, 400], "text": "OPEN",
+                           "desc": "Red letters."},
+                          {"type": "obj", "bbox_2d": [700, 800, 300, 950], "desc": "A lamp."}]}})
+    monkeypatch.setattr(cz_pipeline, "describe_local", lambda img: raw)
+    text, warnings = M.describe(Image.new("RGB", (64, 64)))
+    els = json.loads(text)["compositional_deconstruction"]["elements"]
+    assert els[0]["bbox"] == [200, 100, 400, 900] and "bbox_2d" not in els[0]
+    assert els[1]["bbox"] == [800, 300, 950, 700]                 # corners given reversed
+    assert list(els[0]) == ["type", "bbox", "text", "desc"] and warnings == []
+    with pytest.raises(M.MagicPromptError, match="no image"):
+        M.describe(None)
+
+
+def test_describe_plumbing_on_the_tiny_pipe():
+    """The real IdeogramPipe.describe_image on the tiny Qwen3-VL (vision tower of depth 1,
+    random weights): the image goes through the real Qwen3-VL processor and generate, the
+    encoder comes and goes under the encoder-only offload. Greedy: deterministic."""
+    from diffusers import Ideogram4PromptEnhancerHead
+    from PIL import Image
+    from ideogram_tiny import tiny_pipe
+    pipe = tiny_pipe()
+    cfg = pipe._pipe.text_encoder.config.text_config
+    torch.manual_seed(0)
+    pipe._pipe.register_modules(prompt_enhancer_head=Ideogram4PromptEnhancerHead(
+        hidden_size=cfg.hidden_size, vocab_size=cfg.vocab_size))
+    pipe.enable_model_cpu_offload(device="cpu")
+    img = Image.new("RGB", (1600, 900), (200, 30, 30))
+    a = pipe.describe_image(img, max_new_tokens=6)
+    b = pipe.describe_image(img, max_new_tokens=6)
+    assert isinstance(a, str) and a == b
+    assert not pipe._te_on_gpu

@@ -157,8 +157,8 @@ def render_board(cap, width, height, selected=None):
     svg = (f'<svg width="100%" height="100%" style="position:absolute;left:0;top:0;'
            f'pointer-events:none">{"".join(shapes)}</svg>')
     return (f'<div style="font-size:12px;opacity:.8;margin-bottom:4px">Canvas {w} x {h} '
-            f'({cz_caption.aspect_ratio(w, h)}). Pick an element below, then drag a box '
-            f'on the board.</div>'
+            f'({cz_caption.aspect_ratio(w, h)}). Pick the element to place above, then '
+            f'drag its box here.</div>'
             f'<div id="{BOARD_ID}" class="cz-board-surface" style="position:relative;'
             f'width:{bw}px;height:{bh}px;background:{bg};border:1px solid #666;'
             f'cursor:crosshair;user-select:none">{svg}</div>'
@@ -237,6 +237,16 @@ def build_panel():
                                          + ("" if usable else why)), scale=3)
             p["magic_btn"] = gr.Button("Magic prompt: idea -> caption", variant="primary",
                                        scale=1)
+        with gr.Accordion("Describe an image -> caption (local Qwen3-VL-8B)", open=False):
+            with gr.Row():
+                p["describe_img"] = gr.Image(type="pil", label="Image to describe",
+                                             height=220, scale=2)
+                with gr.Column(scale=1):
+                    gr.Markdown("The loaded text encoder (Qwen3-VL-8B, vision included) "
+                                "reads the image: summary, style, palette, every visible "
+                                "text verbatim, and a box per element. Nothing leaves the "
+                                "machine. The first use downloads the LM head (~1.2 GB).")
+                    p["describe_btn"] = gr.Button("Describe -> caption", variant="primary")
         p["hld"] = gr.Textbox(label="Summary (high_level_description)", lines=2)
         with gr.Row():
             p["kind"] = gr.Radio(list(KINDS), value=list(KINDS)[0], label="Style type")
@@ -319,6 +329,19 @@ def wire(p, prompt, width, height):
                 + ("CLOUD call logged. " if used == "ideogram_api" else ""))
         return (*caption_to_form(cap), warnings_md(warnings, note))
     p["magic_btn"].click(magic, [prompt, p["engine"], width, height], form + [p["status"]])
+
+    def describe(img):
+        t0 = time.time()
+        try:
+            text, warnings = cz_magic.describe(img)
+        except cz_magic.MagicPromptError as e:
+            return (*[gr.update()] * len(form), f"Describe failed: {e}")
+        except Exception as e:
+            _log(f"describe failed: {type(e).__name__}: {e}")
+            return (*[gr.update()] * len(form), f"Describe failed: {type(e).__name__}: {e}")
+        return (*caption_to_form(cz_caption.parse(text)),
+                warnings_md(warnings, f"Described locally in {time.time() - t0:.0f} s."))
+    p["describe_btn"].click(describe, [p["describe_img"]], form + [p["status"]])
 
     def from_raw(raw):
         try:

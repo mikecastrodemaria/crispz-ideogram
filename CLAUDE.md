@@ -346,6 +346,24 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - **Critère d'acceptation du lot 1 atteint** (une 2048x2048 sur la 5090). Restent à juger
   sur images : texte rendu, écart 8,7 accéléré contre brut, aperçu.
 
+### Pic à 2048 : la normalisation du texte, pas le VAE (01/11/2026)
+
+- `--only-2048` : 462 s (9,6 s/step, 2 Go déjà occupés par d'autres programmes au
+  départ) ; pic du débruitage 29,88 Go, décodage VAE 2,4 s sans rien demander de plus.
+  Le décodage en tuiles est donc inutile, abandonné.
+- Cause : `llm_cond_norm` (RMSNorm sur 53248 = 13 couches de l'encodeur) passe sur TOUTE
+  la séquence, environ 150 lignes de texte et 16384 lignes d'image nulles à 2048 px, et
+  l'RMSNorm de diffusers convertit en float32 : 9 à 10 Go de temporaires par appel de
+  transformer, deux appels par step.
+- Correctif `cz_ideogram.install_sparse_text_norm` : la norme ne tourne que sur les
+  lignes non nulles (une ligne nulle se normalise en ligne nulle), zéros ailleurs. Seule
+  la norme est interceptée, pas `llm_cond_proj` que les LoRA peuvent viser. Suit
+  `FAST_ATTENTION`. Test : égalité exacte en bf16. Les processeurs d'attention suivent
+  aussi le drapeau à l'appel : le rendu « raw » de l'A/B du 2e passage gardait en partie
+  l'accélération (écart 8,7 à re-mesurer).
+- Suite CPU : 527 passent, les mêmes 44 échecs, 1 skip ; smoke 22/22.
+- À mesurer : `--only-2048` (pic attendu vers 21 Go).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

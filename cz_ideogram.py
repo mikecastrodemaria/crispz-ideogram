@@ -104,7 +104,7 @@ def _mask_skip_processor_class():
         _all_true = False
 
         def __call__(self, attn, hidden_states, attention_mask, image_rotary_emb):
-            if attention_mask is not None:
+            if attention_mask is not None and FAST_ATTENTION:
                 if attention_mask is not self._seen:
                     self._seen = attention_mask
                     self._all_true = bool(attention_mask.all())
@@ -143,6 +143,45 @@ def install_mask_skip(pipe):
                 proc.__dict__.update(cur.__dict__)     # keeps the attention backend
             m.processor = proc
             n += 1
+    return n
+
+
+# --- The text-conditioning norm, on the text rows only -----------------------------------
+# The transformer injects the text through llm_cond_norm (RMSNorm over 53248 features:
+# 13 encoder layers side by side) then llm_cond_proj, on the WHOLE sequence: ~150 text
+# rows and, at 2048 px, 16384 image rows that are zeros (and are zeroed again right
+# after). diffusers' RMSNorm upcasts to float32: x.float(), its square, the scaled copy,
+# about 9 to 10 GB of temporaries per transformer call at 2048 px, two calls a step
+# (5090, 2026-11-01: denoise peak 29.9 GB of 31.8, the VAE decode needed nothing more).
+# A zero row normalizes to a zero row (0 * rsqrt(eps) * w = 0), so normalizing the
+# non-zero rows only and leaving zeros elsewhere is the same result, minus the float32
+# copies of the zeros. Only the norm is patched: llm_cond_proj, which LoRAs may target,
+# is left alone. Follows FAST_ATTENTION (off = the stock path).
+def _sparse_rms_forward(norm, orig):
+    def forward(x):
+        if not FAST_ATTENTION or x.dim() != 3:
+            return orig(x)
+        rows = (x.amax(-1) != 0) | (x.amin(-1) != 0)       # no full-size temporary
+        n = int(rows.sum())
+        if n == rows.numel():
+            return orig(x)
+        sub = orig(x[rows])                                   # (n, D)
+        out = torch.zeros(x.shape, dtype=sub.dtype, device=x.device)
+        out[rows] = sub
+        return out
+    return forward
+
+
+def install_sparse_text_norm(pipe):
+    """Patches llm_cond_norm of both transformers (idempotent). Returns how many."""
+    n = 0
+    for name in ("transformer", "unconditional_transformer"):
+        norm = getattr(getattr(pipe, name, None), "llm_cond_norm", None)
+        if norm is None or getattr(norm, "_cz_sparse", False):
+            continue
+        norm.forward = _sparse_rms_forward(norm, norm.forward)
+        norm._cz_sparse = True
+        n += 1
     return n
 
 
@@ -448,14 +487,16 @@ class IdeogramPipe:
               "num_images_per_prompt": int(num_images_per_prompt or 1),
               "generator": generator, "output_type": output_type,
               "prompt_upsampling": bool(prompt_upsampling)}
-        if FAST_ATTENTION and not prompt_upsampling:
-            # (prompt_upsampling reuses max_sequence_length as its max_new_tokens.)
-            n = prompt_token_count(self._pipe, kw["prompt"])
-            if n and n <= 2048:
-                kw["max_sequence_length"] = n
-            if install_mask_skip(self._pipe):
+        if FAST_ATTENTION:
+            if not prompt_upsampling:
+                # (prompt_upsampling reuses max_sequence_length as its max_new_tokens.)
+                n = prompt_token_count(self._pipe, kw["prompt"])
+                if n and n <= 2048:
+                    kw["max_sequence_length"] = n
+            if install_mask_skip(self._pipe) | install_sparse_text_norm(self._pipe):
                 self._say_once("fast", "attention: text region sized to the prompt, "
-                                       "all-True masks dropped (flash / efficient SDPA)")
+                                       "all-True masks dropped (flash / efficient SDPA), "
+                                       "text-conditioning norm on the text rows only")
         if callback_on_step_end is not None:
             kw["callback_on_step_end"] = callback_on_step_end
             kw["callback_on_step_end_tensor_inputs"] = ["latents"]

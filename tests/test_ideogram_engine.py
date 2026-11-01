@@ -250,3 +250,36 @@ def test_model_offload_moves_only_the_text_encoder():
     pipe.maybe_free_model_hooks()
     pipe.remove_all_hooks()
     assert not pipe._all_hooks and pipe._offload_device is None and not pipe._tr_pre
+
+
+def test_sparse_text_norm_is_exact_and_follows_the_flag():
+    """llm_cond_norm on the non-zero rows only == the stock RMSNorm on every row (a zero
+    row normalizes to zero), in bf16 like on the card, and the stock path when the flag
+    is off."""
+    from diffusers.models.normalization import RMSNorm
+    g = torch.Generator().manual_seed(0)
+    norm = RMSNorm(512, eps=1e-6, elementwise_affine=True).to(torch.bfloat16)
+    with torch.no_grad():
+        norm.weight.copy_(torch.randn(512, generator=g))
+    x = torch.zeros(2, 40, 512, dtype=torch.bfloat16)
+    x[:, 3:9] = torch.randn(2, 6, 512, generator=g).to(torch.bfloat16)   # the text rows
+    ref = norm(x)
+    calls = []
+    real = norm.forward
+    norm.forward = lambda t: calls.append(tuple(t.shape)) or real(t)
+    holder = type("P", (), {})()
+    holder.transformer = type("T", (), {})()
+    holder.transformer.llm_cond_norm = norm
+    was = cz_ideogram.FAST_ATTENTION
+    try:
+        assert cz_ideogram.install_sparse_text_norm(holder) == 1
+        assert cz_ideogram.install_sparse_text_norm(holder) == 0          # idempotent
+        cz_ideogram.set_fast_attention(True)
+        got = norm(x)
+        assert calls[-1] == (12, 512), calls        # 2 x 6 text rows, not 2 x 40
+        assert got.dtype == ref.dtype and torch.equal(got, ref)
+        cz_ideogram.set_fast_attention(False)
+        norm(x)
+        assert calls[-1] == (2, 40, 512), calls     # stock path
+    finally:
+        cz_ideogram.set_fast_attention(was)

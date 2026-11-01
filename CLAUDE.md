@@ -446,6 +446,15 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
 - Suite CPU : 553 passent, les mêmes 44 échecs, 1 skip ; smoke 22/22.
 - Reste : la mesure GPU du lot 2 (magic prompt et Describe locaux jamais exécutés sur
   les vrais poids), puis le bilan.
+- **Piège (01/11/2026)** : ne JAMAIS faire `pip install -r requirements.txt` dans le
+  `.venv` isolé. gradio 5.50 impose pillow<12, pip rétrograde donc Pillow 13 en 11.3
+  (rembg exige >=12.1, et les CVE de Pillow ne sont corrigées qu'en 13). `install.bat`
+  filtre Pillow, onnxruntime et rembg exprès (voir FORK-flux3-CLAUDE.md §3). Pour une
+  nouvelle dépendance, l'installer seule à la version du lock :
+  `pip install outlines==1.3.3 outlines-core==0.2.14`, puis si besoin
+  `pip install --no-deps pillow==13.0.0`. Le même pip a remis `huggingface-hub` à
+  1.33.0 (la version du lock) alors que le venv de Mike avait 2.4.0 : c'est bien la
+  version attendue.
 
 ### CI GitHub (31/10/2026)
 

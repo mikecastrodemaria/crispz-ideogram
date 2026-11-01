@@ -193,7 +193,7 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
 - `main` (2272b08) : crispz-flux3 0.1.0 importé avec son historique (8117fb2), renommé
   crispz-ideogram, `APP_VERSION` 0.1.0-dev. Notes de flux3 gardées dans `FORK-flux3.md`
   et `FORK-flux3-CLAUDE.md` (pièges d'environnement : à lire avant tout test GPU).
-- **Lot 1 livré sur `wip/ideogram-engine`, à valider sur la 5090** :
+- **Lot 1 livré sur `wip/ideogram-engine`, validé le 01/11/2026 (bilan plus bas)** :
   - `cz_ideogram.py` : `IdeogramPipe` autour d'`Ideogram4Pipeline` (même convention
     d'appel que `Flux3Pipe`), planning de guidance officiel conservé en forme pour tout
     nombre de steps (le curseur = le pic, 7,0 par défaut), taille ramenée à la grille
@@ -370,6 +370,47 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
   encodeur seul, avec la raison dans le log. Un 'none' explicite n'est jamais touché.
   Test : `test_auto_offload_prefers_encoder_only_under_40_gb`. Suite : 528 passent, les
   mêmes 44 échecs, 1 skip ; smoke 22/22.
+
+### Bilan du lot 1 (01/11/2026) : VALIDÉ par Mike
+
+Acceptation remplie : tests CPU sur Ideogram miniature, et une 2048x2048 sur la 5090 avec
+un texte correctement rendu (« GRAND OPENING », « SATURDAY 9 AM », vu par Mike).
+
+Mesures finales (RTX 5090, Windows, torch 2.11 cu128, bitsandbytes 0.50.2, nf4,
+offload 'model' encodeur seul, 48 steps, guidance 7,0) :
+
+| | valeur |
+|---|---|
+| Chargement depuis le cache | 20 à 23 s (premier lancement : + 2 min de téléchargement, 14,8 Go) |
+| VRAM au repos | 9,9 Go alloués (transformers + VAE), ~17 Go vus par le pilote |
+| 1024x1024 | 61 s (1,27 s/step), pic 19,2 Go |
+| 2048x2048 | 394 s (8,2 s/step), pic 23,4 Go sur 31,8, décodage VAE 1,1 s |
+| Stop | image partielle rendue 1,4 s après la demande |
+
+Gains obtenus pendant la validation, tous testés sur CPU et mesurés sur la carte :
+- attention : zone texte à la taille du prompt, masques entièrement vrais retirés (x1,32) ;
+- normalisation du texte sur les seules lignes de texte (pic 2048 : 29,9 -> 23,4 Go) ;
+- offload 'model' propre à Ideogram, encodeur seul (1024 : 134 -> 61 s), et 'auto' qui
+  le choisit sous 40 Go ;
+- fuite de VRAM au repli 'model' corrigée ; aperçu live aux bonnes couleurs ;
+- valeurs par défaut FLUX.3 retirées de l'app ; bitsandbytes ajouté au lock ;
+  `ideogram_base_repos` documenté (job CI `check` vert).
+
+Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
+- aperçu live : erreur 45 sur 255 au dernier step (seuil du script 40, verdict CHECK) ;
+  nettement mieux que la matrice FLUX (78), mais l'image d'aperçu n'a pas été regardée.
+  Si les couleurs déçoivent dans l'app, réajuster la matrice sur des rendus Ideogram.
+- A/B accéléré contre brut : l'écart de 8,7 mesuré au 2e passage n'est pas fiable (le
+  rendu « brut » gardait une partie de l'accélération, corrigé depuis). Texte correct en
+  mode accéléré ; un A/B propre reste à faire si un doute apparaît.
+- LoRA Ideogram : garde par famille testée sur CPU seulement, aucun LoRA chargé sur la
+  carte (à faire quand un LoRA Ideogram sera utilisé).
+- Modération Hive annoncée par la fiche : aucune trace dans le code diffusers, rien dans
+  le chemin local.
+- `_refine_whole` : l'appelant tient aussi le pipe au repli 'model' (lot 3).
+- Les 44 tests FLUX.3 et le job CI `tests` rouge : lot 6.
+- Un `config.txt` local écrit avant le lot 1 garde 16 steps / guidance 1,0 : à vérifier
+  chez Mike avant d'utiliser l'app.
 
 ### CI GitHub (31/10/2026)
 

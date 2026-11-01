@@ -73,6 +73,18 @@
             7.0
         ]
     },
+    "_magic_prompt_engine_help": "Magic prompt (plain idea -> Ideogram 4 JSON caption): 'local' = Qwen3-VL-8B already loaded + its LM head (diffusers/qwen3-vl-8b-instruct-lm-head, ~1.2 GB downloaded once), nothing leaves the machine; 'ollama' = a local Ollama model; 'ideogram_api' = Ideogram's hosted magic prompt (cloud, United States, needs ideogram_cloud_enabled AND ideogram_api_key).",
+    "magic_prompt_engine": "local",
+    "_magic_prompt_ollama_system_help": "System prompt for the Ollama engine: 'diffusers' (diffusers' CAPTION_SYSTEM_MESSAGE, with the caption schema passed as Ollama's format) or 'ideogram_v1' (Ideogram's open v1 magic prompt, richer, no format constraint).",
+    "magic_prompt_ollama_system": "diffusers",
+    "_magic_prompt_ollama_model_help": "Ollama model for the magic prompt; empty = the Improve model, else the first installed one.",
+    "magic_prompt_ollama_model": "",
+    "_magic_prompt_temperature_help": "Sampling temperature of the Ollama magic prompt.",
+    "magic_prompt_temperature": 0.7,
+    "_ideogram_cloud_enabled_help": "OFF by default. true allows the Ideogram cloud functions (the magic prompt now, editing in lot 4): your prompt, and later your images, are sent to api.ideogram.ai in the United States. Every call is logged with a CLOUD: line.",
+    "ideogram_cloud_enabled": false,
+    "_ideogram_api_key_help": "Ideogram API key (ideogram.ai/platform), or env IDEOGRAM_API_KEY. Unused while ideogram_cloud_enabled is false.",
+    "ideogram_api_key": "",
     "_ideogram_base_repos_help": "The Ideogram 4 repos offered in the Models menu: HF repo ids (the gated official one needs its licence accepted ON THAT REPO and an HF token) or local diffusers folders. The first is the default.",
     "ideogram_base_repos": [
         "ideogram-ai/ideogram-4-nf4-diffusers"

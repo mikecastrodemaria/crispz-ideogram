@@ -4727,6 +4727,17 @@ def load_pipe():
 
 
 @_gpu_serial
+def magic_prompt_local(prompt, width, height, seed=None):
+    """Lot 2: the local magic prompt (Qwen3-VL-8B + its LM head, on this machine).
+    Returns the raw caption text; cz_magic cleans and validates it."""
+    pipe = get_pipe("txt2img")
+    t0 = time.time()
+    out = pipe.magic_prompt(prompt, width, height, seed=seed, device=DEVICE)
+    _log(f"magic prompt (local) done in {time.time() - t0:.1f}s")
+    return out
+
+
+@_gpu_serial
 def generate(prompt, width, height, steps, seed, negative_prompt=""):
     """FLUX.3 txt2img: generates an image from a prompt. Distilled checkpoint: 16 steps,
     no CFG; base checkpoint: ~50 steps, the guidance slider is a real CFG and the negative

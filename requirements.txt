@@ -67,3 +67,8 @@ uvicorn
 # bitsandbytes. Official Windows wheels exist since 0.43. To confirm on the 5090 at the
 # first load (lot 1): if the repo's config names another quantizer, this line changes.
 bitsandbytes>=0.45
+
+# crispz-ideogram lot 2: the local magic prompt constrains Qwen3-VL-8B's output to the
+# caption schema with outlines (diffusers uses it when installed; without it the JSON is
+# not guaranteed). Windows wheels for outlines-core exist for Python 3.13.
+outlines>=1.3

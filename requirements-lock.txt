@@ -60,6 +60,10 @@ hf_xet==1.7.0
 # Missing here, an isolated install.bat venv could not load the model at all.
 # 0.50.2 ships a win_amd64 wheel; to be confirmed on the 5090 (lot 1).
 bitsandbytes==0.50.2
+# outlines: the local magic prompt's JSON constraint (lot 2). outlines-core is its
+# compiled half (win_amd64 wheels for cp313).
+outlines==1.3.3
+outlines-core==0.2.14
 
 # UI / service. gradio stays on 5.50 on purpose: the <6 bound of requirements.txt (the
 # Brotli/h11 bug of gradio 6 that spams the console on an interrupted response); the

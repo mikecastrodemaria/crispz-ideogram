@@ -66,6 +66,11 @@ HIDDEN_SIZE = 4608
 # 'model' is one encoder round trip per image, already inside the 61 s.
 AUTO_NONE_MIN_VRAM_GB = 40.0
 
+# The LM head of the local magic prompt (diffusers' Ideogram4PromptEnhancerHead), and the
+# token budget of one caption: 25-55 words per element desc, a handful of elements.
+PROMPT_ENHANCER_REPO = "diffusers/qwen3-vl-8b-instruct-lm-head"
+MAGIC_MAX_NEW_TOKENS = 1536
+
 # Official guidance schedule for 48 steps: 7.0 x 45 then 3.0 x 3.
 SCHEDULE_PEAK = 7.0
 SCHEDULE_TAIL = 3.0
@@ -455,6 +460,54 @@ class IdeogramPipe:
             self._say_once("reoffload", "offload: diffusers' model offload had come back; "
                                         "encoder-only offload reapplied")
             self.enable_model_cpu_offload(device=self._offload_device)
+
+    # --- Local magic prompt (lot 2) -------------------------------------------------------
+    def ensure_prompt_enhancer(self, token=None, dtype=torch.bfloat16):
+        """The LM head that makes the text encoder generative (diffusers'
+        Ideogram4PromptEnhancerHead), loaded once on first use: ~1.2 GB, downloaded the
+        first time. The encoder body is shared, nothing else is loaded."""
+        p = self._pipe
+        head = getattr(p, "prompt_enhancer_head", None)
+        if head is None:
+            from diffusers import Ideogram4PromptEnhancerHead
+            _log(f"magic prompt: loading the LM head ({PROMPT_ENHANCER_REPO}, ~1.2 GB, "
+                 "downloaded the first time)")
+            kw = {"torch_dtype": dtype}
+            if token:
+                kw["token"] = token
+            head = Ideogram4PromptEnhancerHead.from_pretrained(PROMPT_ENHANCER_REPO, **kw)
+            p.register_modules(prompt_enhancer_head=head)
+        return head
+
+    def magic_prompt(self, prompt, width, height, seed=None, temperature=None,
+                     max_new_tokens=MAGIC_MAX_NEW_TOKENS, device=None):
+        """Plain prompt -> JSON caption text, locally, with the text encoder Qwen3-VL-8B
+        plus its LM head (diffusers' upsample_prompt; schema-constrained when `outlines`
+        is installed, said once when it is not). Under the encoder-only offload the
+        encoder and the head come onto the card for the call and leave after."""
+        from diffusers.utils import is_outlines_available
+        if not is_outlines_available():
+            self._say_once("outlines", "magic prompt: `outlines` is not installed, the "
+                                       "local magic prompt runs unconstrained and may "
+                                       "return invalid JSON (pip install outlines)")
+        head = self.ensure_prompt_enhancer()
+        dev = self._offload_device or device or self._pipe._execution_device
+        w, h = fit_size(width or DEFAULTS["ideogram"]["size"], height or DEFAULTS["ideogram"]["size"])
+        gen = torch.Generator().manual_seed(int(seed)) if seed is not None and int(seed) >= 0 else None
+        kw = {"height": h, "width": w, "max_new_tokens": int(max_new_tokens),
+              "generator": gen, "device": dev}
+        if temperature is not None:
+            kw["temperature"] = float(temperature)
+        offloaded = self._offload_device is not None
+        self._encoder_in()
+        head.to(dev)
+        try:
+            with torch.no_grad():
+                return self._pipe.upsample_prompt(prompt, **kw)[0]
+        finally:
+            if offloaded:
+                head.to("cpu")
+                self._encoder_out()
 
     def _say_once(self, key, msg):
         if key not in self._said:

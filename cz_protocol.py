@@ -232,7 +232,8 @@ def caps_dict():
                          "edit_presets": bool(_edit_lora_catalog()),
                          "inpaint": FAMILY_CAPS["inpaint"],
                          "img2img": FAMILY_CAPS["img2img"],
-                         "emulated": list(EMULATED_CAPS)},
+                         "emulated": list(EMULATED_CAPS),
+                         "cloud": _cloud_caps()},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras"),
@@ -241,11 +242,22 @@ def caps_dict():
             # input + 1 ref (spec.refs). Light listing, nothing is downloaded.
             "edit_loras": _edit_lora_catalog(),
             # Fast modes spec.fast accepts on the edit op.
-            # klein is already distilled to 4 steps and no FLUX.2 Lightning LoRA
-            # exists: there is nothing to speed up, the list comes down to 'off'
-            # and the UI hides the control. The field stays present (not absent)
-            # so that family clients always read the same one.
+            # Ideogram 4 has no edit pipeline and no Lightning LoRA: the list comes
+            # down to 'off' and the UI hides the control. The field stays present
+            # (not absent) so that family clients always read the same one.
             "edit_fast": ["off"]}
+
+
+def _cloud_caps():
+    """The Ideogram cloud functions (lot 4): reported, never run through the protocol (the
+    data would leave the machine on a caller's request). `ops` is empty while they are off."""
+    try:
+        import cz_ideogram_api as api
+        ok, why = api.status()
+        return {"enabled": ok, "where": api.WHERE, "via": "ui",
+                "ops": list(api.OPS) if ok else [], **({} if ok else {"why": why})}
+    except Exception as e:
+        return {"enabled": False, "ops": [], "why": f"unavailable: {e}"}
 
 
 def _edit_lora_catalog():

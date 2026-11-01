@@ -4408,7 +4408,7 @@ def build_ui():
                         with gr.Tab("Vision Mix"):
                             gr.Markdown("*Vision Mix: a vision model looks at your reference images "
                                         "and an LLM blends them into ONE text prompt (e.g. a person + "
-                                        "an outfit + a setting), then FLUX.3 generates from it. "
+                                        "an outfit + a setting), then Ideogram 4 generates from it. "
                                         "Needs Ollama with a vision model (Advanced > Prompt AI). "
                                         "It mixes ideas/style, not exact pixels.*")
                             with gr.Row():
@@ -4431,6 +4431,10 @@ def build_ui():
                             rembg_btn = gr.Button("Remove background", variant="primary", size="sm")
                             rembg_status = gr.Markdown("*Local (rembg). Output = transparent PNG. "
                                                        "First use downloads the u2net model.*")
+
+                        with gr.Tab("Cloud (Ideogram)"):
+                            import cz_cloud_ui
+                            cloud_panel = cz_cloud_ui.build_tab()
 
                         with gr.Tab("Inpaint / Outpaint"):
                             gr.Markdown("*Ideogram 4 has no native img2img or inpaint: crispz-ideogram EMULATES them (SDEdit on the tail of its own schedule; latent blending under the mask). Denoise = the fraction of the steps that runs.*")
@@ -5318,6 +5322,9 @@ def build_ui():
                           [prompt, compose_status])
         rembg_btn.click(_ui_remove_bg, [rembg_img, history, save_mode, output_dir],
                         [out, report, history, history_gallery])
+        cz_cloud_ui.wire(cloud_panel, prompt, width, height, save_mode, output_dir,
+                         output_format, history, out, report, history_gallery,
+                         extra_buttons=[caption_panel["describe_cloud_btn"]], demo=demo)
         faceswap_restore_cb.change(set_faceswap_restore,
                                    [faceswap_restore_cb, faceswap_restore_blend],
                                    [faceswap_restore_status])

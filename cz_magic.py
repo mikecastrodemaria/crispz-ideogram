@@ -69,10 +69,12 @@ def cloud_status():
     """(usable, reason): the Ideogram API is usable only when both switches are on."""
     if not cloud_enabled():
         return False, ("Ideogram cloud functions are off (`ideogram_cloud_enabled`: false). "
-                       "They send your prompt to api.ideogram.ai, in the United States.")
+                       "They send your prompts and images to api.ideogram.ai, in the "
+                       "United States.")
     if not api_key():
         return False, "No Ideogram API key (`ideogram_api_key` or env IDEOGRAM_API_KEY)."
-    return True, "Ideogram cloud on: prompts are sent to api.ideogram.ai (United States)."
+    return True, ("Ideogram cloud on: what a Cloud button sends goes to api.ideogram.ai "
+                  "(United States).")
 
 
 # --- Cleaning ------------------------------------------------------------------------
@@ -246,13 +248,21 @@ def expand(prompt, width, height, seed=None, which=None, model=None):
     return text, warnings, which
 
 
-def describe(image):
-    """An image -> (caption_text, warnings), locally with the loaded Qwen3-VL-8B. The cloud
-    Describe of Ideogram belongs to the cloud functions (lot 4)."""
+def describe(image, which="local"):
+    """An image -> (caption_text, warnings). `which` = "local" (the loaded Qwen3-VL-8B,
+    nothing leaves the machine) or "ideogram_api" (Ideogram's Describe 4.0, CLOUD: the
+    image goes to the United States; same switches as the other cloud functions)."""
     if image is None:
         raise MagicPromptError("no image to describe")
-    import cz_pipeline
-    raw = cz_pipeline.describe_local(image)
+    if which == "ideogram_api":
+        import cz_ideogram_api as api
+        try:
+            raw = api.run(api.build_describe(image)).caption
+        except api.CloudError as e:
+            raise MagicPromptError(str(e))
+    else:
+        import cz_pipeline
+        raw = cz_pipeline.describe_local(image)
     text, warnings = clean(raw)
     if warnings:
         _log(f"describe: {len(warnings)} schema warning(s): " + "; ".join(warnings[:3]))

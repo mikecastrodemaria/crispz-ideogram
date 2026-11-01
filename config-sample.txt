@@ -81,10 +81,12 @@
     "magic_prompt_ollama_model": "",
     "_magic_prompt_temperature_help": "Sampling temperature of the Ollama magic prompt.",
     "magic_prompt_temperature": 0.7,
-    "_ideogram_cloud_enabled_help": "OFF by default. true allows the Ideogram cloud functions (the magic prompt now, editing in lot 4): your prompt, and later your images, are sent to api.ideogram.ai in the United States. Every call is logged with a CLOUD: line.",
+    "_ideogram_cloud_enabled_help": "OFF by default. true allows the Ideogram cloud functions: the magic prompt and Describe of the caption editor, and the Cloud (Ideogram) tab (precise edit 4.5, replace background 4.5, remix, remove background, upscale, transparent, vectorize, SVG). Your prompts and images are sent to api.ideogram.ai in the United States. Every call is logged with a CLOUD: line and written to ideogram_cloud_journal.jsonl in the output folder. Also settable in the Cloud tab.",
     "ideogram_cloud_enabled": false,
     "_ideogram_api_key_help": "Ideogram API key (ideogram.ai/platform), or env IDEOGRAM_API_KEY. Unused while ideogram_cloud_enabled is false.",
     "ideogram_api_key": "",
+    "_ideogram_cloud_timeout_help": "Seconds a cloud call may take, polling included (replace background, vectorize and SVG answer later; the app waits for them). Minimum 30. Past it, the result may still arrive in your Ideogram account.",
+    "ideogram_cloud_timeout": 300,
     "_ideogram_base_repos_help": "The Ideogram 4 repos offered in the Models menu: HF repo ids (the gated official one needs its licence accepted ON THAT REPO and an HF token) or local diffusers folders. The first is the default.",
     "ideogram_base_repos": [
         "ideogram-ai/ideogram-4-nf4-diffusers"

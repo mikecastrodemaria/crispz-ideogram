@@ -247,6 +247,11 @@ def build_panel():
                                 "text verbatim, and a box per element. Nothing leaves the "
                                 "machine. The first use downloads the LM head (~1.2 GB).")
                     p["describe_btn"] = gr.Button("Describe -> caption", variant="primary")
+                    p["describe_cloud_btn"] = gr.Button(
+                        "Cloud: Describe with Ideogram 4.0", variant="secondary",
+                        interactive=usable)
+                    gr.Markdown("**Cloud**: the image goes to api.ideogram.ai (United "
+                                "States). " + ("Logged on every call." if usable else why))
         p["hld"] = gr.Textbox(label="Summary (high_level_description)", lines=2)
         with gr.Row():
             p["kind"] = gr.Radio(list(KINDS), value=list(KINDS)[0], label="Style type")
@@ -330,18 +335,23 @@ def wire(p, prompt, width, height):
         return (*caption_to_form(cap), warnings_md(warnings, note))
     p["magic_btn"].click(magic, [prompt, p["engine"], width, height], form + [p["status"]])
 
-    def describe(img):
+    def describe(img, which="local"):
         t0 = time.time()
         try:
-            text, warnings = cz_magic.describe(img)
+            text, warnings = cz_magic.describe(img, which=which)
         except cz_magic.MagicPromptError as e:
             return (*[gr.update()] * len(form), f"Describe failed: {e}")
         except Exception as e:
             _log(f"describe failed: {type(e).__name__}: {e}")
             return (*[gr.update()] * len(form), f"Describe failed: {type(e).__name__}: {e}")
         return (*caption_to_form(cz_caption.parse(text)),
-                warnings_md(warnings, f"Described locally in {time.time() - t0:.0f} s."))
+                warnings_md(warnings, (f"Described in the CLOUD (Ideogram 4.0) in "
+                                       f"{time.time() - t0:.0f} s, call logged."
+                                       if which == "ideogram_api" else
+                                       f"Described locally in {time.time() - t0:.0f} s.")))
     p["describe_btn"].click(describe, [p["describe_img"]], form + [p["status"]])
+    p["describe_cloud_btn"].click(lambda img: describe(img, "ideogram_api"),
+                                  [p["describe_img"]], form + [p["status"]])
 
     def from_raw(raw):
         try:

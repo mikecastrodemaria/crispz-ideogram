@@ -527,6 +527,57 @@ Points ouverts, aucun bloquant :
   Ideogram (upscale par tuiles non lancé sur la carte), à régler si le rendu déçoit ;
 - détailleur visages et mains non lancé sur la carte (même chemin que l'inpaint).
 
+### Lot 4 (01/11/2026) : fonctions cloud Ideogram, acceptation sans clé atteinte
+
+- **Chemins exacts relevés** dans la spec OpenAPI publiée
+  (`https://developer.ideogram.ai/openapi/ideogram-api-v2.json`, lue le 01/11/2026). L'API
+  v2 a un chemin par modèle ; toutes en multipart sauf Transparent (JSON) :
+  | fonction | chemin | réponse |
+  |---|---|---|
+  | Edit précis 4.5 | `POST /v2/image/precise-edit/ideogram-4-5` | sync |
+  | Replace background 4.5 | `POST /v2/image/replace-background/ideogram-4-5` | async |
+  | Remix 4.0 | `POST /v2/image/remix/ideogram-4` | sync |
+  | Remove background | `POST /v2/image/remove-background/ideogram-1` | sync |
+  | Vectoriser | `POST /v2/svg/vectorize/ideogram-vector-1` | async |
+  | Générer un SVG | `POST /v2/svg/generate/ideogram-vector-1` | async |
+  | Upscale | `POST /v2/image/upscale/{auto, topaz-text-refine, ...}` | sync |
+  | Transparent 4.0 | `POST /v2/image/generate/ideogram-4-transparent` | sync |
+  | Describe 4.0 | `POST /v2/image/describe/ideogram-4` (pas de devis) | sync |
+  | Résultat async | `GET /v2/generations/{id}` (`usage_cost_usd_micros`) | |
+  Clé dans l'en-tête `Api-Key`. `?dry_run=true` valide et chiffre sans rien générer ni
+  facturer, mais **envoie quand même l'image**. Le schéma du `PriceQuote` n'est pas publié :
+  affiché et journalisé tel quel, montant repéré par le nom des champs.
+- **Pièges de l'API relevés** :
+  - masque de l'edit inversé par rapport à l'app : **noir = zone à éditer**, blanc = à
+    garder, même taille que l'image, les deux zones présentes ; converti par `api_mask` ;
+  - edit au-delà de 2048x2048 en surface : l'image revient RÉDUITE sauf avec un masque
+    (`context_window=auto`) ; dit dans le log ;
+  - 4 références au plus, 3 avec masque (le masque prend une place) ; l'excédent est dit ;
+  - remove background : résultat PUBLIC par défaut selon l'offre ; `private=true` forcé
+    partout où le champ existe (remove / replace background, SVG) ; remix garde la source
+    dans le compte Ideogram (dit dans l'UI et le log) ; precise edit n'a pas le champ.
+- `cz_ideogram_api.py` : constructeurs de requêtes (rien n'est envoyé à la construction),
+  un seul point réseau (`_http`, remplacé dans les tests), ligne `CLOUD:` à chaque appel
+  (ce qui part et où), devis, polling (Retry-After sur 429, échec avec sa raison, délai
+  `ideogram_cloud_timeout`), résultats bloqués par la sécurité comptés, liens signés
+  téléchargés SANS la clé, sauvegarde avec métadonnées (PNG + sidecar `.json` ; détourages
+  et transparents toujours en PNG ; SVG en `.svg` + `.json`), journal des coûts
+  `<sortie>/ideogram_cloud_journal.jsonl` (jamais la clé, jamais les images).
+- `cz_cloud_ui.py` : onglet « Cloud (Ideogram) » (Input Image) : bandeau Cloud / États-Unis,
+  réglages (case + clé masquée, sauvés dans preferences.json, clé jamais réaffichée),
+  sélecteur de fonction avec aide, éditeur (le pinceau = masque de l'edit), 4 références,
+  boutons « Cloud: Estimate price (dry run) » et « Cloud: Run », grisés avec la raison tant
+  que c'est coupé ; état relu à chaque chargement de page. Résultats dans la galerie et
+  l'historique. Describe cloud ajouté dans l'éditeur de légende (bouton Cloud séparé).
+- `cz_protocol` : `supports.cloud` (activé ou non, fonctions, `via: ui`) ; le protocole
+  ne lance jamais d'appel cloud (les données partiraient à la demande d'un appelant).
+- Tests : `tests/test_ideogram_api.py` (28) sur un faux serveur. Vérifié dans Chromium avec
+  un faux serveur : grisé, Save, rechargement, devis, run, fichier sauvé, log `CLOUD:`.
+- Suite CPU : **631 passent, 0 échec, 1 skip** ; smoke 22/22.
+- **Reste pour l'acceptation** (clé de Mike) : `tools/api_lot4_check.py` (statut, devis de
+  toutes les fonctions), puis `--spend` (edit qualité low + remove background, facturés),
+  sortie `bench/lot4/`.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

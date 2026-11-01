@@ -224,6 +224,20 @@ def install_sparse_text_norm(pipe):
     return n
 
 
+def _no_compile_without_triton():
+    """outlines-core wraps its logits-mask kernel in torch.compile, which needs Triton;
+    on Windows there is none, so every magic prompt printed two pages of TritonMissing
+    traceback before PyTorch fell back to eager (5090, 2026-11-01: harmless, 43.7 s
+    anyway). Without Triton, dynamo is switched off for the call: the kernel runs eagerly
+    from the start, silently. crispz uses torch.compile nowhere else."""
+    import contextlib
+    import importlib.util
+    if importlib.util.find_spec("triton") is not None:
+        return contextlib.nullcontext()
+    import torch._dynamo
+    return torch._dynamo.config.patch(disable=True)
+
+
 def prompt_token_count(pipe, prompt):
     """The token count Ideogram4Pipeline.encode_prompt will see for `prompt` (chat
     template, no special tokens added), or None when it cannot be computed."""
@@ -529,7 +543,7 @@ class IdeogramPipe:
         self._encoder_in()
         head.to(dev)
         try:
-            with torch.no_grad():
+            with torch.no_grad(), _no_compile_without_triton():
                 return self._pipe.upsample_prompt(prompt, **kw)[0]
         finally:
             if offloaded:
@@ -578,7 +592,7 @@ class IdeogramPipe:
             inputs = proc.apply_chat_template(messages, tokenize=True,
                                               add_generation_prompt=True, return_dict=True,
                                               return_tensors="pt").to(dev)
-            with torch.no_grad():
+            with torch.no_grad(), _no_compile_without_triton():
                 out = enhancer.generate(**inputs, max_new_tokens=int(max_new_tokens),
                                         do_sample=False)
             new = out[:, inputs["input_ids"].shape[1]:]

@@ -207,3 +207,17 @@ def test_describe_plumbing_on_the_tiny_pipe():
     b = pipe.describe_image(img, max_new_tokens=6)
     assert isinstance(a, str) and a == b
     assert not pipe._te_on_gpu
+
+
+def test_no_dynamo_without_triton(monkeypatch):
+    """No Triton (Windows): torch.compile is off for the magic prompt call, so outlines'
+    compiled kernel runs eagerly instead of printing a TritonMissing traceback."""
+    import importlib.util
+    import torch._dynamo
+    import cz_ideogram
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda n, *a: None if n == "triton" else real(n, *a))
+    with cz_ideogram._no_compile_without_triton():
+        assert torch._dynamo.config.disable is True
+    assert torch._dynamo.config.disable is False

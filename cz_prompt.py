@@ -140,10 +140,28 @@ def resolve_seed(seed):
     return s if s >= 0 else random.randint(0, 2**31 - 1)
 
 
+_SAID = set()
+
+
+def _say_once(key, msg):
+    if key not in _SAID:
+        _SAID.add(key)
+        _log(msg)
+
+
 def expand_prompt_pair(prompt, negative, seed, index=None):
     """The {a|b|c} variants + wildcards of the positive AND the negative for ONE image.
     Each text has its own random.Random(seed): the same draws for the same seed, and
-    changing the positive does not change the negative's draws."""
+    changing the positive does not change the negative's draws.
+
+    A JSON caption (Ideogram 4) is passed through untouched: its braces are not variant
+    groups and a '|' inside a quoted text would otherwise be read as one."""
+    import cz_caption
+    if cz_caption.is_caption(prompt):
+        if "__" in prompt or "|" in prompt:
+            _say_once("json-variants", "JSON caption: {a|b} variants and __wildcards__ "
+                                       "are not expanded inside a caption (sent as is)")
+        return prompt, _apply_wildcards(negative, _seed_rng(seed), index=index)
     return (_apply_wildcards(prompt, _seed_rng(seed), index=index),
             _apply_wildcards(negative, _seed_rng(seed), index=index))
 
@@ -159,7 +177,16 @@ def _pick_styles(selected, randomize):
 
 def _apply_styles(prompt, negative, style_names):
     """Applies the Fooocus styles: it chains the {prompt} templates and accumulates the
-    negative_prompt. Returns (final_prompt, final_negative)."""
+    negative_prompt. Returns (final_prompt, final_negative).
+
+    A JSON caption is returned untouched: wrapping it in a style template would make it
+    invalid JSON. The caption's own style_description is where the style goes."""
+    import cz_caption
+    if style_names and cz_caption.is_caption(prompt):
+        _say_once("json-styles", "JSON caption: Fooocus styles not applied (they would "
+                                 "break the JSON); set the style in the caption's "
+                                 "style_description instead")
+        return (prompt or "").strip(), (negative or "").strip()
     cur = (prompt or "").strip()
     negs = [(negative or "").strip()] if (negative or "").strip() else []
     for n in (style_names or []):

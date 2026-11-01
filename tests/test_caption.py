@@ -203,3 +203,29 @@ def test_design_presets_are_valid_and_native_sizes():
         w, h = cz_design.size_of(name)
         assert cz_ideogram.fit_size(w, h) == (w, h), (name, w, h)
         assert any(e["type"] == "text" for e in cap["compositional_deconstruction"]["elements"])
+
+
+def test_editor_form_round_trip_and_boxes():
+    """cz_caption_ui's pure half: form <-> caption, rows <-> elements, the box bridge."""
+    import cz_caption_ui as U
+    import cz_design
+    cap = cz_design.caption_of("Banner (6:1)")
+    form = U.caption_to_form(cap)
+    assert U.form_to_caption(*form) == cap
+    rows = form[-1]
+    labels = U.element_choices(rows)
+    assert labels[0].startswith("1 · text · HEADLINE") and labels[0].endswith("[box]")
+    rows2 = U.apply_bbox(rows, labels[1], [10, 20, 30, 40])
+    assert rows2[1][3] == "10, 20, 30, 40" and rows2[0] == rows[0]
+    assert U.apply_bbox(rows, labels[1], None)[1][3] == ""
+    assert U.apply_bbox(rows, "nonsense", [1, 2, 3, 4]) == U._rows(rows)
+    assert U.parse_bridge("[100, 50, 300, 950]|1730000000") == [100, 50, 300, 950]
+    assert U.parse_bridge("") is None and U.parse_bridge("junk|1") is None
+    # a Dataframe hands rows back with None cells and short rows
+    assert U.rows_to_elements([["text", "HI", None, None]])[0]["text"] == "HI"
+    html = U.render_board(cap, 1920, 320, labels[0])
+    assert 'id="cz_board"' in html and "<rect" in html and "6:1" in html
+    assert 'stroke-width="3"' in html                     # the selected element
+    assert "#cz_bbox_bridge" in U.HEAD_JS
+    w = U.warnings_md(["a", "b"])
+    assert "2 warning(s)" in w and U.warnings_md([]).startswith("Schema: valid")

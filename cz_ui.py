@@ -3632,7 +3632,8 @@ def _xyz_ac_head():
 def _ui_head():
     """Concatenates the <script> tags injected into the <head> (tag autocomplete + the XYZ
     suggest)."""
-    parts = [h for h in (_tagac_head(), _xyz_ac_head()) if h]
+    import cz_caption_ui
+    parts = [h for h in (_tagac_head(), _xyz_ac_head(), cz_caption_ui.HEAD_JS) if h]
     return "".join(parts) or None
 
 
@@ -4244,6 +4245,10 @@ def build_ui():
                     improve_neg_dir_btn = gr.Button("✎", scale=0, min_width=44,
                                                     visible=IMPROVE_ENABLED and IMPROVE_NEGATIVE_UI,
                                                     elem_id="cz_improve_neg_dir")
+                # crispz-ideogram lot 2: the JSON caption editor (presets, magic prompt,
+                # boxes drawn with the mouse). Wired further down, once width/height exist.
+                import cz_caption_ui
+                caption_panel = cz_caption_ui.build_panel()
                 # Improve directives (one call, never saved): the ✎ button unfolds the
                 # panel; the plain Improve button keeps its one-click behaviour.
                 improve_dir_open = gr.State(False)
@@ -5294,6 +5299,7 @@ def build_ui():
                                   [describe_preview])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
         improve_btn.click(_ui_improve, [prompt, improve_model, ollama_url], [prompt, improve_status])
+        cz_caption_ui.wire(caption_panel, prompt, width, height)
         improve_dir_btn.click(_ui_toggle_panel, [improve_dir_open],
                               [improve_dir_open, improve_dir_row])
         improve_dir_go.click(_ui_improve, [prompt, improve_model, ollama_url, improve_directives],

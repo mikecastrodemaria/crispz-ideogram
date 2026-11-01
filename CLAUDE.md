@@ -412,7 +412,7 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
 - Un `config.txt` local écrit avant le lot 1 garde 16 steps / guidance 1,0 : à vérifier
   chez Mike avant d'utiliser l'app.
 
-### Lot 2 en cours (01/11/2026) : légendes JSON
+### Lot 2 (01/11/2026) : légendes JSON
 
 - **Schéma de référence** : celui d'ideogram-oss/ideogram4 (docs/prompting.md +
   `caption_verifier.py`), plus riche que le sous-ensemble du magic prompt de diffusers :
@@ -444,8 +444,7 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
 - `tools/gpu_lot2_check.py` : légende à la main + magic prompt local + Describe sur la
   5090, détecteur de carte « blocked », `--fp-test` (texte libre contre JSON).
 - Suite CPU : 553 passent, les mêmes 44 échecs, 1 skip ; smoke 22/22.
-- Reste : la mesure GPU du lot 2 (magic prompt et Describe locaux jamais exécutés sur
-  les vrais poids), puis le bilan.
+- Mesure GPU faite, voir le bilan du lot 2 plus bas.
 - **Piège (01/11/2026)** : ne JAMAIS faire `pip install -r requirements.txt` dans le
   `.venv` isolé. gradio 5.50 impose pillow<12, pip rétrograde donc Pillow 13 en 11.3
   (rembg exige >=12.1, et les CVE de Pillow ne sont corrigées qu'en 13). `install.bat`
@@ -455,6 +454,26 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
   `pip install --no-deps pillow==13.0.0`. Le même pip a remis `huggingface-hub` à
   1.33.0 (la version du lock) alors que le venv de Mike avait 2.4.0 : c'est bien la
   version attendue.
+
+### Bilan du lot 2 (01/11/2026) : critère d'acceptation atteint sur la 5090
+
+`tools/gpu_lot2_check.py --fp-test`, offload 'auto' -> 'model' encodeur seul, 48 steps,
+outlines 1.3.3 installé :
+
+| | résultat |
+|---|---|
+| Légende faite à la main (preset affiche, vrais textes) | schéma valide, image 720x1024 en 55,9 s, pic 16,7 Go |
+| Magic prompt local, idée 1 (affiche suisse « 4.5 ») | 18,5 s, schéma valide, image en 66 s |
+| Magic prompt local, idée 2 (logo café « BEAN THERE ») | 10,7 s, schéma valide |
+| Premier magic prompt de la session | 43,7 s (chargement de la tête 1,24 Go et compilation du schéma outlines) |
+| Describe local de l'affiche | 21,7 s, schéma valide, « GRAND OPENING » et « SATURDAY » relus |
+| Cartes « blocked » en texte libre / en JSON | 1 sur 2 / 0 sur 2 (mêmes idées, même seed) |
+
+- Sous Windows, outlines-core compile son noyau avec torch.compile sans Triton : deux
+  pages de trace avant repli. Corrigé (dynamo coupé pendant l'appel sans Triton).
+- Points ouverts : qualité des légendes générées et images à juger par Mike ; éditeur
+  à essayer à la main dans l'app ; moteur Ollama jamais lancé contre un vrai serveur ;
+  API Ideogram (magic prompt) jamais appelée avec une clé, et Describe cloud : lot 4.
 
 ### CI GitHub (31/10/2026)
 

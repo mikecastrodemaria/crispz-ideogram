@@ -154,13 +154,13 @@ def test_a_shape_mismatch_is_reported_not_applied():
 def test_a_lokr_is_kept_out_of_the_peft_set():
     """What goes to peft must no longer hold the LoKr (it is in the weights),
     but must still hold the LoHa, so that _sync_adapters refuses it by name."""
-    # FLUX.3 block names: a double_blocks LoKr is a FLUX.2 file and is refused by family
-    # before the LyCORIS question is even asked (see test_klein_variant).
+    # Ideogram 4 block names: a double_blocks LoKr is a FLUX.2 file and is refused by
+    # family before the LyCORIS question is even asked (see test_klein_variant).
     lokr = _write("set_lokr.safetensors", {
-        f"diffusion_model.mode_blocks.{i}.img_attn.proj.lokr_w{j}": torch.zeros(2, 2)
+        f"diffusion_model.layers.{i}.attention.to_out.0.lokr_w{j}": torch.zeros(2, 2)
         for i in range(3) for j in (1, 2)})
     loha = _write("set_loha.safetensors", {
-        f"diffusion_model.mode_blocks.{i}.img_attn.proj.hada_w{j}_a": torch.zeros(2, 2)
+        f"diffusion_model.layers.{i}.attention.to_out.0.hada_w{j}_a": torch.zeros(2, 2)
         for i in range(3) for j in (1, 2)})
     lora = _write("set_lora.safetensors", {
         f"transformer.blocks.{i}.attn.to_q.lora_{ab}.weight": torch.zeros(2, 2)

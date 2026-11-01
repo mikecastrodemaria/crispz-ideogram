@@ -136,10 +136,13 @@ def test_a_flux2_edit_lora_is_refused_by_family():
                    "diffusion_model.double_blocks.0.img_attn.proj.lora_B.weight": torch.zeros(3072, 4)}, l2)
         why = cz_pipeline._lora_unsupported(l2)
         assert why and "FLUX.2" in why and "crispz-klein" in why, why
+        # a FLUX.3 edit LoRA (the relight / outpaint presets of crispz-flux3) is the other
+        # family on Ideogram 4 too, and names its studio
         l3 = os.path.join(tmp, "relight_flux3.safetensors")
         save_file({"transformer.mode_blocks.0.attn.to_q.lora_A.weight": torch.zeros(4, 3072),
                    "transformer.mode_blocks.0.attn.to_q.lora_B.weight": torch.zeros(3072, 4)}, l3)
-        assert cz_pipeline._lora_unsupported(l3) is None
+        why = cz_pipeline._lora_unsupported(l3)
+        assert why and "FLUX.3" in why and "crispz-flux3" in why, why
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

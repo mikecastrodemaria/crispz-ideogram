@@ -1,7 +1,12 @@
 """cz_pipeline on a FLUX.3 engine: the call sites written for Flux2Klein* must run through
-the ONE Flux3Pipe (txt2img, edit, refine, inpaint, outpaint), with the FLUX.3 policies
-(no derived pipeline, Euler only, guidance by variant, no encoder trim). CPU, a tiny
-random Flux3Pipe injected as the cached base: nothing is downloaded, nothing is loaded.
+the ONE Flux3Pipe (txt2img, edit, refine, inpaint, outpaint). CPU, a tiny random Flux3Pipe
+injected as the cached base: nothing is downloaded, nothing is loaded.
+
+crispz-ideogram keeps the FLUX.3 code path in cz_pipeline, unreached by the app, so that
+fixes from crispz-flux3 still merge; these tests keep that path runnable. The FLUX.3
+POLICIES (guidance by variant, single files loaded through cz_flux3) were removed: here a
+FLUX.3 file is refused, and the Ideogram policies live in test_ideogram_wiring.py and
+test_ideogram_engine.py.
 """
 import os
 import sys
@@ -168,34 +173,6 @@ def test_the_sampler_choice_is_ignored_once_and_said(engine, monkeypatch):
     P._SAMPLER_IGNORED_SAID.discard(("dpmpp2m", "karras"))
 
 
-def test_guidance_follows_the_variant(engine, monkeypatch):
-    lines = _logs(monkeypatch)
-    seen = {}
-    real = type(engine).__call__
-
-    def spy(self, **kw):
-        seen.update(kw)
-        return real(self, **kw)
-    monkeypatch.setattr(type(engine), "__call__", spy)
-    monkeypatch.setattr(P, "GUIDANCE", 4.0)
-    P._CFG_IGNORED_SAID.discard(4.0)
-    P.generate("x", 32, 32, 1, 7, negative_prompt="bad")
-    assert seen["guidance_scale"] == 1.0               # distilled: a flow map, no CFG
-    assert "negative_prompt" not in seen
-    assert any("guidance 4 ignored" in m for m in lines)
-    # the base variant takes the slider and the negative
-    base = tiny_pipe(base=True)
-    monkeypatch.setattr(P, "_BASE_PIPE", base)
-    monkeypatch.setattr(P, "_DERIVED", {"txt2img": base})
-    monkeypatch.setattr(P, "BASE_REPO", cz_flux3.FLUX3_BASE)
-    monkeypatch.setattr(P, "_LOADED_KEY", (P.BASE_REPO, P.ZIMAGE_TRANSFORMER, P.OFFLOAD_MODE,
-                                           P.PRECISION))
-    monkeypatch.setattr(type(base), "__call__", spy)
-    seen.clear()
-    P.generate("x", 32, 32, 1, 7, negative_prompt="bad")
-    assert seen["guidance_scale"] == 4.0 and seen["negative_prompt"] == "bad"
-
-
 def test_the_encoder_trim_is_announced_not_silent(engine, monkeypatch):
     lines = _logs(monkeypatch)
     monkeypatch.setattr(P, "TRIM_TEXT_ENCODER", True)
@@ -216,58 +193,9 @@ def test_swap_transformer_goes_through_register_modules(engine, monkeypatch):
     assert P.get_pipe("img2img") is engine
 
 
-def test_load_transformer_routes_single_files_through_cz_flux3(engine, monkeypatch):
-    from safetensors.torch import save_file
-    calls = []
-    monkeypatch.setattr(cz_flux3, "load_transformer",
-                        lambda *a, **k: calls.append((a, k)) or "tr")
-    monkeypatch.setattr(P, "_load_monitor", lambda label, fn: fn())
-    monkeypatch.setattr(P, "PRECISION", "fp8r")
-    # the base repo at the chosen precision
-    assert P._load_transformer(None) == "tr"
-    assert calls[-1][1]["precision"] == "fp8r" and calls[-1][1]["single_file"] is None
-    # a FLUX.3 single file in BFL's layout: separate projections, the flow-map embedder
-    # (= the distilled checkpoint) -> handed to diffusers by PATH, under the base repo
-    ok = os.path.join(TMP, "flux3.safetensors")
-    save_file({"mode_blocks.0.img_attn.q_proj.weight": torch.zeros(2, 2),
-               "ref_time_in.in_layer.weight": torch.zeros(2, 2),
-               "early_stream_modulations.0.lin.weight": torch.zeros(2, 2)}, ok)
-    assert P._load_transformer(ok) == "tr" and calls[-1][1]["single_file"] == ok
-    assert calls[-1][0][0] == P.BASE_REPO
-    # ComfyUI's layout of the BASE checkpoint (no flow-map embedder, fused qkv): read
-    # into RAM, the qkv split into q/k/v, and the architecture config taken from the
-    # -base repo, whatever repo lends the VAE and the encoder (CivitAI's INT8, 2026-10-28)
-    fused = os.path.join(TMP, "flux3_base_fused.safetensors")
-    save_file({"content_mode_blocks.image.0.qkv.weight": torch.arange(12.).reshape(6, 2),
-               "early_stream_modulations.0.lin.weight": torch.zeros(2, 2)}, fused)
-    assert P._file_variant(fused) == "base" and P._has_fused_qkv(fused)
-    assert P._load_transformer(fused) == "tr"
-    assert calls[-1][0][0] == cz_flux3.FLUX3_BASE
-    sd = calls[-1][1]["single_file"]
-    assert isinstance(sd, dict) and "content_mode_blocks.image.0.qkv.weight" not in sd
-    assert torch.equal(sd["content_mode_blocks.image.0.q_proj.weight"].float(), torch.arange(4.).reshape(2, 2))
-    assert torch.equal(sd["content_mode_blocks.image.0.v_proj.weight"].float(), torch.arange(8., 12.).reshape(2, 2))
-    # and the CFG policy follows the file while it is the transformer in use
-    monkeypatch.setattr(P, "ZIMAGE_TRANSFORMER", fused)
-    assert P.is_base_variant() is True
-    monkeypatch.setattr(P, "ZIMAGE_TRANSFORMER", ok)
-    assert P.is_base_variant() is False
-    # a FLUX.2 single file is refused BEFORE any load, with the studio that runs it
-    bad = os.path.join(TMP, "flux2.safetensors")
-    save_file({"double_blocks.0.img_attn.qkv.weight": torch.zeros(2, 2),
-               "single_stream_modulation.lin.weight": torch.zeros(2, 2)}, bad)
-    n = len(calls)
-    with pytest.raises(RuntimeError, match="crispz-klein"):
-        P._load_transformer(bad)
-    assert len(calls) == n
-    assert P.checkpoint_refusal(bad) and "FLUX.2" in P.checkpoint_refusal(bad)
-    assert P.checkpoint_refusal(ok) is None
-    # the menu names the family, not a 4B/9B
-    assert P.model_info(ok)["variant"] == "FLUX.3"
-    assert P.model_info(bad)["variant"] == "FLUX.2"
-
-
-def test_a_gguf_single_file_is_read_by_family_and_kept_quantized(engine, monkeypatch):
+def test_a_flux3_gguf_is_read_by_family_and_refused_before_any_load(engine, monkeypatch):
+    """crispz-ideogram: a FLUX.3 GGUF is recognised from its tensor names (not its label)
+    and refused before anything is read, naming the studio that runs it."""
     try:
         import numpy as np
         from gguf import GGUFWriter
@@ -282,11 +210,13 @@ def test_a_gguf_single_file_is_read_by_family_and_kept_quantized(engine, monkeyp
     w.write_tensors_to_file()
     w.close()
     assert P._file_family(path) == "flux3"
-    assert P.checkpoint_refusal(path) is None
+    why = P.checkpoint_refusal(path)
+    assert why and "crispz-flux3" in why and "Ideogram 4" in why, why
     assert P.model_info(path)["variant"] == "FLUX.3"
     calls = []
     monkeypatch.setattr(cz_flux3, "load_transformer",
                         lambda *a, **k: calls.append((a, k)) or "tr")
     monkeypatch.setattr(P, "_load_monitor", lambda label, fn: fn())
-    assert P._load_transformer(path) == "tr"
-    assert calls[-1][1]["single_file"] == path
+    with pytest.raises(RuntimeError, match="crispz-flux3"):
+        P._load_transformer(path)
+    assert calls == []

@@ -1036,17 +1036,19 @@ def set_zimage_model(repo_or_path):
         # transformer alone (VAE + text encoder kept in VRAM).
         if repo_or_path != ZIMAGE_TRANSFORMER:
             ZIMAGE_TRANSFORMER = repo_or_path
-            _log("FLUX.3 transformer (single-file) changed -> transformer swap on next run")
-    elif repo_or_path != BASE_REPO:
+            _log("transformer (single-file) changed -> transformer swap on next run")
+        return
+    # The repo's dimension is cached, FAILURES INCLUDED. A gated repo whose licence had
+    # not been accepted yet therefore left a None stuck for the whole session: the width
+    # filter stayed off even after accepting the licence, until a restart. Choosing that
+    # repo counts as "retry", so its entry is purged -- the CURRENT repo chosen again
+    # too (crispz-ideogram has one base repo: re-choosing it is the only retry there is).
+    _BASE_DIM_CACHE.pop(repo_or_path, None)
+    if repo_or_path != BASE_REPO:
         # The base repo changes: the VAE/encoder/tokenizer change too -> a full reload.
         BASE_REPO = repo_or_path
-        # The repo's dimension is cached, FAILURES INCLUDED. A gated repo whose licence
-        # had not been accepted yet therefore left a None stuck for the whole session:
-        # the width filter stayed off even after accepting the licence, until a restart.
-        # Choosing that repo counts as "retry", so its entry is purged.
-        _BASE_DIM_CACHE.pop(repo_or_path, None)
         free_vram()
-        _log("FLUX.3 base repo changed -> will reload")
+        _log("base repo changed -> will reload")
 
 
 def set_zimage_transformer(path):
@@ -1059,7 +1061,7 @@ def set_zimage_transformer(path):
     path = path or None
     if path != ZIMAGE_TRANSFORMER:
         ZIMAGE_TRANSFORMER = path
-        _log(f"FLUX.3 transformer -> {path or '(base repo)'} "
+        _log(f"transformer -> {path or '(base repo)'} "
              "-> transformer swap on next run (base components kept)")
 
 
@@ -1488,9 +1490,10 @@ def _base_hidden_dim(base=None):
     if base in _BASE_DIM_CACHE:
         return _BASE_DIM_CACHE[base]
     if engine.is_engine_repo(base):
-        # Known without reading anything: every FLUX.3 Image Klein repo (distilled, base,
-        # a mirror) is 3072 wide. It also spares the gated repo a config fetch that fails
-        # without a token and would switch the filter off for the session.
+        # Known without reading anything: every Ideogram 4 repo (official, a mirror) is
+        # 4608 wide (FLUX3_HIDDEN_DIM keeps its crispz-flux3 name for merges). It also
+        # spares the gated repo a config fetch that fails without a token and would
+        # switch the filter off for the session.
         _BASE_DIM_CACHE[base] = FLUX3_HIDDEN_DIM
         return FLUX3_HIDDEN_DIM
     dim = None
@@ -1560,11 +1563,11 @@ def _variant_fix(dim):
     sending them to the wrong place. A FLUX.2 file has no fix HERE: it runs in
     crispz-klein, the studio this one was forked from."""
     if dim == FLUX3_HIDDEN_DIM:
-        return (f"switch the base model to a FLUX.3 Image Klein repo (the 'FLUX.3 "
-                f"checkpoint' dropdown, or config '{CFG_MODEL_KEY}').")
+        return (f"switch the base model to an Ideogram 4 repo (the checkpoint dropdown, "
+                f"or config '{CFG_MODEL_KEY}').")
     if dim in _FLUX2_VARIANTS:
-        return ("run it in crispz-klein: FLUX.2 Klein and FLUX.3 share neither layers "
-                "nor weights, so no setting of crispz-ideogram loads it.")
+        return ("run it in crispz-klein: FLUX.2 Klein and Ideogram 4 share neither "
+                "layers nor weights, so no setting of crispz-ideogram loads it.")
     return f"point '{CFG_MODEL_KEY}' at the matching base repo."
 
 
@@ -2100,9 +2103,9 @@ def _load_dequant_state_dict(path):
     # reading as the checkpoint menu (cz_flux3.family_from_keys).
     if engine.family_from_keys(k[len(prefix):] for k, _ in entries) != engine.FAMILY:
         raise RuntimeError(
-            f"{os.path.basename(path)}: quantized checkpoint does not look like a "
-            "FLUX.3 Image Klein transformer (different architecture); this build only "
-            "loads FLUX.3 models.")
+            f"{os.path.basename(path)}: quantized checkpoint does not look like an "
+            "Ideogram 4 transformer (different architecture); crispz-ideogram only "
+            "loads Ideogram 4.0.")
     # SEQUENTIAL read in the file's PHYSICAL order (data_offsets): a HDD collapses on
     # random access, and the key order does not follow the data's.
     entries.sort(key=lambda kv: kv[1].get("data_offsets", [0])[0])

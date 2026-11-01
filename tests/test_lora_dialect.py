@@ -127,8 +127,8 @@ def test_union_dedupes_on_path_first_weight_wins():
 def _lycoris(name, suffixes):
     sd = {}
     for i in range(6):
-        # FLUX.3 block names: on double_blocks the family guard refuses the file first
-        b = f"diffusion_model.mode_blocks.{i}.img_attn.proj"
+        # Ideogram 4 block names (a FLUX one is refused by the family guard first)
+        b = f"diffusion_model.layers.{i}.attention.to_out.0"
         sd[b + ".alpha"] = torch.tensor(1.0)
         for s in suffixes:
             sd[f"{b}.{s}"] = torch.zeros(4, 4)
@@ -177,14 +177,15 @@ def test_a_real_peft_lora_still_passes():
 # ---------------------------------------------------------------------------
 
 def _lora_file(name, dtype, scaled=True):
-    """A fake FLUX.3 LoRA in the dtype asked for; `scaled` adds the factors."""
+    """A fake Ideogram 4 LoRA (4608 wide) in the dtype asked for; `scaled` adds the
+    factors."""
     sd = {}
     for i in range(4):
-        b = f"transformer.mode_blocks.{i}.attn.to_q"
-        sd[b + ".lora_A.weight"] = torch.zeros(8, 3072, dtype=dtype)
-        sd[b + ".lora_B.weight"] = torch.zeros(3072, 8, dtype=dtype)
+        b = f"transformer.layers.{i}.attention.to_q"
+        sd[b + ".lora_A.weight"] = torch.zeros(8, 4608, dtype=dtype)
+        sd[b + ".lora_B.weight"] = torch.zeros(4608, 8, dtype=dtype)
         if scaled:
-            sd[b + ".lora_B.weight_scale"] = torch.ones(3072, 1)
+            sd[b + ".lora_B.weight_scale"] = torch.ones(4608, 1)
     p = os.path.join(TMP, name)
     save_file(sd, p)
     return p

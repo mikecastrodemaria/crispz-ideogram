@@ -472,15 +472,14 @@ def validate_spec(spec, op="gen"):
                 raise SpecError("invalid 'guidance'")
         else:
             warnings.append("'guidance' not applied (v1: instance settings win)")
-    if spec.get("guidance") is not None:
-        warnings.append("'guidance' has no effect on klein: the model is step-wise "
-                        "distilled and diffusers ignores guidance_scale")
+    # (crispz-klein warned here that guidance had no effect: true of a distilled model,
+    # false of Ideogram 4, where it is the peak of the per-step schedule. Removed.)
     refs = [str(r) for r in (spec.get("refs") or []) if str(r).strip()]
-    # No "refs dropped" branch here: on klein multi-reference is native to the base
-    # pipeline, _omni_configured() is always true. Upstream's branch is kept as a soft
-    # assertion so that a merge from qwen/main stays readable.
-    if refs and not _omni_configured():          # pragma: no cover - cannot happen on klein
-        warnings.append(f"{len(refs)} ref(s) ignored: multi-reference unavailable")
+    # Ideogram 4 takes no reference image: refs are dropped WITH a warning that says
+    # where reference editing lives (crispz-flux3 locally, the Ideogram cloud in lot 4).
+    if refs and not _omni_configured():
+        warnings.append(f"{len(refs)} ref(s) ignored: Ideogram 4 takes no reference "
+                        f"image (reference editing: crispz-flux3, or the Ideogram cloud)")
         refs = []
     if len(refs) > MAX_REFS:
         warnings.append(f"{len(refs)} refs, keeping the first {MAX_REFS} "

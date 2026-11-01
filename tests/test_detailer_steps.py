@@ -31,18 +31,15 @@ def _with_model(base, transformer, fn):
 
 
 def test_follows_the_model_profile_by_default():
+    """Ideogram 4's profile is 48 steps: a detailer pass never runs more than the model's
+    own budget, and never more than the slider."""
+    repo = P.engine.DEFAULT_REPO
+
     def check():
         D.CONFIG.pop("detailer_steps", None)
-        assert D._detailer_steps(40) == 16, "FLUX.3 distilled runs 16 steps"
-    _with_model("black-forest-labs/flux-3-image-klein", None, check)
-    # a single-file transformer decides the profile too
-    _with_model("black-forest-labs/flux-3-image-klein-base",
-                r"F:\x\flux3-image-klein-Q4_K_M.gguf", check)
-
-    def check_base():
-        D.CONFIG.pop("detailer_steps", None)
-        assert D._detailer_steps(60) == 50, "the base checkpoint wants 50"
-    _with_model("black-forest-labs/flux-3-image-klein-base", None, check_base)
+        assert D._detailer_steps(60) == 48, "Ideogram 4 runs 48 steps"
+        assert D._detailer_steps(40) == 40
+    _with_model(repo, None, check)
     print("OK test_follows_the_model_profile_by_default")
 
 
@@ -52,7 +49,7 @@ def test_never_raises_the_slider():
         D.CONFIG.pop("detailer_steps", None)
         assert D._detailer_steps(3) == 3
         assert D._detailer_steps(1) == 1
-    _with_model("black-forest-labs/flux-3-image-klein", None, check)
+    _with_model(P.engine.DEFAULT_REPO, None, check)
     print("OK test_never_raises_the_slider")
 
 
@@ -63,8 +60,8 @@ def test_config_overrides():
         D.CONFIG["detailer_steps"] = -1
         assert D._detailer_steps(12) == 12, "-1 hands control back to the slider"
         D.CONFIG["detailer_steps"] = "anything at all"
-        assert D._detailer_steps(40) == 16, "an unreadable value falls back on the profile"
-    _with_model("black-forest-labs/flux-3-image-klein", None, check)
+        assert D._detailer_steps(60) == 48, "an unreadable value falls back on the profile (48)"
+    _with_model(P.engine.DEFAULT_REPO, None, check)
     print("OK test_config_overrides")
 
 

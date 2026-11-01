@@ -99,23 +99,20 @@ def test_trimming_twice_changes_nothing():
 
 def test_the_budget_follows_the_deed_not_the_intent():
     """The bug that cost a full card on klein: 4 GB deducted from a pruning never done.
-    On FLUX.3 the pruning is never done (Qwen3-VL, see _trim_text_encoder), so the flag
-    must change NOTHING in the budget, and the budget is the precision's figure."""
-    old = (P.BASE_REPO, P._ENCODER_TRIMMED, P.ZIMAGE_TRANSFORMER, P.PRECISION)
-    P.BASE_REPO = "black-forest-labs/flux-3-image-klein"
+    Ideogram 4 reads Qwen3-VL-8B down to its last layer, the pruning is never done, so
+    the flag must change NOTHING in the budget: the nf4 weights' figure."""
+    old = (P.BASE_REPO, P._ENCODER_TRIMMED, P.ZIMAGE_TRANSFORMER)
+    P.BASE_REPO = P.engine.DEFAULT_REPO
     P.ZIMAGE_TRANSFORMER = None
-    P.PRECISION = "bf16"
     try:
         P._ENCODER_TRIMMED = False
         whole = P._base_vram_need_gb()
         P._ENCODER_TRIMMED = True
         trimmed = P._base_vram_need_gb()
         assert whole == trimmed, (whole, trimmed)
-        assert abs(whole - (P._FLUX3_REST_GB + P._FLUX3_TRANSFORMER_GB["bf16"])) < 1e-6, whole
-        P.PRECISION = "nvfp4"
-        assert P._base_vram_need_gb() < whole
+        assert 14 <= whole <= 17, whole            # ~16 GB of nf4 files
     finally:
-        P.BASE_REPO, P._ENCODER_TRIMMED, P.ZIMAGE_TRANSFORMER, P.PRECISION = old
+        P.BASE_REPO, P._ENCODER_TRIMMED, P.ZIMAGE_TRANSFORMER = old
     print("OK test_the_budget_follows_the_deed_not_the_intent")
 
 

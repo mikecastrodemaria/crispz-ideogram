@@ -71,12 +71,12 @@ class FakePipe:
         pass
 
 
-def _lora(path, hidden=3072, rank=4):
-    """A tiny LoRA in the PEFT dialect, on FLUX.3 block names (the family guard reads
-    them; a transformer_blocks key would be a FLUX.2 file and be refused upstream)."""
+def _lora(path, hidden=4608, rank=4):
+    """A tiny LoRA in the PEFT dialect, on Ideogram 4 block names, 4608 wide (the family
+    guard reads names AND width; a FLUX one would be refused upstream)."""
     save_file({
-        "transformer.mode_blocks.0.attn.to_q.lora_A.weight": torch.zeros(rank, hidden),
-        "transformer.mode_blocks.0.attn.to_q.lora_B.weight": torch.zeros(hidden, rank),
+        "transformer.layers.0.attention.to_q.lora_A.weight": torch.zeros(rank, hidden),
+        "transformer.layers.0.attention.to_q.lora_B.weight": torch.zeros(hidden, rank),
     }, path)
     return path
 

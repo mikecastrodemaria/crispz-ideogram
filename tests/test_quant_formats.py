@@ -26,9 +26,11 @@ def _st(name, tensors):
     return p
 
 
-# A minimal FLUX.3 key (the mode_blocks marker cz_flux3.family_from_keys reads) in the
-# ComfyUI layout: the dequant loader refuses a file of another family before reading it.
-_W = "model.diffusion_model.mode_blocks.0.img_attn.qkv.weight"
+# A minimal Ideogram 4 key (the llm_cond_proj marker cz_ideogram.family_from_keys reads)
+# in the ComfyUI layout: the dequant loader refuses a file of another family before
+# reading it. (crispz-flux3 used a FLUX.3 mode_blocks key here; the dequant machinery
+# itself is family-agnostic and is what these tests cover.)
+_W = "model.diffusion_model.llm_cond_proj.weight"
 # The SAME key in the diffusers layout: the loader has to strip the ComfyUI prefix, or
 # Flux2Transformer2DModel (mapped through an identity function in diffusers) recognises
 # no key at all and the model stays on 'meta' ("Cannot copy out of meta tensor").
@@ -182,7 +184,7 @@ def test_foreign_arch_rejected():
     try:
         cz_pipeline._load_dequant_state_dict(p)
     except RuntimeError as e:
-        raised = "FLUX.3" in str(e)
+        raised = "Ideogram 4" in str(e)
     assert raised, "a quantised checkpoint of another architecture must be refused plainly"
 
 
@@ -221,11 +223,20 @@ _FLUX3_SIG = ("early_stream_modulations.0.lin.weight", "mode_blocks.0.img_attn.q
               "x_embedders.0.weight")
 
 
+# An Ideogram 4 transformer by its tensor names (cz_ideogram.family_from_keys).
+_IDEO_SIG = ("llm_cond_proj.weight", "embed_image_indicator.weight",
+             "layers.0.attention.to_q.weight")
+
+
 def test_gguf_arch_and_layout():
-    ok = _gguf("flux3.gguf", "flux3", *_FLUX3_SIG)
-    assert cz_pipeline._gguf_arch(ok) == "flux3"
-    assert cz_pipeline._gguf_layout(ok) == "flux3"
+    ok = _gguf("ideogram.gguf", "ideogram4", *_IDEO_SIG)
+    assert cz_pipeline._gguf_arch(ok) == "ideogram4"
+    assert cz_pipeline._gguf_layout(ok) == "ideogram"
     assert cz_pipeline._gguf_layout_unsupported(ok) is None
+    # a FLUX.3 GGUF: known layout, other family -> refused, naming crispz-flux3
+    f3 = _gguf("flux3.gguf", "flux3", *_FLUX3_SIG)
+    assert cz_pipeline._gguf_layout(f3) == "flux3"
+    assert "crispz-flux3" in (cz_pipeline._gguf_layout_unsupported(f3) or "")
     # a FLUX.2 Klein GGUF: a known layout, but the other family -> refused, named
     k2 = _gguf("klein.gguf", "flux2", *_QWEN_SIG)
     assert cz_pipeline._gguf_layout(k2) == "flux2"
@@ -242,9 +253,9 @@ def test_gguf_layout_beats_a_mislabelled_architecture():
     """Conversion tools stamp 'general.architecture' any old way: Qwen-Image files have
     been published declared as 'wan'. The TENSOR NAMES are proof, the KV label is not ->
     the layout wins, otherwise a perfectly loadable model gets thrown out."""
-    p = _gguf("mislabelled.gguf", "wan", *_FLUX3_SIG)
+    p = _gguf("mislabelled.gguf", "wan", *_IDEO_SIG)
     assert cz_pipeline._gguf_arch(p) == "wan"
-    assert cz_pipeline._gguf_layout(p) == "flux3"
+    assert cz_pipeline._gguf_layout(p) == "ideogram"
     assert cz_pipeline._gguf_layout_unsupported(p) is None
 
 
@@ -271,12 +282,14 @@ def test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2():
     assert cz_pipeline._gguf_arch(p) == "qwen_image"            # -> dropped on its architecture
 
 
-def test_list_checkpoints_accepts_the_mislabelled_gguf():
-    """End to end: the dropdown must offer the mislabelled FLUX.3 GGUF and refuse the
-    Qwen-Image one, in a checkpoints folder of its own."""
+def test_list_checkpoints_reads_a_mislabelled_gguf_by_its_tensors():
+    """End to end: a mislabelled Ideogram GGUF is recognised by its TENSORS (not its 'wan'
+    label) and then skipped for the right reason: single-file Ideogram 4 transformers
+    have no diffusers converter yet. The Qwen-Image and sd.cpp ones are skipped as other
+    families. Nothing is listed, and every skip is logged with its reason."""
     import tempfile
     d = tempfile.mkdtemp(prefix="cz_ckpt_")
-    for src, dst in ((_gguf("ck_ok.gguf", "wan", *_FLUX3_SIG), "hyphoria_like.gguf"),
+    for src, dst in ((_gguf("ck_ok.gguf", "wan", *_IDEO_SIG), "hyphoria_like.gguf"),
                      (_gguf("ck_qwen.gguf", "qwen_image",
                             "img_in.weight", "txt_in.weight"), "qwen_like.gguf"),
                      (_gguf("ck_sd.gguf", "flux2", "blocks.0.attn.wq.weight"),
@@ -284,13 +297,20 @@ def test_list_checkpoints_accepts_the_mislabelled_gguf():
         import shutil
         shutil.copy(src, os.path.join(d, dst))
     old_dir, old_extra = cz_pipeline.CHECKPOINTS_DIR, cz_pipeline.CHECKPOINTS_EXTRA_DIR
+    old_log = cz_pipeline._log
+    logs = []
     cz_pipeline.CHECKPOINTS_DIR, cz_pipeline.CHECKPOINTS_EXTRA_DIR = d, ""
+    cz_pipeline._log = lambda m, *a, **k: logs.append(m)
     try:
         got = cz_pipeline.list_checkpoints()
     finally:
         cz_pipeline.CHECKPOINTS_DIR = old_dir
         cz_pipeline.CHECKPOINTS_EXTRA_DIR = old_extra
-    assert got == ["hyphoria_like.gguf"], got
+        cz_pipeline._log = old_log
+    assert got == [], got
+    said = {m.rsplit(": ", 1)[-1]: m for m in logs if "checkpoint skipped" in m}
+    assert "single-file Ideogram 4" in said["hyphoria_like.gguf"]
+    assert "no Ideogram 4 transformer tensor" in said["qwen_like.gguf"]
 
 
 def test_int8_convrot_declared_in_header_metadata():
@@ -314,7 +334,7 @@ def test_int8_convrot_declared_in_header_metadata():
     save_file({_W: q, _W + "_scale": scale.float()}, p,
               metadata={"_quantization_metadata": meta})
     sd = cz_pipeline._load_dequant_state_dict(p)
-    k = [x for x in sd if x.endswith(".weight") and "img_attn" in x][0]
+    k = [x for x in sd if x.endswith(".weight") and "llm_cond_proj" in x][0]
     err = float((sd[k].float() - W).abs().max() / W.abs().max())
     assert err < 0.02, f"metadata-declared convrot not undone: err {err}"
 
@@ -391,7 +411,7 @@ if __name__ == "__main__":
                test_gguf_layout_beats_a_mislabelled_architecture,
                test_gguf_foreign_layout_still_rejected,
                test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2,
-               test_list_checkpoints_accepts_the_mislabelled_gguf,
+               test_list_checkpoints_reads_a_mislabelled_gguf_by_its_tensors,
                test_int8_convrot_declared_in_header_metadata):
         fn()
         print(f"OK {fn.__name__}")

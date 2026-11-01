@@ -151,9 +151,9 @@ def profile_for_model(name):
                      f"skipped for FLUX.3 models. Copy the model_profiles block of "
                      f"config-sample.txt to silence this.")
             continue
-        return int(prof.get("steps", DEFAULT_MODEL_PROFILE.get("steps", 16))), \
-            float(prof.get("guidance", DEFAULT_MODEL_PROFILE.get("guidance", 1.0)))
-    return int(DEFAULT_MODEL_PROFILE.get("steps", 16)), float(DEFAULT_MODEL_PROFILE.get("guidance", 1.0))
+        return int(prof.get("steps", DEFAULT_MODEL_PROFILE.get("steps", 48))), \
+            float(prof.get("guidance", DEFAULT_MODEL_PROFILE.get("guidance", 7.0)))
+    return int(DEFAULT_MODEL_PROFILE.get("steps", 48)), float(DEFAULT_MODEL_PROFILE.get("guidance", 7.0))
 
 
 # The Ollama instruction strings (editable in config.txt). The examples from before 1.36

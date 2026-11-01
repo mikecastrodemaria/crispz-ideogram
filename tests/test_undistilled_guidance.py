@@ -125,7 +125,7 @@ def test_an_undistilled_checkpoint_gets_the_right_profile():
     assert "undistilled" in why, why
 
     st, g, why = profile("Klein Something Turbo")
-    assert (st, g) == (16, 1.0), (st, g)    # the file-name profile (FLUX.3 default)
+    assert (st, g) == (48, 7.0), (st, g)    # the file-name profile (Ideogram default)
     assert why == ""
     print("OK test_an_undistilled_checkpoint_gets_the_right_profile")
 

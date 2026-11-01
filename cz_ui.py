@@ -595,12 +595,9 @@ def _refresh_models(new_dir):
 
 
 # The official FLUX.3 Image Klein base repos, offered directly in the "FLUX.3 checkpoint"
-# dropdown: choosing a base repo = a COMPLETE swap (transformer + VAE + Qwen3-VL encoder),
-# unlike a single-file checkpoint which only swaps the transformer. Both official
-# checkpoints are offered: the distilled one stays the default (16 steps, the one
-# DEFAULT_BASE_REPO points at), the base one when a project wants a real CFG.
-# Overridable through config `flux3_base_repos`. crispz-klein's `klein_base_repos` is NOT
-# read: its values are FLUX.2 repos, which this build refuses anyway.
+# dropdown: choosing a base repo = a COMPLETE swap (transformer + VAE + Qwen3-VL encoder).
+# crispz-klein's `klein_base_repos` and crispz-flux3's `flux3_base_repos` are NOT read:
+# their values are FLUX repos, which this build refuses anyway.
 # crispz-ideogram: ONE Ideogram 4 checkpoint. The two names stay (the selector code and
 # merges from crispz-flux3 use them) and point at the same repo; the Distilled/Base
 # selector is hidden. Config `ideogram_base_repos` can list mirrors or local folders.
@@ -874,12 +871,12 @@ def _apply_variant(v):
 
 
 def _ui_set_precision(p):
-    """The Precision selector: bf16 / fp8r / nvfp4 of the official transformer. Persisted
+    """The Precision selector (hidden: Ideogram 4 publishes nf4 only). Persisted
     in the preferences; the swap happens on the next run (the cache key carries it)."""
     before = cz_pipeline.PRECISION
     now = cz_pipeline.set_precision(p)
     try:
-        _save_prefs_keys({"flux3_precision": now})
+        _save_prefs_keys({"ideogram_precision": now})
     except Exception as e:
         _dbg(f"precision not persisted: {e}")
     if now == before:
@@ -937,9 +934,9 @@ def _apply_checkpoint(name):
         except Exception as e:
             saved = f" (could not persist the choice: {e})"
         note = BASE_REPO_NOTES.get(name)
-        return (f"FLUX.3 base: **{name}** -> {perf or 'auto'} (steps={st}, CFG={g}, full "
-                f"reload on next run — transformer, VAE and text encoder all change). "
-                f"{len(cks)} single-file checkpoint(s) fit this base.{saved}"
+        return (f"Base model: **{name}** -> {perf or 'auto'} (steps={st}, guidance={g}, "
+                f"full reload on next run: transformers, VAE and text encoder all change)."
+                f"{saved}"
                 + (f"\n\n{note}" if note else ""),
                 gr.update(value=st), gr.update(value=g), perf_upd,
                 gr.update(choices=_ckpt_choices(), value=name),
@@ -3931,7 +3928,7 @@ def _preset_switch_base(data):
         return ""
     if want not in ZIMAGE_BASE_REPOS:
         return (f"\n\n⚠ This preset was saved on the base repo `{want}`, which is not "
-                f"offered here (config `flux3_base_repos`). The base was left on "
+                f"offered here (config `ideogram_base_repos`). The base was left on "
                 f"`{cz_pipeline.BASE_REPO}`.")
     was = cz_pipeline.BASE_REPO
     set_zimage_transformer("")

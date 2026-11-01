@@ -408,7 +408,7 @@ Points ouverts, aucun bloquant, à reprendre dans les lots indiqués :
 - Modération Hive annoncée par la fiche : aucune trace dans le code diffusers, rien dans
   le chemin local.
 - `_refine_whole` : l'appelant tient aussi le pipe au repli 'model' (lot 3).
-- Les 44 tests FLUX.3 et le job CI `tests` rouge : lot 6.
+- Les 44 tests FLUX.3 et le job CI `tests` rouge : traités le 01/11/2026 (ménage).
 - Un `config.txt` local écrit avant le lot 1 garde 16 steps / guidance 1,0 : à vérifier
   chez Mike avant d'utiliser l'app.
 
@@ -504,13 +504,44 @@ outlines 1.3.3 installé :
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à
   `config-sample.txt`, lu par `cz_ui` depuis le lot 1).
-- Job `tests` : **rouge assumé jusqu'au lot 6, décision de Mike.** Les 12 fichiers en
-  échec sont ceux des 44 tests FLUX.3 connus. Pas de liste d'échecs attendus, pas de
-  xfail : ne pas « réparer » le CI avant le lot 6. Conséquence acceptée : le CI ne
-  signale pas une régression pendant les lots 2 à 5, donc lancer la suite en local et
-  comparer à la liste des 44 (`pytest tests -q`, mêmes noms) avant chaque push.
-  `tools/run_tests.py` lance chaque fichier comme un script et s'arrête à la première
-  erreur : dans ces 12 fichiers, des tests sains ne tournent pas en CI.
+- Job `tests` : rouge assumé jusqu'au ménage du 01/11/2026 (voir plus bas), avancé à la
+  demande de Mike. Depuis : suite entière verte, en local comme en CI. Une régression
+  se voit donc de nouveau dans le CI.
+
+### Ménage des tests hérités (01/11/2026), demandé par Mike avant le lot 4
+
+Les 44 échecs FLUX.3 traités un par un, aucun désactivé, aucun xfail :
+- **Réécrits pour Ideogram** (même intention, fixtures aux noms de tenseurs Ideogram,
+  `llm_cond_proj`, `layers.N.attention.*`, largeur 4608) : `test_quant_formats` (23),
+  `test_lora_dialect`, `test_lora_offload`, `test_lokr_merge`, `test_prescaled_fp8`,
+  `test_protocol`, `test_edit_lora_presets` (un LoRA FLUX.3 est désormais refusé en
+  nommant crispz-flux3), `test_encoder_trim`, `test_detailer_steps` (profil 48),
+  `test_preset_model_switch` (un seul repo de base, fichier unique refusé),
+  `test_klein_variant` (FLUX.2 et FLUX.3 refusés en nommant leur studio, Ideogram passe).
+- **Renommé et réécrit** : `test_flux3_profiles.py` devient `test_model_profiles.py`.
+- **Retirés** (comportement FLUX.3 que l'app refuse désormais, couvert côté Ideogram par
+  `test_ideogram_wiring` / `test_ideogram_engine`) : dans `test_flux3_wiring.py`, guidance
+  par variante et chargement des fichiers uniques FLUX.3 (le test GGUF devient « un GGUF
+  FLUX.3 est refusé avant tout chargement ») ; `test_undistilled_profile.py` en entier
+  (fichiers FLUX.2 Klein distillés ou non). Le reste de `test_flux3_wiring` garde le
+  chemin FLUX.3 de `cz_pipeline` exécutable pour les fusions depuis crispz-flux3.
+- **Vrais défauts trouvés dans le code** :
+  - profil par défaut à 16 steps / guidance 1,0 (`config-sample.txt` et repli de
+    `cz_core.profile_for_model`) : un modèle au nom inconnu (dossier local renommé,
+    miroir) tournait à 16 steps avec un pic de guidance à 1,0. Désormais 48 / 7,0 ;
+  - le sélecteur de précision sauvait `flux3_precision`, le moteur lit
+    `ideogram_precision` ; un message citait `flux3_base_repos` ;
+  - avertissement faux « guidance sans effet » dans `cz_protocol`, et refs ignorées
+    expliquées en termes FLUX.3 ;
+  - messages de refus (dequant, variantes, base) qui parlaient de FLUX.3 ;
+  - changement de repo de base : le cache de dimension n'était pas purgé ;
+  - aides de `config-sample.txt` qui décrivaient FLUX.3 (encodeur, trim, empreinte
+    VRAM, édition, négatif, détailleur, LoRAs).
+- Suite CPU : **603 passent, 0 échec, 1 skip** (`pytest tests -q`) ; `tools/run_tests.py`
+  (ce que lance le CI) vert ; check_config_keys, check_lock, compileall OK.
+- Reste hérité, hors ménage des tests : ~600 tirets cadratins dans le code et la doc de
+  la famille (commentaires, CHANGELOG, README_CLI...), à retirer au lot 6 ;
+  `third_party/ideogram4` est repris tel quel et n'est pas touché.
 
 ## 9. Sources
 

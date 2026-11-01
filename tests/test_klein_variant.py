@@ -1,6 +1,6 @@
-"""crispz-klein told its 4B and 9B apart by width. crispz-flux3 cannot: FLUX.3 Image
-Klein is 3072 wide like the 4B, so the FAMILY is read from the tensor names instead, and
-the width helpers below only serve to NAME a FLUX.2 file in a message.
+"""crispz-klein told its 4B and 9B apart by width. Since crispz-flux3 (and here, Ideogram 4)
+the FAMILY is read from the tensor names instead, and the width helpers below only serve
+to NAME a FLUX.2 file in a message.
 
 crispz-klein's original note: the 4B and the 9B share the architecture AND the tensor names.
 
@@ -24,7 +24,7 @@ import cz_pipeline as P
 TMP = os.path.join(os.environ.get("TEMP") or "/tmp", "cz_variant")
 os.makedirs(TMP, exist_ok=True)
 
-# (the hidden dim, the name) — 3072 = klein-4B, 4096 = klein-9B
+# (the hidden dim, the name): 3072 = klein-4B, 4096 = klein-9B
 DIMS = {"4B": 3072, "9B": 4096}
 
 
@@ -72,29 +72,38 @@ def _ckpt3(name):
     return p
 
 
-def test_a_flux2_file_is_refused_and_a_flux3_one_passes_whatever_the_base():
-    """crispz-flux3's reading of the same trap: FLUX.3 is as wide as FLUX.2-klein-4B, so
-    the width decides nothing any more. The FAMILY does, from the tensor names, and it
-    does not depend on which base repo is loaded."""
-    p2 = _ckpt("m4.safetensors", 3072)          # FLUX.2 names, FLUX.3's width
+def _ckpt_ideogram(name):
+    """A fake Ideogram 4 transformer (the strong marker is llm_cond_proj)."""
+    p = os.path.join(TMP, name)
+    save_file({"llm_cond_proj.weight": torch.zeros(2, 2),
+               "layers.0.attention.to_q.weight": torch.zeros(2, 2)}, p)
+    return p
+
+
+def test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base():
+    """The FAMILY decides, from the tensor names, and it does not depend on which base
+    repo is loaded: FLUX.2 Klein goes to crispz-klein, FLUX.3 to crispz-flux3, an
+    Ideogram 4 file is not refused by this guard."""
+    p2 = _ckpt("m4.safetensors", 3072)
     p3 = _ckpt3("m3.safetensors")
-    for base, dim in (("base-flux3", 3072), ("mystere", None)):
-        assert _with_base(base, dim, lambda: P._safetensors_unsupported(p3)) is None
-        msg = _with_base(base, dim, lambda: P._safetensors_unsupported(p2))
-        assert msg and "FLUX.2" in msg and "crispz-klein" in msg, msg
-        # the per-file reason stays SHORT: it is repeated as many times as there are
-        # files discarded.
-        assert len(msg) < 130, f"reason too long ({len(msg)} chars): {msg}"
-        assert "NON-COMMERCIAL" not in msg
-    print("OK test_a_flux2_file_is_refused_and_a_flux3_one_passes_whatever_the_base")
+    pi = _ckpt_ideogram("mi.safetensors")
+    for base, dim in (("ideogram-base", None), ("mystere", None)):
+        assert _with_base(base, dim, lambda: P._safetensors_unsupported(pi)) is None
+        for p, fam, home in ((p2, "FLUX.2", "crispz-klein"), (p3, "FLUX.3", "crispz-flux3")):
+            msg = _with_base(base, dim, lambda: P._safetensors_unsupported(p))
+            assert msg and fam in msg and home in msg and "Ideogram 4" in msg, msg
+            # the per-file reason stays SHORT: it is repeated once per discarded file.
+            assert len(msg) < 130, f"reason too long ({len(msg)} chars): {msg}"
+            assert "NON-COMMERCIAL" not in msg
+    print("OK test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base")
 
 
 def test_summary_names_the_studio_that_runs_the_file_once():
     """The summary of the discarded files says where they DO run, once, and never
     pretends a setting of this build could load them."""
-    line = _with_base("base-flux3", 3072, lambda: P._variant_skip_summary(11, 4096))
+    line = _with_base("ideogram-base", None, lambda: P._variant_skip_summary(11, 4096))
     assert "11 checkpoint" in line, line
-    assert "FLUX.2-klein-9B" in line and "FLUX.3 Image Klein" in line, line
+    assert "FLUX.2-klein-9B" in line and "Ideogram 4" in line, line
     assert "crispz-klein" in line, line
     assert "zimage_model" not in line, "the old name must no longer appear"
     assert "NON-COMMERCIAL" not in line and "switch the base" not in line, line
@@ -181,19 +190,23 @@ def test_a_lora_declares_its_variant_through_its_shapes():
     print("OK test_a_lora_declares_its_variant_through_its_shapes")
 
 
-def test_a_flux2_lora_is_refused_in_one_sentence():
-    """The same intention as klein's 4B-on-9B refusal: peft would otherwise dump forty
-    lines of key mismatches. Here the other family IS the wrong model, and a FLUX.3 LoRA
-    (block names mode_blocks / early_stream_modulations) goes through."""
+def test_a_foreign_lora_is_refused_in_one_sentence():
+    """peft would otherwise dump forty lines of key mismatches, or match nothing in
+    silence. A FLUX.2 or FLUX.3 LoRA is refused naming its studio; an Ideogram 4 LoRA
+    (layers.N.attention, 4608 wide) goes through."""
     why = P._lora_unsupported(_lora("lora_flux2.safetensors", 3072, layout="flux-original"))
-    assert why, "a FLUX.2 Klein LoRA must be refused on FLUX.3"
-    assert "FLUX.2" in why and "FLUX.3" in why and "crispz-klein" in why, why
+    assert why and "FLUX.2" in why and "Ideogram 4" in why and "crispz-klein" in why, why
     assert "\n" not in why.strip(), "one sentence"
     p = os.path.join(TMP, "lora_flux3.safetensors")
     save_file({"transformer.mode_blocks.0.attn.to_q.lora_A.weight": torch.zeros(8, 3072),
                "transformer.mode_blocks.0.attn.to_q.lora_B.weight": torch.zeros(3072, 8)}, p)
+    why = P._lora_unsupported(p)
+    assert why and "FLUX.3" in why and "crispz-flux3" in why, why
+    p = os.path.join(TMP, "lora_ideogram.safetensors")
+    save_file({"transformer.layers.0.attention.to_q.lora_A.weight": torch.zeros(8, 4608),
+               "transformer.layers.0.attention.to_q.lora_B.weight": torch.zeros(4608, 8)}, p)
     assert P._lora_unsupported(p) is None
-    print("OK test_a_flux2_lora_is_refused_in_one_sentence")
+    print("OK test_a_foreign_lora_is_refused_in_one_sentence")
 
 
 def test_a_lora_without_a_signature_is_never_filtered():
@@ -247,12 +260,12 @@ def test_derived_widths_do_not_fool_the_detector():
 
 if __name__ == "__main__":
     for fn in (test_hidden_dim_read_from_header,
-               test_a_flux2_file_is_refused_and_a_flux3_one_passes_whatever_the_base,
+               test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base,
                test_summary_names_the_studio_that_runs_the_file_once,
                test_unknown_base_never_discards, test_bogus_shape_is_not_taken_for_a_hidden_dim,
                test_file_without_signature_is_not_filtered,
                test_a_lora_declares_its_variant_through_its_shapes,
-               test_a_flux2_lora_is_refused_in_one_sentence,
+               test_a_foreign_lora_is_refused_in_one_sentence,
                test_a_lora_without_a_signature_is_never_filtered,
                test_a_lokr_has_no_lora_signature,
                test_every_lora_dialect_is_recognised,

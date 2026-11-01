@@ -362,7 +362,9 @@ qui autorisent l'usage commercial selon l'offre souscrite (à vérifier).
   aussi le drapeau à l'appel : le rendu « raw » de l'A/B du 2e passage gardait en partie
   l'accélération (écart 8,7 à re-mesurer).
 - Suite CPU : 527 passent, les mêmes 44 échecs, 1 skip ; smoke 22/22.
-- À mesurer : `--only-2048` (pic attendu vers 21 Go).
+- Mesuré (`--only-2048`, 'model' encodeur seul) : **pic du débruitage 23,35 Go** (contre
+  29,88), 393,7 s soit **8,2 s/step** (contre 9,6 au run précédent), décodage VAE 1,1 s.
+  Marge de 8,5 Go sur 31,84.
 
 ### CI GitHub (31/10/2026)
 

@@ -90,7 +90,7 @@ def _sidecar_sha256(safepath):
 
 
 def _compute_sha256(safepath, progress=None):
-    """A streaming SHA256. It reports a REAL % through progress('hash', frac, text) — that
+    """A streaming SHA256. It reports a REAL % through progress('hash', frac, text), that
     is the only potentially long phase (multi-GB files with no sidecar)."""
     h = hashlib.sha256()
     try:
@@ -414,7 +414,7 @@ def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
       {modelId, modelName, creator, nsfw, versionId, versionName, baseModel,
        fileName, sizeKB, downloadUrl, sha256, previewUrl, url}
     base_model ('Flux.2 Klein', say) brings the versions of that base UP FRONT without excluding
-    the others (a stable sort) — the caller filters when it wants strictness. [] on a
+    the others (a stable sort): the caller filters when it wants strictness. [] on a
     network failure or no result (never an exception: the UI displays 'no result')."""
     q = str(query or "").strip()
     if not q:
@@ -505,7 +505,7 @@ def download_model_file(cand, dest_dir, api_key=None, progress=None):
                             _p(None, f"Downloading {fname}… {done / 1024**2:.0f} MB")
         except urllib.error.HTTPError as e:
             _try_remove(tmp)
-            hint = (" (this file may require a CivitAI API key — set one in Advanced)"
+            hint = (" (this file may require a CivitAI API key, set one in Advanced)"
                     if e.code in (401, 403) and not key else "")
             return {"success": False, "message": f"download failed: HTTP {e.code} {e.reason}{hint}",
                     "path": ""}
@@ -641,7 +641,7 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     except Exception as e:
         _dbg(f"civitai.json write failed: {e}")
     n_prompt = sum(1 for e in examples if e.get("has_prompt"))
-    msg = f"CivitAI: {ver.get('modelName')} — {len(examples)} example(s)"
+    msg = f"CivitAI: {ver.get('modelName')}, {len(examples)} example(s)"
     if examples:
         msg += f" ({n_prompt} with prompt)"
     if saved_preview:

@@ -740,7 +740,7 @@ def _profile_for_checkpoint(path):
         st = int(reco["steps"]) if reco.get("steps") is not None else d_st
         g = float(reco["guidance"]) if reco.get("guidance") is not None else d_g
         return st, g, (f" Settings from the CivitAI consensus of "
-                       f"{reco.get('n', '?')} community image(s) — the sampler is not "
+                       f"{reco.get('n', '?')} community image(s), the sampler is not "
                        f"applied here, use _Apply CivitAI recommended settings_ for that.")
     # 2. No consensus, but the page says the model is NOT distilled: by its name, by the
     #    CivitAI base-model label ("Flux.3 Klein-base" on the INT8 of 2026-10-28), or by
@@ -946,13 +946,13 @@ def _apply_checkpoint(name):
     # gigabytes before dying on an unreadable diffusers message. We refuse and say why.
     why = checkpoint_refusal(name)
     if why:
-        return (f"⚠ **{name} was NOT applied** — {why} Still using "
+        return (f"⚠ **{name} was NOT applied**: {why} Still using "
                 f"`{_current_model_label()}`.", *_noop[1:])
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g, why = _profile_for_checkpoint(path)
-    return (f"FLUX.3 transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
-            f"(transformer swap on next run — VAE + text encoder stay loaded).{why}",
+    return (f"Transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
+            f"(transformer swap on next run: VAE + text encoder stay loaded).{why}",
             gr.update(value=st), gr.update(value=g), _perf_update(st, g),
             gr.update(), gr.update())
 
@@ -997,7 +997,7 @@ def _ui_civitai_reco(name, progress=gr.Progress()):
         parts.append(f"CFG={reco['guidance']}")
     if reco.get("sampler"):
         parts.append(f"sampler={reco['sampler']}"
-                     + " (not applied: FLUX.3 runs its native Euler schedule)")
+                     + " (not applied: Ideogram 4 runs its own flow-matching schedule)")
     if reco.get("size"):
         parts.append(f"size={reco['size']} (info only)")
     msg = (f"📊 CivitAI consensus ({reco.get('n', '?')} community image(s)): "
@@ -1013,12 +1013,12 @@ def _apply_transformer_repo(repo):
     in 'FLUX.3 checkpoint'."""
     repo = (repo or "").strip()
     if not repo:
-        return ("Transformer override is empty, no change. Pick a model in 'FLUX.3 "
-                "checkpoint' above (that also clears any override).",
+        return ("Transformer override is empty, no change. Pick a model in the "
+                "checkpoint menu above (that also clears any override).",
                 gr.update(), gr.update(), gr.update())
     why = checkpoint_refusal(repo)      # None for an HF repo / diffusers folder
     if why:
-        return (f"⚠ **{repo} was NOT applied** — {why} Still using "
+        return (f"⚠ **{repo} was NOT applied**: {why} Still using "
                 f"`{_current_model_label()}`.",
                 gr.update(), gr.update(), gr.update())
     set_zimage_transformer(repo)
@@ -1136,7 +1136,7 @@ def _apply_loras(*vals):
     if not cz_pipeline.LORAS:
         return "LoRA: none."
     return ("LoRA: " + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in cz_pipeline.LORAS)
-            + " (applied on next run — no model reload).")
+            + " (applied on next run: no model reload).")
 
 
 def _edit_lora_choices():
@@ -1320,10 +1320,10 @@ def _klein_base_prefixes():
     load on a 9B base, cz_pipeline refuses it with its reason. The variant is only used to
     ORDER and to filter on request; reading it must never break a search, hence the except.
     """
-    # FLUX.3 has one width: the family IS the current variant. CivitAI's label for the
-    # family is not known yet (the model is days old); 'FLUX.3' as a prefix is the best
-    # guess until a real sidecar says otherwise.
-    fam = cz_civitai._norm_base("FLUX.3")
+    # One Ideogram 4 checkpoint: the family IS the current variant. CivitAI's label for it
+    # is not known yet; 'Ideogram' as a prefix matches "Ideogram", "Ideogram 4"... until a
+    # real sidecar says otherwise.
+    fam = cz_civitai._norm_base("Ideogram")
     return fam, fam
 
 
@@ -1350,7 +1350,7 @@ def _ui_civitai_lora_search(query, klein_only):
         cands = [c for c in cands
                  if cz_civitai._norm_base(c.get("baseModel")).startswith(fam)]
     if not cands:
-        hint = (" with a FLUX.3 base, untick 'FLUX.3 only' to see the other bases "
+        hint = (" with an Ideogram base, untick 'Ideogram only' to see the other bases "
                 "(they will not load here)." if klein_only else
                 ". Check the spelling, or the model may not be on CivitAI.")
         return (gr.update(value=q), gr.update(choices=[], value=None), {},
@@ -1358,10 +1358,10 @@ def _ui_civitai_lora_search(query, klein_only):
     state, labels = {}, []
     for c in cands:
         size = f"{c['sizeKB'] / 1024:.0f} MB" if c.get("sizeKB") else "size ?"
-        label = (f"{c['modelName']} — {c['versionName']} [{c['baseModel'] or 'base ?'}] "
-                 f"— {size}"
-                 + (f" — by {c['creator']}" if c.get("creator") else "")
-                 + (" — NSFW" if c.get("nsfw") else ""))
+        label = (f"{c['modelName']}, {c['versionName']} [{c['baseModel'] or 'base ?'}], "
+                 f"{size}"
+                 + (f", by {c['creator']}" if c.get("creator") else "")
+                 + (": NSFW" if c.get("nsfw") else ""))
         if label in state:                       # two versions with the same label
             label += f" (v{c['versionId']})"
         state[label] = c
@@ -1371,9 +1371,9 @@ def _ui_civitai_lora_search(query, klein_only):
         n_cur = sum(1 for c in cands
                     if cz_civitai._norm_base(c.get("baseModel")).startswith(cur))
         note = (f" {n_cur} match the loaded variant." if n_cur
-                else " None match the loaded variant — check the base in brackets.")
+                else " None match the loaded variant: check the base in brackets.")
     return (gr.update(value=q), gr.update(choices=labels, value=labels[0]), state,
-            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download.{note} "
+            f"{len(labels)} candidate(s) for **{q}**: pick one, then Download.{note} "
             f"[Open on CivitAI]({cands[0]['url']})")
 
 
@@ -2061,7 +2061,7 @@ def _ui_set_ab_cache(path):
         return f"Save failed: {e}"
     if path.lower() == "output":
         return ("✅ Thumbnails will live NEXT TO the images (<out>/_index/thumbs, relative "
-                "URLs — no restart needed).")
+                "URLs: no restart needed).")
     target = path or os.path.join(HERE, "cache")
     try:
         os.makedirs(target, exist_ok=True)
@@ -2841,7 +2841,7 @@ def _q_choices(items):
 
 def _q_summary(items):
     """The one-line summary under the list (it used to repeat the list itself)."""
-    return (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
+    return (f"*{len(items)} job(s) queued: ▶ #1 runs next.*" if items
             else "*Queue empty.*")
 
 
@@ -3020,7 +3020,7 @@ def _q_request_pause():
     global _QUEUE_PAUSE
     _QUEUE_PAUSE = True
     _log("pause requested: finishing the current job, then halting", mod="queue")
-    return "*⏸ Pause requested — the current job will finish, then the queue halts.*"
+    return "*⏸ Pause requested: the current job will finish, then the queue halts.*"
 
 
 
@@ -3103,10 +3103,10 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
         if not any((j.get("xyz") or {}).get("gid") == gid for j in items):
             _XYZ_PENDING.pop(gid, None)
     if items and cz_pipeline._STOP:
-        status = (f"Queue stopped after {done} completed job(s) — the interrupted "
+        status = (f"Queue stopped after {done} completed job(s), the interrupted "
                   f"job stays queued, {len(items)} remaining (Run queue to resume).")
     elif items and _QUEUE_PAUSE:
-        status = f"⏸ Queue paused after {done} job(s) — {len(items)} remaining (Run queue to resume)."
+        status = f"⏸ Queue paused after {done} job(s), {len(items)} remaining (Run queue to resume)."
     else:
         status = f"Queue done: {done} job(s)."
     return (items, *_q_render(items), gallery_all, f"{status}  \n{rep}", history, history)
@@ -3406,7 +3406,7 @@ def _xyz_validate_axis(name, raw_values, base_vals, base_ms):
 
 
 def _xyz_apply(name, value, vals, ms):
-    """Applies an axis' value to a snapshot (vals, ms) — an in-place mutation."""
+    """Applies an axis' value to a snapshot (vals, ms), an in-place mutation."""
     spec = _XYZ_AXES[name]
     kind = spec.get("kind")
     if kind == "val":
@@ -3447,7 +3447,7 @@ def _xyz_apply(name, value, vals, ms):
 def _xyz_fmt_value(axis, value, maxlen=28):
     """A short label for an axis value, for the job label and for the contact sheet's
     headers. The LoRA axes carry (name, weight) tuples and long file names: so the base name
-    without its extension is shown, truncated from the LEFT — the LoRAs being compared often
+    without its extension is shown, truncated from the LEFT, the LoRAs being compared often
     differ only by their suffix (..._e000010 / ..._e000020), and cutting the end would make
     every column look identical.
 """
@@ -3472,7 +3472,7 @@ def _xyz_fmt_value(axis, value, maxlen=28):
 
 def _xyz_build_jobs(axes, base_vals, base_ms):
     """Builds the jobs of the cross product. axes = an ordered list [(name, values)] for
-    X (required), Y, Z (optional). Returns (jobs, meta) — meta describes the contact sheet."""
+    X (required), Y, Z (optional). Returns (jobs, meta), meta describes the contact sheet."""
     gid = time.strftime("%Y%m%d_%H%M%S")
     (xn, xv) = axes[0]
     (yn, yv) = axes[1] if len(axes) > 1 else (None, [None])
@@ -3555,7 +3555,7 @@ def _xyz_assemble(meta, cells, thumb=512):
                 img = cells.get((ix, iy, iz))
                 if img is None:
                     d.rectangle([cx, cy, cx + thumb, cy + thumb], outline=line, width=2)
-                    d.text((cx + thumb // 2 - 8, cy + thumb // 2 - 12), "—", fill=line, font=f_hdr)
+                    d.text((cx + thumb // 2 - 8, cy + thumb // 2 - 12), "-", fill=line, font=f_hdr)
                     continue
                 t = img.copy()
                 t.thumbnail((thumb, thumb), Image.LANCZOS)
@@ -3773,13 +3773,13 @@ def _ui_read_meta(path, check_wm=False):
     kv = [f"{k}: {meta[k]}" for k in ("seed", "steps", "guidance", "sampler", "size", "model", "mode")
           if meta.get(k) not in (None, "")]
     if kv:
-        lines.append("**Params** — " + "  ·  ".join(kv))
+        lines.append("**Params**: " + "  ·  ".join(kv))
     lines.append(prov)
     return "\n\n".join(lines), meta
 
 
 def _ui_meta_apply_all(m):
-    """PNG Info: applies ALL the parameters embedded in the image — prompt, negative,
+    """PNG Info: applies ALL the parameters embedded in the image, prompt, negative,
     seed, steps, CFG, size, sampler/schedule (the equivalent of Fooocus' full load). The
     sampler: the crispz 'euler/sgm_uniform' format is recognised as is, and the A1111 names
     ('Euler a', 'DPM++ 2M Karras'...) are mapped through cz_civitai.map_sampler_name."""
@@ -3993,7 +3993,7 @@ def _preset_switch_base(data):
     except Exception:
         pass
     line = (f"\n\n🔄 **Base model switched** to `{want}` (this preset's base; was "
-            f"`{was}`). The loaded model was released — the next **Generate** reloads "
+            f"`{was}`). The loaded model was released: the next **Generate** reloads "
             f"the whole pipeline, and downloads it if this base is not cached yet.")
     note = BASE_REPO_NOTES.get(want)
     return line + (f"\n\n{note}" if note else "")
@@ -4025,10 +4025,10 @@ def _preset_ckpt_refusal(ckpt, data):
         # No base of THIS build loads it: the width (3072) would otherwise point at the
         # FLUX.3 distilled repo, a wrong direction said with confidence.
         action = ("**This preset names a FLUX.2 Klein checkpoint, which runs in "
-                  "crispz-klein, not here: pick a FLUX.3 checkpoint above, then hit "
+                  "crispz-klein, not here: pick an Ideogram 4 model above, then hit "
                   "_Update selected_ to repair the preset.**")
     elif target and target in ZIMAGE_BASE_REPOS and target != cz_pipeline.BASE_REPO:
-        action = (f"**Pick `{target}` in the _FLUX.3 checkpoint_ dropdown above, then "
+        action = (f"**Pick `{target}` in the model dropdown above, then "
                   f"load this preset again.**")
     else:
         action = "**Fix the checkpoint folder(s), then load this preset again.**"
@@ -4036,7 +4036,7 @@ def _preset_ckpt_refusal(ckpt, data):
         # A preset from before the base was tracked: repairing it once and for all
         # avoids taking this detour on every load.
         action += (" This preset predates base-repo tracking, so it cannot switch the "
-                   "base by itself — once it loads correctly, hit _Update selected_ "
+                   "base by itself: once it loads correctly, hit _Update selected_ "
                    "to record the base in it.")
     why = checkpoint_refusal(ckpt) or "it is not offered by the checkpoint list any more"
     return (f"\n\n⚠ **Model NOT switched.** {action}\n\n"
@@ -4326,11 +4326,11 @@ def build_ui():
                                                    min_width=150)
                 detail_faces_cb = gr.Checkbox(
                     value=cz_detailer.DETAILER_ENABLED,
-                    label="🔧 Detail faces — after each render (and upscale), detect faces and "
+                    label="🔧 Detail faces: after each render (and upscale), detect faces and "
                           "re-refine each one at high resolution (ADetailer-style)")
                 detail_hands_cb = gr.Checkbox(
                     value=cz_detailer.HAND_ENABLED,
-                    label="🖐 Detail hands — same pass on detected hands "
+                    label="🖐 Detail hands: same pass on detected hands "
                           "(needs the optional 'ultralytics' package)")
                 improve_status = gr.Markdown("")
 
@@ -4344,7 +4344,7 @@ def build_ui():
                             open=bool(_q_restored)):
                         gr.Markdown("*'+ Queue' snapshots ALL current settings (incl. model, "
                                     "LoRAs, sampler). 'Run queue' executes jobs in order; "
-                                    "**Stop** pauses the queue — remaining jobs are kept.*")
+                                    "**Stop** pauses the queue: remaining jobs are kept.*")
                         with gr.Row():
                             queue_add_btn = gr.Button(f"+ Queue ({len(_q_restored)})", size="sm", scale=1, min_width=140)
                             queue_run_btn = gr.Button("Run queue", variant="primary", size="sm",
@@ -4747,7 +4747,7 @@ def build_ui():
                             gr.Markdown("*A preset bundles prompt, styles, size, steps/CFG, "
                                         "sampler, **base repo** + checkpoint, transformer and "
                                         "LoRAs. Load applies them all, switching the base repo "
-                                        "when the preset needs another one (announced — the "
+                                        "when the preset needs another one (announced, the "
                                         "next Generate then reloads everything). Create/Update "
                                         "save the current state.*")
                             # Auto-creates a basic preset per local model before
@@ -4819,13 +4819,13 @@ def build_ui():
                             sampler_dd = gr.Dropdown(
                                 list(SAMPLER_CHOICES), value="euler", interactive=False,
                                 label="Sampler", scale=1,
-                                info="Euler only on FLUX.3: the model's own flow-matching "
-                                     "schedule. Other choices are ignored.")
+                                info="Not used on Ideogram 4: the model runs its own "
+                                     "flow-matching sampler. Other choices are ignored.")
                             schedule_dd = gr.Dropdown(
                                 list(SCHEDULE_CHOICES), value="sgm_uniform", interactive=False,
                                 label="Schedule", scale=1,
-                                info="sgm_uniform only on FLUX.3 (the native shift 6.93 schedule). "
-                                     "Other choices are ignored.")
+                                info="Not used on Ideogram 4: its own logit-normal schedule "
+                                     "(48 steps, per-step guidance). Other choices are ignored.")
                         # set_sampler/set_schedule return a status: it is DISPLAYED
                         # instead of thrown away (otherwise Gradio warns "returned too many
                         # output values").
@@ -4915,21 +4915,22 @@ def build_ui():
                         with gr.Accordion("ℹ️  What is CPU offload?", open=False):
                             gr.Markdown(
                                 "**CPU offload** moves part of the model weights from VRAM (GPU) to RAM (CPU) "
-                                "between steps so large models fit on low-VRAM cards. It is **not** quantization "
-                                "— weights stay BF16, they just shuttle between RAM and GPU.\n\n"
-                                "- **auto** (default) — at model load, measures the *free* VRAM (all processes "
+                                "between steps so large models fit on low-VRAM cards. It is **not** quantization: "
+                                "weights stay BF16, they just shuttle between RAM and GPU.\n\n"
+                                "- **auto** (default): at model load, measures the *free* VRAM (all processes "
                                 "counted) and picks `none` only when the model + activations provably fit; "
-                                "otherwise `model`/`sequential`. FLUX.3 is about 19 GB all-in in bf16 (14.4 "
-                                "fp8r, 13.5 nvfp4, BFL's figures) so `auto` usually resolves to `none` on "
-                                "24 GB+ cards and to `model` on 16 GB ones (a GGUF is forced to `model` "
-                                "anyway). The verdict is cached per GPU + model "
-                                "(cache/hw_profile.json) — use **Re-test VRAM** after closing/opening another "
+                                "otherwise `model`/`sequential`. Ideogram 4 (nf4) is about 15 GB of weights; under "
+                                "40 GB of VRAM `auto` picks crispz-ideogram's own `model` offload, which "
+                                "keeps the two transformers and the VAE on the card and moves only the "
+                                "text encoder (9.9 GB resident, 19 GB peak at 1024, 23.4 GB at 2048 on "
+                                "an RTX 5090). The verdict is cached per GPU + model "
+                                "(cache/hw_profile.json): use **Re-test VRAM** after closing/opening another "
                                 "GPU app.\n"
-                                "- **none** — everything stays in VRAM. **Fastest.** Use it when you have enough "
+                                "- **none**: everything stays in VRAM. **Fastest.** Use it when you have enough "
                                 "VRAM.\n"
-                                "- **model** — offload per submodule. ~half the VRAM, small slowdown. Good balance "
+                                "- **model**: offload per submodule. ~half the VRAM, small slowdown. Good balance "
                                 "on 12–16GB cards.\n"
-                                "- **sequential** — aggressive, module-by-module. Runs in ~9GB but much slower "
+                                "- **sequential**: aggressive, module-by-module. Runs in ~9GB but much slower "
                                 "(5–10×). For small cards (8–12GB).\n\n"
                                 "⚠️ On Windows, an over-committed model does **not** crash: the NVIDIA driver's "
                                 "*Sysmem Fallback* silently spills it to shared RAM and renders become 50–100× "
@@ -4941,7 +4942,7 @@ def build_ui():
                             ckpt_extra_dir_tb = gr.Textbox(
                                 value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                                 label="Extra checkpoints folder (optional)",
-                                placeholder="e.g. D:\\models\\FLUX.3",
+                                placeholder="e.g. D:\\models\\Ideogram",
                                 info="Merged into the checkpoint list above. Single-file Ideogram 4 transformers "
                                      "(ComfyUI fp8 / int8 / nvfp4) are skipped and logged: diffusers "
                                      "has no converter for them. Leave empty to disable.")
@@ -4987,7 +4988,7 @@ def build_ui():
                                 transformer_tb = gr.Textbox(
                                     value="", scale=3,
                                     label="Transformer override (HF repo / diffusers folder)",
-                                    placeholder="HF repo or folder with a FLUX.3 transformer",
+                                    placeholder="HF repo or folder with an Ideogram 4 transformer",
                                     info="For community models with an incomplete tokenizer: "
                                          "loads only the transformer, keeps base VAE/encoder.")
                                 with gr.Row():
@@ -5003,8 +5004,8 @@ def build_ui():
                                     choices=_te_choices(), value=cz_pipeline.TEXT_ENCODER or "",
                                     allow_custom_value=True, label="Text encoder",
                                     interactive=False,
-                                    info="Not available on FLUX.3 yet: the model reads its own "
-                                         "Qwen3-VL-4B (8 hidden states) and no replacement fits. "
+                                    info="Not available on Ideogram 4: the model reads 13 hidden "
+                                         "states of its own Qwen3-VL-8B and no replacement fits. "
                                          "A value set in config/preferences is kept but not applied.")
                                 with gr.Row():
                                     te_refresh_btn = gr.Button("Refresh encoders", size="sm", scale=1)
@@ -5023,7 +5024,7 @@ def build_ui():
                                 "*Number of slots is set in Advanced > Generation "
                                 "(LoRA slots), or config `lora_slots`. Weight range is "
                                 f"`{cz_pipeline.LORA_WEIGHT_MIN:g}..{cz_pipeline.LORA_WEIGHT_MAX:g}` "
-                                "(config `lora_weight_min` / `lora_weight_max`) — a "
+                                "(config `lora_weight_min` / `lora_weight_max`), a "
                                 "**negative** weight inverts the LoRA's effect.*")
                             # Labelled like the checkpoints: on a 4B base a 9B LoRA
                             # simply cannot load, and the only way to find out used to be
@@ -5066,15 +5067,15 @@ def build_ui():
                             with gr.Accordion("\U0001F50E Search CivitAI (download a LoRA)",
                                               open=False):
                                 gr.Markdown(
-                                    "*Search a LoRA by name on CivitAI. FLUX.3 versions come "
-                                    "first (a FLUX.2 Klein LoRA does not load here). Download "
+                                    "*Search a LoRA by name on CivitAI. Ideogram versions come "
+                                    "first (FLUX LoRAs do not load here). Download "
                                     "goes to the LoRA folder, with a SHA256 check + "
                                     "preview/trigger words fetched.*")
                                 with gr.Row():
                                     civ_lora_q = gr.Textbox(
                                         show_label=False, scale=3, container=False,
                                         placeholder="LoRA name to search on CivitAI")
-                                    civ_lora_konly = gr.Checkbox(value=True, label="FLUX.3 only",
+                                    civ_lora_konly = gr.Checkbox(value=True, label="Ideogram only",
                                                                  scale=1)
                                     civ_lora_search_btn = gr.Button("Search", size="sm",
                                                                     variant="primary", scale=1,
@@ -5113,7 +5114,8 @@ def build_ui():
                                 wild_create_btn = gr.Button("Create new", size="sm", variant="primary")
                             wild_status = gr.Markdown("")
 
-                        with gr.Accordion("\U0001F5BC️ Edit model (multi-reference)", open=False):
+                        with gr.Accordion("\U0001F5BC️ Edit model (multi-reference)", open=False,
+                                          visible=omni_on):
                             gr.Markdown("*The Edit (references) tab is served by the BASE model itself: "
                                         "FLUX.3 takes a list of reference images (cited as `<ref_image_N>` "
                                         "in the prompt), so multi-reference "
@@ -5207,7 +5209,7 @@ def build_ui():
                         gr.Markdown("### Metadata")
                         meta_scheme_dd = gr.Dropdown(
                             choices=[("crispz (json)", "crispz"),
-                                     ("a1111 (plain text — Civitai-compatible)", "a1111")],
+                                     ("a1111 (plain text: Civitai-compatible)", "a1111")],
                             value=(CONFIG.get("metadata_scheme") or "crispz").lower(),
                             label="Metadata scheme (PNG output)",
                             info="a1111 adds a 'parameters' chunk to PNGs so Civitai reads the "
@@ -5275,7 +5277,7 @@ def build_ui():
         def _ui_vary(d):
             return (gr.update(value=True), gr.update(value=False), gr.update(value=True),
                     gr.update(value=float(d)),
-                    f"🎲 **Vary {'subtle' if d < 0.4 else 'strong'}** armed — img2img only "
+                    f"🎲 **Vary {'subtle' if d < 0.4 else 'strong'}** armed, img2img only "
                     f"(ESRGAN off), denoise **{d}**. Drop an image in Input Image, then "
                     f"press **Generate**.")
         _vary_outs = [use_input, do_esrgan_cb, do_refine_cb, denoise, report]

@@ -131,7 +131,7 @@ def test_schedule_does_not_touch_the_pipe_while_a_generation_holds_the_gpu():
         assert st.pipe.scheduler is before, "the scheduler was swapped under a render"
         assert P._SAMPLER_DIRTY is True, "the change was neither applied nor recorded"
         assert P.SCHEDULE == st.schedule, P.SCHEDULE
-        assert out == f"Sampler: euler / {st.schedule} — on the next run", out
+        assert out == f"Sampler: euler / {st.schedule}, on the next run", out
 
 
 def test_the_deferred_change_lands_on_the_next_get_pipe():
@@ -167,7 +167,7 @@ def test_sampler_change_follows_the_same_rule():
         out = P.set_sampler("unipc")
         assert st.pipe.scheduler is before, "the sampler swap hit a running render"
         assert P._SAMPLER_DIRTY is True
-        assert out == "Sampler: unipc / sgm_uniform — on the next run", out
+        assert out == "Sampler: unipc / sgm_uniform, on the next run", out
 
 
 def test_an_unchanged_value_is_a_no_op():

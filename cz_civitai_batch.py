@@ -1,8 +1,8 @@
-"""crispz-ideogram — batch CivitAI enrichment (standalone, no torch import → starts fast).
+"""crispz-ideogram: batch CivitAI enrichment (standalone, no torch import → starts fast).
 
 Scans the LoRA and/or checkpoint folders and, for every `.safetensors`, fetches the
 missing CivitAI info (preview + trigger words + example prompts) and refreshes the
-"newer version available" flag — the same per-model action as the Asset Browser's
+"newer version available" flag: the same per-model action as the Asset Browser's
 🔎 button, but for the whole folder.
 
 Two entry points share the SAME core (`enrich`):
@@ -16,7 +16,7 @@ CLI:
          [--api-key KEY] [--sleep 0.5]
 
 Only stdlib + cz_core/cz_civitai. Defensive: a corrupt sidecar, an unknown hash or a
-network error never aborts the batch — that file is counted as failed/skipped and the
+network error never aborts the batch: that file is counted as failed/skipped and the
 loop continues.
 """
 
@@ -141,7 +141,7 @@ def enrich(files, api_key=None, overwrite=False, only_missing=True, sleep=DEFAUL
            check_updates=DEFAULT_CHECK_UPDATES, progress=None):
     """The shared core (the CLI + the UI button). For every file: it enriches when some
     info is missing (or overwrite), otherwise it only refreshes the 'new version' flag.
-    progress is called as progress(i, n, name, phase, text) — i is 1-based. Returns a
+    progress is called as progress(i, n, name, phase, text), i is 1-based. Returns a
     summary dict."""
     n = len(files)
     summary = {"total": n, "enriched": 0, "skipped": 0, "updated": 0, "failed": 0,
@@ -237,7 +237,7 @@ def _cli_progress(i, n, name, phase, text):
 
 def main(argv=None):
     # Robust output even on a cp1252 console (the .bat can run outside the Pinokio env):
-    # UTF-8 + replacement, so as never to crash on … / — / emojis.
+    # UTF-8 + replacement, so as never to crash on … /: / emojis.
     for _s in (sys.stdout, sys.stderr):
         try:
             _s.reconfigure(encoding="utf-8", errors="replace")
@@ -253,7 +253,7 @@ def main(argv=None):
                     help="Process every file (re-query metadata) instead of only the "
                          "ones missing info. Previews are NOT overwritten unless --force.")
     ap.add_argument("--shard", default=None, metavar="i/m",
-                    help="Process only shard i of m (1-based) — run several in parallel.")
+                    help="Process only shard i of m (1-based), run several in parallel.")
     ap.add_argument("--loras-dir", default=None,
                     help="Scan THIS folder only (default: the configured folder AND its "
                          "extras, 'loras_extra_dirs').")
@@ -272,7 +272,7 @@ def main(argv=None):
         print(f"[civitai-batch] no models found for kind={a.kind} "
               f"(shard={a.shard or 'all'}). Nothing to do.")
         return 0
-    print(f"[civitai-batch] {len(files)} model(s) — kind={a.kind}, shard={a.shard or 'all'}, "
+    print(f"[civitai-batch] {len(files)} model(s), kind={a.kind}, shard={a.shard or 'all'}, "
           f"force={a.force}, only_missing={not a.all_files}, sleep={a.sleep}s")
     note = hashing_note(files)
     if note:

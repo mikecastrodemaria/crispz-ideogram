@@ -423,10 +423,8 @@ def cli_main(argv=None):
     parser.add_argument("--expand-ratio", type=float, default=0.3, metavar="0.3",
                         help="Growth per side for --expand (fraction of the source size)")
     parser.add_argument("--expand-lora", action="store_true",
-                        help="--expand through the FLUX.3 Outpaint LoRA (CivitAI 3003865, "
-                             "downloaded on first use) on a gray canvas, the UI's 'Expand "
-                             "sides (outpaint LoRA)': the model sees the whole picture and "
-                             "continues it. --prompt is appended to the trigger sentence.")
+                        help="FLUX.3 only (crispz-flux3): its Outpaint LoRA is refused on "
+                             "Ideogram 4, the run stops with the reason. Use --expand alone.")
     parser.add_argument("--expand-lora-weight", type=float, default=1.5, metavar="1.5",
                         help="LoRA strength for --expand-lora (the author advises 1.5)")
     parser.add_argument("--inpaint-mask", metavar="PATH",
@@ -474,17 +472,20 @@ def cli_main(argv=None):
                              "Strongly recommended when exposing over LAN or a tunnel.")
     # The config / model paths
     parser.add_argument("--esrgan-dir", help="Override ESRGAN_DIR for this run")
-    # --zimage-* are the old names (crispz-studio / Z-Image): kept as hidden aliases
-    # so as to break no existing script, but absent from --help.
-    parser.add_argument("--flux3-model", "--klein-model", "--zimage-model", dest="zimage_model",
-                        help="Override the model: HF repo, diffusers folder, OR a single-file "
-                             ".safetensors (Civitai) used as the transformer (VAE+encoder from base).")
-    parser.add_argument("--flux3-transformer", "--klein-transformer", "--zimage-transformer",
-                        dest="zimage_transformer",
-                        help="Single-file .safetensors transformer override (Civitai), keeping "
-                             "the VAE + Qwen3-VL encoder from --flux3-model / the base repo.")
+    # --flux3-* / --klein-* / --zimage-* are the family's older names: kept as aliases so
+    # as to break no existing script.
+    parser.add_argument("--ideogram-model", "--flux3-model", "--klein-model", "--zimage-model",
+                        dest="zimage_model",
+                        help="Override the model: an Ideogram 4 HF repo or diffusers folder "
+                             "(default ideogram-ai/ideogram-4-nf4-diffusers, gated, "
+                             "NON-COMMERCIAL licence).")
+    parser.add_argument("--ideogram-transformer", "--flux3-transformer", "--klein-transformer",
+                        "--zimage-transformer", dest="zimage_transformer",
+                        help="Transformer override from a diffusers repo or folder. Single-file "
+                             "Ideogram 4 transformers are refused with the reason (no "
+                             "converter in diffusers).")
     parser.add_argument("--save-paths", action="store_true",
-                        help="Save --esrgan-dir and --flux3-model to preferences.json")
+                        help="Save --esrgan-dir and --ideogram-model to preferences.json")
     # Reports
     parser.add_argument("--list-models", action="store_true", help="List ESRGAN models then exit")
     parser.add_argument("--time-log", default=None,
@@ -579,7 +580,7 @@ def cli_main(argv=None):
         txt = (cz_provenance.provenance_markdown(args.input, check_wm=True)
                .replace("**", "").replace("  \n", "\n  ")
                .replace("✅", "[OK]").replace("⚠️", "[!]")
-               .replace("ℹ️", "[i]").replace("—", "-"))
+               .replace("ℹ️", "[i]").replace("\u2014", "-"))
         # the Windows console is often cp1252: we stay ASCII-safe
         print(txt.encode("ascii", "replace").decode("ascii"))
         return 0
@@ -660,6 +661,10 @@ def cli_main(argv=None):
         if not sides or any(s not in ("left", "right", "top", "bottom") for s in sides):
             parser.error("--expand expects a comma list among left,right,top,bottom (or 'all')")
         if args.expand_lora:
+            # Refused BEFORE the 153 MB download: the FLUX.3 Outpaint LoRA's layers do not
+            # exist in Ideogram 4 (the family guard would refuse it after the download).
+            parser.error("--expand-lora is the FLUX.3 Outpaint LoRA, which runs in "
+                         "crispz-flux3, not on Ideogram 4: use --expand alone")
             res = _maybe_faceswap(cz_pipeline.outpaint_lora(
                 Image.open(args.input), sides, args.prompt, args.gen_steps, args.seed,
                 expand=args.expand_ratio, weight=args.expand_lora_weight))

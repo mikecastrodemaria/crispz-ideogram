@@ -125,17 +125,17 @@ def provenance_markdown(path, check_wm=False):
         who = c2["issuer"] or c2["generator"] or "unknown"
         state = (c2["state"] or "").lower()
         if state == "valid":
-            lines.append(f"✅ **C2PA manifest** — signed by **{who}**"
+            lines.append(f"✅ **C2PA manifest**: signed by **{who}**"
                          + (f" ({c2['when']})" if c2["when"] else "") + ", signature valid")
         elif state:
-            lines.append(f"⚠️ **C2PA manifest** — {who}, state: **{state}** "
+            lines.append(f"⚠️ **C2PA manifest**: {who}, state: **{state}** "
                          "(file may have been modified after signing)")
         else:
-            lines.append(f"ℹ️ **C2PA manifest** found — {who}")
+            lines.append(f"ℹ️ **C2PA manifest** found, {who}")
     elif C2PA_AVAILABLE:
         lines.append("No C2PA manifest.")
     else:
-        lines.append("*C2PA check unavailable — `pip install c2pa-python`.*")
+        lines.append("*C2PA check unavailable: `pip install c2pa-python`.*")
     if check_wm:
         if TRUSTMARK_AVAILABLE:
             present, secret = wm_read(path)
@@ -144,7 +144,7 @@ def provenance_markdown(path, check_wm=False):
             else:
                 lines.append("No TrustMark watermark detected.")
         else:
-            lines.append("*Watermark check unavailable — `pip install trustmark`.*")
+            lines.append("*Watermark check unavailable, `pip install trustmark`.*")
     lines.append("*Absence of marks proves nothing: it never means "
                  "\"not AI\" or \"authentic\".*")
-    return "**Provenance** — " + "  \n".join(lines)
+    return "**Provenance**: " + "  \n".join(lines)

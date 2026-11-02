@@ -1,4 +1,4 @@
-# crispz-ideogram — CLI cheat sheet
+# crispz-ideogram: CLI cheat sheet
 
 All commands are `python app.py ...` (use your venv: `.venv\Scripts\python app.py ...`).
 Run `python app.py --help` for the full flag list. No args → launches the UI.
@@ -13,15 +13,15 @@ Common output flags (work with most modes):
 ## Text → Image (txt2img)
 
 ```bash
-# Basic (FLUX.3 distilled: 16 steps; guidance is inert, the model is a flow map)
-python app.py --txt2img --prompt "a serene mountain lake, cinematic" \
-    --gen-width 1024 --gen-height 1024 --gen-steps 8 --seed 42 \
+# Basic (Ideogram 4: 48 steps, guidance 7 = the peak of its per-step schedule; no
+# negative prompt). Plain text works, a JSON caption works better (see README.md).
+python app.py --txt2img --prompt "a bold minimalist poster reading GRAND OPENING" \
+    --gen-width 1024 --gen-height 1024 --gen-steps 48 --guidance 7 --seed 42 \
     --save-mode local --output-dir out
 
-# NB: there is no 'Base' variant here and no working CFG - see README.md
-python app.py --txt2img --prompt "cinematic portrait of a sea captain" \
-    --gen-width 960 --gen-height 1440 --gen-steps 24 --guidance 6 \
-    --save-mode local --output-dir out
+# A JSON caption from a file (made in the UI's caption editor, or by hand)
+python app.py --txt2img --prompt "$(cat poster.json)" \
+    --gen-width 720 --gen-height 1024 --gen-steps 48 --save-mode local --output-dir out
 
 # Generate then upscale in ONE command (txt2img chained into ESRGAN + diffusion refine).
 # This is the CLI equivalent of the UI's "Upscale after generate" checkbox.
@@ -35,23 +35,23 @@ python app.py --txt2img --prompt "..." --upscale --refine-first \
     --factor 2 --denoise 0.30 -m 4x-ClearRealityV1_Soft.safetensors
 ```
 
-## X/Y/Z comparison grid  — `--xyz "AXIS=v1,v2,…"` (repeat ×1–3)
+## X/Y/Z comparison grid : `--xyz "AXIS=v1,v2,…"` (repeat ×1–3)
 
 Every combo is generated, saved as a normal output, and the run ends with annotated
 contact sheet(s) in `<output>/xyz_<timestamp>/` (one per Z value; paths printed).
 
 > Ready-to-run example: **`xyz_example.bat "your prompt"`** (Windows) or
-> **`./xyz_example.sh "your prompt"`** (Unix) — a 2×2 Steps × Guidance grid; edit the
+> **`./xyz_example.sh "your prompt"`** (Unix), a 2×2 Steps × Guidance grid; edit the
 > `--xyz` lines inside to change the axes.
 
 ```bash
 # 3×2 grid: Steps × Guidance
 python app.py --txt2img --prompt "a red cat" \
-    --xyz "Steps=4,8,12" --xyz "Guidance=0, 3.5" --save-mode local
+    --xyz "Steps=24,36,48" --xyz "Guidance=5, 7" --save-mode local
 
 # Compare checkpoints (partial names resolve case-insensitively), one sheet per seed
 python app.py --txt2img --prompt "..." \
-    --xyz "Checkpoint=black-forest-labs/flux-3-image-klein, mymodel" --xyz "Seed=42, 1234"
+    --xyz "Seed=42, 1234" --xyz "Guidance=5, 7"
 
 # Full-prompt A/B test (each value = a COMPLETE prompt; quotes protect commas).
 # --prompt becomes optional when a Prompt axis is given.
@@ -81,22 +81,19 @@ In the UI, the values fields autosuggest after 3 typed characters (checkpoints/L
 on those axes, `__wildcards__` on the Prompt axes).
 **Ctrl+C assembles a partial sheet** with the cells rendered so far.
 
-## Choose / switch the FLUX.3 model
+## Choose the Ideogram 4 model
 
 ```bash
-# Single-file checkpoint (Civitai BF16/FP16) as the transformer
-python app.py --txt2img --prompt "..." \
-    --flux3-transformer "D:/.../FLUX3/my_flux3_finetune.safetensors" --gen-steps 16
+# Another repo or a local diffusers folder (a mirror, a local copy of the nf4 weights)
+python app.py --txt2img --prompt "..." --ideogram-model "D:/models/ideogram-4-nf4-diffusers"
 
-# Transformer from a diffusers repo/folder (keeps base VAE/encoder)
-python app.py --txt2img --prompt "..." \
-    --flux3-transformer "<hf-repo-with-a-flux3-transformer>"
-
-# Full diffusers base
-python app.py --txt2img --prompt "..." --flux3-model "black-forest-labs/flux-3-image-klein-base"
+# Transformer from a diffusers repo/folder (keeps the base VAE/encoder). Single-file
+# Ideogram 4 transformers (ComfyUI fp8 / int8 / nvfp4) are refused with the reason.
+python app.py --txt2img --prompt "..." --ideogram-transformer "<hf-repo-or-folder>"
 ```
+(`--flux3-model` / `--flux3-transformer` are kept as aliases.)
 
-## LoRA (up to 3, combinable)  — `--lora NAME[:WEIGHT]`
+## LoRA (up to 3, combinable) : `--lora NAME[:WEIGHT]`
 
 ```bash
 # One LoRA at weight 0.8 (file in the loras dir)
@@ -107,15 +104,15 @@ python app.py --txt2img --prompt "..." --loras-dir "D:/.../loras" \
     --lora char.safetensors:0.9 --lora style.safetensors:0.5
 ```
 
-## Vision Mix (reference images → one prompt → generate)  — needs Ollama vision model
+## Vision Mix (reference images → one prompt → generate) : needs Ollama vision model
 
 ```bash
 python app.py --vision-mix person.jpg outfit.jpg --save-mode local --output-dir out
 # pick the model explicitly
-python app.py --vision-mix a.png b.png --ollama-model llava:13b-v1.6 --gen-steps 8
+python app.py --vision-mix a.png b.png --ollama-model llava:13b-v1.6 --gen-steps 48
 ```
 
-## Improve the prompt before generating  — `--improve` (needs Ollama)
+## Improve the prompt before generating : `--improve` (needs Ollama)
 
 ```bash
 # Rewrite --prompt via Ollama, then generate ({a|b|c} and __wildcards__ are kept)
@@ -151,7 +148,7 @@ python app.py --cli -i in.png --factor 4 --denoise 0.30 --steps 12 \
     --refine-tile 1024 --refine-overlap 128 --save-mode local --output-dir out
 ```
 
-## Batch CivitAI enrichment  — `cz_civitai_batch.py` (standalone, runs in parallel)
+## Batch CivitAI enrichment : `cz_civitai_batch.py` (standalone, runs in parallel)
 
 Fetch the **missing** CivitAI info (preview + trigger words + example prompts) for every
 model in your LoRA / checkpoint folders, and flag models that have a **newer version** on
@@ -187,31 +184,31 @@ don't overwrite previews) · `--shard i/m` · `--loras-dir` / `--checkpoints-dir
 
 | | Re-done on a re-run? |
 |---|---|
-| **SHA256 of the models** | **No** — cached in `<name>.civitai.json` after the first pass (and in `<name>.metadata.json` if some other tool wrote one). Only the *first* run reads the files. |
-| **Previews** (`<name>.preview.png`) | **No** — kept unless `--force`. |
+| **SHA256 of the models** | **No**: cached in `<name>.civitai.json` after the first pass (and in `<name>.metadata.json` if some other tool wrote one). Only the *first* run reads the files. |
+| **Previews** (`<name>.preview.png`) | **No**, kept unless `--force`. |
 | **Metadata** (prompts, triggers, version flag) | Only with `--all` or `--force`, or for models still missing info: 2 API calls each. |
 | **Asset Browser thumbnails** | Regenerated only if missing or older than the source; reopening the browser rebuilds the catalog in the background. |
 
 So the expensive pass is the **first** one (it hashes the library). After that, a full
 `--all` re-run is essentially just the API calls + `--sleep` per model.
-**CivitAI rate-limits** — keep the shard count modest and set a CivitAI API key (in the
+**CivitAI rate-limits**: keep the shard count modest and set a CivitAI API key (in the
 app's Advanced tab, or `--api-key`) for large runs.
 
-## Remove background  — `--remove-bg` (local, rembg)
+## Remove background : `--remove-bg` (local, rembg)
 
 ```bash
 python app.py --remove-bg -i photo.jpg --save-mode local --output-dir out
 # -> out/<name>_nobg_*.png (transparent)
 ```
 
-## Reframe  — `--reframe W:H` (+ `--reframe-fit contain|cover`)
+## Reframe : `--reframe W:H` (+ `--reframe-fit contain|cover`)
 
 ```bash
 # contain (default): keep the whole image, OUTPAINT the borders to the ratio
 python app.py --reframe 16:9 -i square.png --prompt "extend the scenery" \
-    --gen-steps 12 --guidance 6 --save-mode local --output-dir out
+    --gen-steps 48 --save-mode local --output-dir out
 
-# cover: fill the ratio then centre-crop — no generation, instant
+# cover: fill the ratio then centre-crop: no generation, instant
 python app.py --reframe 16:9 --reframe-fit cover -i square.png -o out/wide.png
 ```
 
@@ -219,24 +216,21 @@ python app.py --reframe 16:9 --reframe-fit cover -i square.png -o out/wide.png
 
 ```bash
 python app.py --expand right,bottom -i photo.png --prompt "landscape, nature" \
-    --gen-steps 8 --save-mode local --output-dir out
+    --gen-steps 48 --save-mode local --output-dir out
 # 'all' = the four sides; --expand-ratio 0.2 changes the growth per side
-# --expand-lora: the same sides through the FLUX.3 Outpaint LoRA (CivitAI, downloaded on
-# first use) on a gray canvas; the model sees the whole picture and continues it.
-# --expand-lora-weight 1.5 is the author's strength.
-python app.py --expand all -i photo.png --expand-lora --prompt "a wide beach at sunset"
+# (--expand-lora, the FLUX.3 Outpaint LoRA, runs in crispz-flux3: refused here.)
 ```
 
-## Inpaint with a mask file  — `--inpaint-mask mask.png`
+## Inpaint with a mask file : `--inpaint-mask mask.png`
 
 ```bash
 # repaint the WHITE area of mask.png (same size as the input), guided by the prompt
 python app.py -i photo.png --inpaint-mask mask.png --prompt "a red rose" \
-    --gen-steps 8 --save-mode local --output-dir out
+    --gen-steps 48 --save-mode local --output-dir out
 # --inpaint-denoise 1.0 (default) = full repaint; lower keeps more of the original
 ```
 
-## Force aspect ratio on Upscale/img2img  — `--force-ratio W:H` (+ `--force-ratio-mode`)
+## Force aspect ratio on Upscale/img2img : `--force-ratio W:H` (+ `--force-ratio-mode`)
 
 ```bash
 # crop (default): centre-crop the input to 2:3 before upscaling
@@ -247,7 +241,7 @@ python app.py -i in.png --force-ratio 16:9 --force-ratio-mode extend \
     --prompt "extend the scenery" --factor 2 --save-mode local --output-dir out
 ```
 
-## Face swap (post-process)  — `--faceswap-src` (needs insightface + inswapper)
+## Face swap (post-process) : `--faceswap-src` (needs insightface + inswapper)
 
 ```bash
 # generate then swap the face from a source photo
@@ -292,8 +286,11 @@ echo "saved: $dst"
 ---
 
 ### Notes
-- BF16/FP16 checkpoints only — FP8 / GGUF / SVDQ (ComfyUI) do **not** load in diffusers.
-- Turbo → `--guidance 0`, ~8 steps. Base / Juggernaut-Z → `--guidance ~6`, ~22-35 steps.
+- Ideogram 4 loads from its diffusers repo (nf4); single-file checkpoints (ComfyUI fp8 /
+  int8 / nvfp4) are refused with the reason.
+- 48 steps and guidance 7 are the official settings; the Draft preset uses 24 steps.
+- img2img, inpaint and outpaint are EMULATED (Ideogram 4 has no native pipeline for
+  them): `--gen-steps` is the full schedule, the denoise picks the part that runs.
 - Output filenames are dated + unique (`{date}_{tag}_seed{seed}_{w}x{h}`), set by
   `filename_pattern` in `config.txt`.
 - Defaults (size, steps, save mode, Ollama prompts, etc.) live in `config.txt`

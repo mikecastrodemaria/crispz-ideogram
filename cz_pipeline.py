@@ -907,7 +907,7 @@ def _sampler_status():
     recorded: telling the user it is active while the render still uses the old one is
     exactly the confusion to avoid."""
     return (f"Sampler: {SAMPLER} / {SCHEDULE}"
-            + (" — on the next run" if _SAMPLER_DIRTY else ""))
+            + (", on the next run" if _SAMPLER_DIRTY else ""))
 
 
 def set_sampler(name):
@@ -2355,7 +2355,7 @@ def _gguf_layout_unsupported(path):
     if _gguf_layout(path) != "foreign":
         return None
     return ("GGUF with a non-standard tensor layout (e.g. stable-diffusion.cpp "
-            "conversion); diffusers cannot map it — use a QuantStack/city96-style "
+            "conversion); diffusers cannot map it: use a QuantStack/city96-style "
             "GGUF or the BF16/FP16 .safetensors build")
 
 

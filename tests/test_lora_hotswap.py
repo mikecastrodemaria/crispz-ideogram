@@ -1,4 +1,4 @@
-"""Unit tests for the LoRA hot-swap logic (_apply_loras) — no model is loaded.
+"""Unit tests for the LoRA hot-swap logic (_apply_loras), no model is loaded.
 
 Regression guard for: activating a LoRA used to call free_vram() and reload the whole
 pipeline (transformer + VAE + Qwen3 encoder, ~9s). LoRAs must now be swapped

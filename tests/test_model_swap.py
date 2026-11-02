@@ -1,4 +1,4 @@
-"""Unit tests for the transformer hot-swap (_swap_transformer) — no model is loaded.
+"""Unit tests for the transformer hot-swap (_swap_transformer), no model is loaded.
 
 Regression guard for: switching checkpoint A -> B (same base repo) used to
 free_vram() and reload the WHOLE pipeline (transformer + VAE + Qwen3-4B text encoder).

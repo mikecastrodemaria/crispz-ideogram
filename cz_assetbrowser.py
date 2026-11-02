@@ -55,7 +55,7 @@ def _ab_resolve_dir(output_dir):
 def _thumbs_root(d):
     """(the thumbnails' folder on disk, the URL prefix) for an output folder.
 
-    The default: '<app>/cache/crispz-thumbs/<slug>' — the app's folder (gitignored) is
+    The default: '<app>/cache/crispz-thumbs/<slug>', the app's folder (gitignored) is
     generally on a fast disk, whereas the output folder can be a slow HDD/NAS. Served by
     ABSOLUTE URL (/gradio_api/file=...). The slug depends on the output folder: two output
     folders do not share their cache.
@@ -491,7 +491,7 @@ def on_image_saved(image_path, output_dir=None, meta=None):
                         "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")})
             os.makedirs(dd, exist_ok=True)
             _write_atomic_text(mp, json.dumps(man, ensure_ascii=False))
-            # 4) days.json (the day's count) — no rescan, we read the existing index
+            # 4) days.json (the day's count): no rescan, we read the existing index
             _bump_days_index(d, day, len(imgs))
         return True
     except Exception as e:

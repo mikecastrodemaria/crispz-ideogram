@@ -88,13 +88,14 @@ class _Variant:
         return False
 
 
-# CivitAI's label for FLUX.3 is not known yet (the model is days old): cz_ui matches a
-# 'flux3' PREFIX on the normalised label, which both spellings below satisfy.
+# CivitAI's label for Ideogram is not known yet: cz_ui matches an 'ideogram' PREFIX on
+# the normalised label, which both spellings below satisfy. FLUX LoRAs do not load here.
 _PAYLOAD = {"items": [
     _model(1, "Foreign", [_ver(11, "SDXL 1.0")]),
     _model(2, "Klein4B", [_ver(22, "Flux.2 Klein 4B-base")]),
-    _model(3, "Flux3", [_ver(33, "FLUX.3 Image Klein")]),
-    _model(4, "Flux3b", [_ver(44, "Flux 3 Klein")]),
+    _model(3, "Ideo", [_ver(33, "Ideogram 4")]),
+    _model(4, "Ideob", [_ver(44, "Ideogram")]),
+    _model(5, "Flux3", [_ver(55, "FLUX.3 Image Klein")]),
 ]}
 
 
@@ -117,35 +118,34 @@ def test_a_network_failure_is_an_empty_list_not_an_exception():
     assert cz_civitai.search_loras("   ") == []          # empty query: no call at all
 
 
-def test_the_flux3_versions_come_first():
-    """The ranking: the FLUX.3 LoRAs first (they load here), then the rest in CivitAI's
-    own order. A FLUX.2 Klein one ranks with the foreign bases: same name, other family,
-    it does not load in this build."""
+def test_the_ideogram_versions_come_first():
+    """The ranking: the Ideogram LoRAs first (they load here), then the rest in CivitAI's
+    own order. FLUX.2 and FLUX.3 ones rank with the foreign bases: they do not load here."""
     with _Api(_PAYLOAD):
         _q, dd, state, status = cz_ui._ui_civitai_lora_search("x", False)
-    assert _bases(dd) == ["FLUX.3 Image Klein", "Flux 3 Klein", "SDXL 1.0",
-                          "Flux.2 Klein 4B-base"], _bases(dd)
-    assert len(state) == 4
+    assert _bases(dd) == ["Ideogram 4", "Ideogram", "SDXL 1.0", "Flux.2 Klein 4B-base",
+                          "FLUX.3 Image Klein"], _bases(dd)
+    assert len(state) == 5
 
 
-def test_flux3_only_drops_the_other_families_flux2_included():
+def test_ideogram_only_drops_the_other_families_flux_included():
     with _Api(_PAYLOAD):
         _q, dd, _s, _st = cz_ui._ui_civitai_lora_search("x", True)
-    assert _bases(dd) == ["FLUX.3 Image Klein", "Flux 3 Klein"], _bases(dd)
+    assert _bases(dd) == ["Ideogram 4", "Ideogram"], _bases(dd)
 
 
 def test_the_family_prefix_needs_no_hub_access():
-    """klein read the loaded variant off the Hub (and a gated repo answered 401). FLUX.3
-    has one width, so the prefix is a constant: no network, nothing to degrade."""
+    """One Ideogram 4 checkpoint, so the prefix is a constant: no network, nothing to
+    degrade."""
     fam, cur = cz_ui._klein_base_prefixes()
-    assert fam == cur == "flux3", (fam, cur)
+    assert fam == cur == "ideogram", (fam, cur)
 
 
 def test_no_result_names_the_filter_as_the_likely_cause():
     with _Api({"items": [_model(1, "Foreign", [_ver(11, "SDXL 1.0")])]}):
         _q, dd, state, status = cz_ui._ui_civitai_lora_search("x", True)
     assert dd["choices"] == [] and state == {}
-    assert "FLUX.3 only" in status, status
+    assert "Ideogram only" in status, status
 
 
 class _Stream:

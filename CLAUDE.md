@@ -629,8 +629,36 @@ caché. Rien ne quitte la machine.
   (Vectorize, onglet crispz-flux3 grisé avec sa raison). Suite : 657 passent, 0 échec,
   1 skip ; smoke 22/22.
 - À essayer chez Mike : l'onglet crispz-flux3 avec son vrai dossier, app crispz-flux3
-  ouverte puis fermée (attention : deux apps sur le même port 7860, donner un autre port
-  à l'une des deux).
+  ouverte puis fermée. Ports : Gradio donne 7861 à la seconde app lancée, et crispz-flux3
+  cherche son instance sur 7860 : lancer crispz-flux3 en premier (sinon route à froid, dite).
+
+### Lot 6 (02/11/2026) : tests, doc, livraison (sur `wip/ideogram-engine`)
+
+- **Test GPU e2e** `tests/test_ideogram_e2e.py` (remplace `test_flux3_e2e.py`) : chargement,
+  gen 1024, gen 2048 (`CZ_E2E_2048=0` pour le sauter), img2img 0,35, inpaint (hors masque
+  identique au pixel près), Stop au step 3 ; temps et pics dans `tests/e2e_timings.txt`.
+  Se saute sans CUDA ou sans accès au repo. **Pas encore lancé sur la 5090.**
+- **README.md** réécrit (anglais) : licence non commerciale en tête, ce qui est local et ce
+  qui est cloud (caché), mesures de tous les lots, conseils (JSON, filtre), crispz-flux3 et
+  les ports. **FORK.md** (français) : choix de la base, différences, mesures, pièges.
+  **README_CLI.md** : exemples Ideogram (48 steps, guidance 7, légende JSON),
+  `--ideogram-model` / `--ideogram-transformer` (anciens noms gardés en alias),
+  `--expand-lora` refusé AVANT le téléchargement. **CHANGELOG** : entrée 0.1.0-dev.
+- **Launcher Pinokio** préparé dans `pinokio/` (le repo `crispz-ideogram.pinokio`
+  n'existe pas encore) : repris de `crispz-flux3.pinokio`, vérification
+  `Ideogram4Pipeline` + bitsandbytes + outlines + vtracer, message de licence et de token,
+  README. L'icône est celle de crispz-flux3 (la lune), à remplacer. Il clone `main` :
+  utile seulement après la fusion de `wip/ideogram-engine` dans `main`.
+- **Interface** : plus aucun libellé FLUX.3 visible (sampler, schedule, offload, encodeur,
+  CivitAI « Ideogram only », messages de modèle), accordéon « Edit model » caché ; test
+  `test_no_visible_flux3_wording_in_the_ui` (parcourt l'UI construite, composants
+  visibles seulement).
+- **Tirets cadratins** : plus aucun dans le repo hors `third_party/` (530 remplacés par
+  « : » ou « , », CHANGELOG et vieux FORK compris).
+- Suite CPU : 658 passent, 0 échec, 1 skip (le e2e GPU) ; smoke 22/22.
+- **Reste à décider par Mike** : fusion de `wip/ideogram-engine` dans `main`, passage de
+  `APP_VERSION` de 0.1.0-dev à 0.1.0, création du repo `crispz-ideogram.pinokio` (et son
+  icône), lancement du e2e GPU.
 
 ### CI GitHub (31/10/2026)
 

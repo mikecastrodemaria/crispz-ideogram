@@ -22,9 +22,9 @@ public share link**.
 
 By default the app has **no authentication**. An **optional login page** exists: set
 `auth` in `config.txt` to `"user:password"` (several accounts via commas), or pass
-`--auth user:pw`, or set the `CRISPZ_AUTH` environment variable — Gradio then gates
+`--auth user:pw`, or set the `CRISPZ_AUTH` environment variable, Gradio then gates
 every route (UI, API endpoints, and `file=` serving all return 401 until login).
-**Enable it before** exposing the app beyond localhost — Gradio's `share=True`,
+**Enable it before** exposing the app beyond localhost, Gradio's `share=True`,
 `server_name="0.0.0.0"`, a tunnel, or a reverse proxy. Exposure without auth is outside
 the supported configuration and is done at your own risk. In particular,
 `launch(allowed_paths=[...])` deliberately grants the web UI read access to your output
@@ -56,20 +56,20 @@ supplies** (Input image, PNG Info drop), so those advisories were genuinely reac
 Verified against the GitHub advisory database: **0 advisories remain** for the three
 pinned versions.
 
-### Assessed — not reachable in this application
+### Assessed: not reachable in this application
 
 | Package | Alerts | Why it does not apply |
 |---|---|---|
 | rembg | 4 | All four target the **rembg HTTP server** (`/api/remove`, CORS, custom-model path traversal). crispz imports `remove()` as a **library** and never starts that server. Two of the four have **no patched release at all**, and the patched line (2.0.75+) requires **Python ≥ 3.11** while this app runs on 3.10. |
-| gradio | 6 | `gr.load()` SSRF and both OAuth flaws — **neither API is used** (`git grep 'gr\.load(\|oauth'` is empty). Windows absolute-path traversal needs **Python 3.13+** (this app runs 3.10). Audio cache key needs `gr.Audio`, which does not exist here. Cookie injection needs a network-exposed instance. Patching would require **gradio 6.x**, a major bump; the `<6` pin is deliberate (Brotli/h11 middleware bug, documented in `requirements.txt`). |
-| transformers | 3 | The `Trainer` RCE needs `Trainer` (no training here), the LightGlue RCE needs that model (never invoked), and the general RCE path needs `trust_remote_code=True` — **never set** anywhere in the codebase. Patching needs **transformers 5.x**, which diffusers' current pin does not support. |
-| torch | 3 | `torch.jit.script`, `lstm_cell` and `unpack_sequence` are **not called** anywhere in the codebase. All three are Moderate/Low, and their fixes land in torch 2.10+/2.13+ — there is no `+cu128` build of those for the RTX 5090 setup this project targets, so upgrading would break GPU support to close unreachable flaws. |
+| gradio | 6 | `gr.load()` SSRF and both OAuth flaws, **neither API is used** (`git grep 'gr\.load(\|oauth'` is empty). Windows absolute-path traversal needs **Python 3.13+** (this app runs 3.10). Audio cache key needs `gr.Audio`, which does not exist here. Cookie injection needs a network-exposed instance. Patching would require **gradio 6.x**, a major bump; the `<6` pin is deliberate (Brotli/h11 middleware bug, documented in `requirements.txt`). |
+| transformers | 3 | The `Trainer` RCE needs `Trainer` (no training here), the LightGlue RCE needs that model (never invoked), and the general RCE path needs `trust_remote_code=True`, **never set** anywhere in the codebase. Patching needs **transformers 5.x**, which diffusers' current pin does not support. |
+| torch | 3 | `torch.jit.script`, `lstm_cell` and `unpack_sequence` are **not called** anywhere in the codebase. All three are Moderate/Low, and their fixes land in torch 2.10+/2.13+, there is no `+cu128` build of those for the RTX 5090 setup this project targets, so upgrading would break GPU support to close unreachable flaws. |
 
 The upgrades were verified on the real environment: `torch 2.8.0+cu128` and CUDA still
 load, `build_ui()` still builds, the full image chain (save + metadata round-trip +
 thumbnail + `RankFilter` + `crop` + WebP) still works, and the test suites pass.
 
-### transformers — CVE-2026-5241 (LightGlue model loading)
+### transformers: CVE-2026-5241 (LightGlue model loading)
 
 The vulnerable path requires `AutoModel.from_pretrained()` on a LightGlue repository,
 where `LightGlueConfig` reads `trust_remote_code` from an untrusted `config.json` and
@@ -87,13 +87,13 @@ cz_face.py:71:    from transformers import BlipProcessor, BlipForConditionalGene
 
 transformers is used **only** through explicitly named classes (`BlipProcessor` /
 `BlipForConditionalGeneration`, for the captioner). The flaw lives in the `Auto*`
-resolution step, which reads an untrusted config to pick a class — naming the class
+resolution step, which reads an untrusted config to pick a class, naming the class
 directly means that step never runs. Everything else goes through diffusers.
 
 The LightGlue code does ship inside the installed transformers package; it is simply
 never invoked by this application.
 
-### gradio — CVE-2026-10783 (audio cache key)
+### gradio: CVE-2026-10783 (audio cache key)
 
 The flaw is in `save_audio_to_cache`, reachable only through the Audio component. The
 app has no audio surface at all:

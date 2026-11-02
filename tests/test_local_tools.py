@@ -44,3 +44,29 @@ def test_the_flux3_edit_tab_and_input_mode_are_hidden():
     radios = [b for b in demo.blocks.values()
               if isinstance(b, gr.Radio) and b.label == "Input mode"]
     assert radios and radios[0].visible is False
+
+
+def test_no_visible_flux3_wording_in_the_ui():
+    """The inherited FLUX.3 wording stays only in hidden components and comments."""
+    import gradio as gr
+    demo = cz_ui.build_ui()
+    parents = {}
+    for b in demo.blocks.values():
+        for c in getattr(b, "children", []) or []:
+            parents[c._id] = b
+
+    def shown(b):
+        while b is not None:
+            if getattr(b, "visible", True) is False:
+                return False
+            b = parents.get(b._id)
+        return True
+    bad = []
+    for b in demo.blocks.values():
+        if not shown(b):
+            continue
+        for attr in ("label", "info", "placeholder", "value"):
+            v = getattr(b, attr, None)
+            if isinstance(v, str) and ("FLUX.3" in v or "FLUX 3" in v):
+                bad.append(f"{type(b).__name__}.{attr}: {v[:80]}")
+    assert not bad, bad

@@ -236,7 +236,7 @@ var st=null;
 for(var k=0;k<200000;k++){var raw=await gcall('job_progress',[key]);
 st=(typeof raw==='string')?(function(){try{return JSON.parse(raw);}catch(_){return null;}})():raw;
 if(st){var c=(st.n?(' '+(st.i||0)+'/'+st.n):'');
-batchStatus('<span class="spin"></span>Batch'+c+' — '+esc(st.text||'working…'));
+batchStatus('<span class="spin"></span>Batch'+c+', '+esc(st.text||'working…'));
 if(st.done)break;}
 await _sleep(500);}
 var sm=(st&&st.summary)||{};
@@ -256,7 +256,7 @@ var st=null;
 for(var k=0;k<200000;k++){var raw=await gcall('job_progress',[key]);
 st=(typeof raw==='string')?(function(){try{return JSON.parse(raw);}catch(_){return null;}})():raw;
 if(st){var c=(st.n?(' '+(st.i||0)+'/'+st.n):'');
-batchStatus('<span class="spin"></span>Thumbnails'+c+' — '+esc(st.text||'working…'));
+batchStatus('<span class="spin"></span>Thumbnails'+c+', '+esc(st.text||'working…'));
 if(st.done)break;}
 await _sleep(500);}
 var sm=(st&&st.summary)||{};
@@ -346,7 +346,7 @@ var ix=-1;for(var k=0;k<VIEW.length;k++){if(VIEW[k].file===_focus||VIEW[k].name=
 if(ix>=0){open(ix);_focus='';}}
 function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');renderFolders();filter();
 if(!DATA.length&&m&&m.building){grid.innerHTML='<p style="padding:20px;color:#8b98ad">Indexing your output folder… '+
-'(first run — can take ~30 s for large folders; it will fill in automatically)</p>';}}
+'(first run: can take ~30 s for large folders; it will fill in automatically)</p>';}}
 // The sidebar is built from days.json (not from DATA) when the Outputs tab is open.
 function renderDays(){var h='<div class="f'+(curFolder===''?' active':'')+'" data-f=""><span>All</span>'+
 '<span class="cnt">'+DAYS.reduce(function(a,d){return a+(d.count||0);},0)+'</span></div>';

@@ -1,11 +1,11 @@
-# crispz-klein — fork FLUX.2 Klein de crispz-qwen-edit
+# crispz-klein: fork FLUX.2 Klein de crispz-qwen-edit
 
 Fork **texte → image + édition multi-référence** basé sur
 [`black-forest-labs/FLUX.2-klein-4B`](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
 (4B, Apache 2.0, distillé 4 steps). Parti de **crispz-qwen-edit** plutôt que de
 crispz-studio ou crispz-krea2, parce que klein-4B a le même profil fonctionnel que
-Qwen-Image-Edit — txt2img, img2img, inpaint et édition multi-référence dans un seul
-fork — là où krea2 est le fork amputé (`img2img: False`, `inpaint: False`, pas
+Qwen-Image-Edit: txt2img, img2img, inpaint et édition multi-référence dans un seul
+fork: là où krea2 est le fork amputé (`img2img: False`, `inpaint: False`, pas
 d'omni, pas de single-file).
 
 - Modèle : `black-forest-labs/FLUX.2-klein-4B` (défaut). **Repo public, Apache 2.0.**
@@ -23,11 +23,11 @@ d'omni, pas de single-file).
 | Étape | Temps | VRAM |
 |---|---|---|
 | chargement du modèle | 8,9 s | 14,94 Go |
-| `gen` (txt2img) | 2,0 s | — |
-| `edit` 1 référence | 3,0 s | — |
-| `edit` 2 références | 5,2 s | — |
-| `inpaint` | 3,0 s | — |
-| `upscale` factor 1 (img2img) | 1,7 s | — |
+| `gen` (txt2img) | 2,0 s |, |
+| `edit` 1 référence | 3,0 s |, |
+| `edit` 2 références | 5,2 s |, |
+| `inpaint` | 3,0 s |, |
+| `upscale` factor 1 (img2img) | 1,7 s |, |
 
 **14,94 Go au total, quel que soit le nombre de pipelines dérivés** : un seul modèle
 sert txt2img, edit, inpaint et img2img (vérifié par `test_klein_e2e.py` étape 6).
@@ -43,11 +43,11 @@ Pour mémoire, crispz-qwen-edit charge deux modèles de 20B pour la même surfac
 | `from_single_file` | oui | **oui, testé** | non | n/a (ComfyUI) |
 | img2img / inpaint | oui | oui | **non** | non |
 | multi-référence | modèle séparé | **natif, même pipeline** | non | LoRA expérimental |
-| Licence | Apache 2.0 | **Apache 2.0** | Community (plafond 1 M$) | — |
+| Licence | Apache 2.0 | **Apache 2.0** | Community (plafond 1 M$) |, |
 
 Rendu BD : klein sort des cases encrées à plat, avec cadre, sans LoRA de style
 (cf. `tests/e2e_1_gen.png`). L'édition préserve le personnage au pixel près tout en
-changeant la scène (`tests/e2e_2_edit1.png`, nuit → jour) — c'est précisément ce dont
+changeant la scène (`tests/e2e_2_edit1.png`, nuit → jour), c'est précisément ce dont
 le casting `@Nom` de comics2crispz a besoin.
 
 ## Le mapping
@@ -65,31 +65,31 @@ Signatures relevées sur `diffusers/main` :
 | kwarg | `Flux2KleinPipeline` | `Flux2KleinInpaintPipeline` |
 |---|---|---|
 | `image` | **`list[PIL] \| PIL`** | oui |
-| `image_reference` | — | oui |
-| `mask_image` | — | oui |
+| `image_reference` |: | oui |
+| `mask_image` |: | oui |
 | `strength` | **absent** | oui (défaut 0.8) |
-| `padding_mask_crop` | — | oui |
+| `padding_mask_crop` |: | oui |
 | `guidance_scale` | 4.0 | 8.0 |
 | `negative_prompt` | **absent** | **absent** |
 
-## Ce qui diverge de l'amont — à ne PAS écraser lors d'un merge
+## Ce qui diverge de l'amont: à ne PAS écraser lors d'un merge
 
-### A. Aucun negative prompt, aucun CFG — **tranché par la mesure**
+### A. Aucun negative prompt, aucun CFG: **tranché par la mesure**
 
 `tests/test_klein_guidance.py` rend la même seed à `guidance_scale` 1.0 / 4.0 / 8.0 :
 **images bit-à-bit identiques** (MAE 0,0000, écart max 0). diffusers l'annonce
-lui-même — `pipeline_flux2_klein.py:585` : `if guidance_scale > 1.0 and
+lui-même: `pipeline_flux2_klein.py:585` : `if guidance_scale > 1.0 and
 self.config.is_distilled: logger.warning("Guidance scale ... is ignored")`. Le
 `model_index.json` du repo porte `"is_distilled": true`.
 
 Donc **option honnête** retenue (pas de `negative_prompt_embeds` à coder) :
 
-- `_cfg()` renvoie `{}` — la signature est conservée, tous les callsites
+- `_cfg()` renvoie `{}`: la signature est conservée, tous les callsites
   `**_cfg(negative)` de l'amont restent valides ;
 - `_qwen_call()` injecte `guidance_scale = 1.0` quand `pipe.config.is_distilled`,
   ce qui **tait le warning diffusers à chaque appel**. Si un checkpoint FLUX.2 NON
   distillé est chargé un jour, `is_distilled` est faux et le curseur de l'UI
-  redevient un vrai CFG — le code gère déjà les deux ;
+  redevient un vrai CFG: le code gère déjà les deux ;
 - `cz_protocol` annonce `supports.negative: false` et **émet un warning** quand un
   spec porte un `negative` ou un `guidance` (règle maison : dégradation annoncée).
 
@@ -106,17 +106,17 @@ donc par lui avec un **masque entièrement blanc**.
 L'injection est faite **dans `_qwen_call`**, pas aux quatre callsites : un appel qui
 porte `image` + `strength` sans `mask_image` reçoit un masque blanc à la taille de
 l'image. `_refine_whole`, `_refine_tiled`, `process_one` et `txt2img_run(upscale=True)`
-sont donc **inchangés** — surface de conflit minimale au merge.
+sont donc **inchangés**: surface de conflit minimale au merge.
 
 `get_pipe("img2img")` et `get_pipe("inpaint")` renvoient **le même objet** (partagé
 sous les deux clefs de `_DERIVED`).
 
-### C. Le catalogue de LoRA d'édition, vidé puis re-rempli — *imprévu*
+### C. Le catalogue de LoRA d'édition, vidé puis re-rempli: *imprévu*
 
 `cz_edit_loras.py` héritait de 19 presets Qwen-Image-Edit 2509/2511 et de 2 presets
 Lightning. Tous **incompatibles FLUX.2** (architecture et clés différentes). Le `caps`
 les annonçait : un appelant demandant `Manga-Tone` aurait planté. `EDIT_LORA_SPECS` et
-`SPEED_SPECS` ont donc été vidés — **le catalogue amont est conservé juste en dessous,
+`SPEED_SPECS` ont donc été vidés: **le catalogue amont est conservé juste en dessous,
 commenté, comme référence de merge**.
 
 Le catalogue contient depuis **deux** entrées, vérifiées chargeables :
@@ -136,7 +136,7 @@ d'édition créative : utile en passe de finition, pas pour le casting `@Nom`.
 
 `tools/check_klein_extras.py` guette les prochaines sorties (ControlNet, LoRA d'édition).
 
-### C-bis. Dialecte de clés LoRA — *imprévu, trouvé en intégrant ce preset*
+### C-bis. Dialecte de clés LoRA: *imprévu, trouvé en intégrant ce preset*
 
 diffusers/peft attend `.lora_A.weight` / `.lora_B.weight`. Ce LoRA-là **mélange deux
 dialectes** : 160 clés PEFT plus 40 en `.lora.down.weight` / `.lora.up.weight` (les
@@ -148,12 +148,12 @@ neuf pour le reste** : le LoRA s'applique partiellement, sans erreur, juste un
 ramène les clés au dialecte PEFT avant chargement (`down` → `A`, `up` → `B`, rangs
 identiques), en le journalisant. Vaut aussi pour `.lora_down.` / `.lora_up.`.
 
-### C-ter. Collision d'espace de noms base ↔ édition — *imprévu, conséquence du § H*
+### C-ter. Collision d'espace de noms base ↔ édition: *imprévu, conséquence du § H*
 
 Chez l'amont, édition et base sont deux modèles distincts, donc deux jeux
 d'adaptateurs indépendants. Ici c'est le **même objet** : les deux jeux se disputaient
 `cz_lora_i` (« Adapter name cz_lora_0 already in use ») dès qu'un LoRA de base **et**
-un preset d'édition étaient posés — plantage franc, aucune image. Et `set_adapters`
+un preset d'édition étaient posés: plantage franc, aucune image. Et `set_adapters`
 remplaçant la liste active, poser l'édition **désactivait silencieusement** les LoRA
 de base.
 
@@ -163,7 +163,7 @@ chemin, premier poids gagnant) en un seul appel, avec `_APPLIED_LORAS` comme uni
 
 Couvert par `tests/test_lora_dialect.py`.
 
-### C-quater. 4B contre 9B : les distinguer AVANT de charger — *imprévu*
+### C-quater. 4B contre 9B : les distinguer AVANT de charger: *imprévu*
 
 La garde d'architecture ne pouvait rien : **les deux variantes partagent
 l'architecture et les noms de tenseurs**. Un checkpoint 9B chargé dans le pipeline
@@ -174,7 +174,7 @@ Seule la **dimension cachée** les sépare (3072 / 4096), et elle est lisible à
 l'en-tête : `double_stream_modulation_img` (`.lin.` au layout d'origine, `.linear.`
 au layout diffusers), dont le second axe EST la dimension. La valeur attendue vient
 du repo de base (`attention_head_dim × num_attention_heads`), donc la garde est
-**relative à la base et symétrique** — pointer `klein_model` sur le 9B fait
+**relative à la base et symétrique**: pointer `klein_model` sur le 9B fait
 refuser les 4B. Base indéterminable → aucun filtrage (règle maison : ne jamais
 écarter sur un doute). Même contrôle sur le chemin GGUF.
 
@@ -185,10 +185,10 @@ Mesuré sur une bibliothèque réelle de 21 fichiers : 7 chargeables, 12 refusé
 raison (dont 10 en 9B et un LoRA mal rangé). Couvert par
 `tests/test_klein_variant.py`.
 
-### C-quinquies. Choisir 4B **ou** 9B, et le piège des presets — *imprévu*
+### C-quinquies. Choisir 4B **ou** 9B, et le piège des presets: *imprévu*
 
 La garde ci-dessus est relative au repo de base, donc changer de variante ne demandait
-qu'à pointer `klein_model` ailleurs — à la main, dans `preferences.json`, sans que le
+qu'à pointer `klein_model` ailleurs: à la main, dans `preferences.json`, sans que le
 dropdown ne l'offre. `ZIMAGE_BASE_REPOS` ne contenait que le 4B : sur un install
 pointé vers le 9B, le dropdown affichait le 4B pendant que le pipeline tournait sur le
 9B, et le sélectionner ramenait au 4B **en silence**.
@@ -197,8 +197,8 @@ Les deux repos officiels sont maintenant proposés. Choisir un repo de base :
 
 - recharge **tout** (transformer + VAE + encodeur Qwen3), contrairement à un
   single-file qui n'échange que le transformer ;
-- **reconstruit la liste des checkpoints** — un 9B ne charge pas dans un pipeline 4B,
-  la liste doit suivre — et crée les presets manquants ;
+- **reconstruit la liste des checkpoints**: un 9B ne charge pas dans un pipeline 4B,
+  la liste doit suivre: et crée les presets manquants ;
 - **persiste le choix** (`klein_model` dans `preferences.json`) : « selon le projet »
   se compte en sessions, pas en runs ;
 - annonce, pour le 9B, la licence non commerciale, le dépôt *gated* et les ~29 Go de
@@ -209,7 +209,7 @@ bibliothèque 9B sur un install 4B en laisse une pile qui nomment des checkpoint
 `list_checkpoints()` écarte désormais (12 sur 20 sur la machine de test). Au *Load*,
 cz_ui poussait ce nom dans le dropdown ; le frontend Gradio refuse une valeur hors
 `choices`, et le `.then()` qui applique le modèle relisait donc l'**ancienne** valeur.
-Prompt, taille, steps, sampler et LoRA s'appliquaient — le modèle seul, non. Vu de
+Prompt, taille, steps, sampler et LoRA s'appliquaient, le modèle seul, non. Vu de
 l'utilisateur : « je change de modèle, c'est toujours le modèle par défaut ».
 
 Un preset ne pousse plus un checkpoint absent des choix : il applique le reste et dit
@@ -219,7 +219,7 @@ sans broncher pour mourir au run suivant, le refuse maintenant à la sélection.
 
 Couvert par `tests/test_preset_model_switch.py`.
 
-### D. `_QWEN_KEY_MARKERS` re-dérivé — *imprévu*
+### D. `_QWEN_KEY_MARKERS` re-dérivé: *imprévu*
 
 La garde d'architecture du chemin single-file/GGUF cherchait `img_in`, `txt_in`,
 `time_text_embed` : **aucun n'existe** dans le transformer FLUX.2 (169 tenseurs
@@ -227,7 +227,7 @@ relevés). Nouveaux marqueurs : `single_transformer_blocks.`,
 `double_stream_modulation`, `x_embedder`, `context_embedder`. Le nom de la constante
 est gardé pour limiter la surface de conflit ; seul le contenu change.
 
-### E. `requirements-lock.txt` : `gguf` et `hf_xet` manquaient — *imprévu*
+### E. `requirements-lock.txt` : `gguf` et `hf_xet` manquaient: *imprévu*
 
 Le lock hérité de crispz-studio omet explicitement `gguf` (« crispz-studio n'a pas de
 chemin de chargement GGUF »). C'est faux pour ce fork : `_load_transformer` a bien un
@@ -236,7 +236,7 @@ le lock, pas `requirements.txt`) sortait donc un venv sans `gguf` → `test_quan
 en échec et un `.gguf` refusé à l'exécution. `hf_xet` manquait aussi (téléchargements HF
 en HTTP lent). Les deux sont ajoutés au lock avec leur version installée.
 
-### F. Le raisonnement Ollama finissait dans le prompt — *imprévu*
+### F. Le raisonnement Ollama finissait dans le prompt: *imprévu*
 
 `cz_ollama` n'avait aucune défense contre les modèles « thinking » (Qwen3,
 DeepSeek-R1, Kimi…) : leur monologue interne arrivait tel quel dans `response`,
@@ -253,7 +253,7 @@ for… » collé devant l'image à générer). Deux défenses, parce qu'aucune n
 Couvert par `tests/test_ollama_thinking.py`, et vérifié contre un vrai modèle
 thinking local.
 
-### G. Détection GGUF : tout FLUX.2 était écarté — *imprévu, sérieux*
+### G. Détection GGUF : tout FLUX.2 était écarté: *imprévu, sérieux*
 
 `gguf_arch` valait `qwen_image` (hérité de la config amont), or un GGUF FLUX.2
 déclare `flux` ou `flux2` → `list_checkpoints()` l'écartait avec « this build only
@@ -281,7 +281,7 @@ pas retirés :
 | `generate_omni()` | tape le pipeline de base, `image=` liste de PIL |
 | `_load_omni()` | **seule suppression réelle** (81 lignes) |
 
-## `cz_protocol.py` — le caps effectif
+## `cz_protocol.py`: le caps effectif
 
 ```json
 "tool": "crispz-klein",
@@ -327,7 +327,7 @@ Qwen, les presets Lightning, les marqueurs de clés Qwen.
 ## Piège du clonage entre forks
 
 Ce fork a été créé par `git clone` (et non par copie de dossier) : `config.txt` et
-`preferences.json`, gitignorés, **ne sont pas venus**. C'est délibéré — c'est ce qui
+`preferences.json`, gitignorés, **ne sont pas venus**. C'est délibéré, c'est ce qui
 avait coûté quatre échecs de validation à crispz-krea2.
 
 Au premier `cp config-sample.txt config.txt`, vérifier : `klein_model`
@@ -346,7 +346,7 @@ réintroduire**), `model_profiles` (clés `klein` / `flux-2` / `flux2` à 4 step
 ```
 
 Suite héritée : **13/13 au vert**. Deux fixtures ont dû être portées dans
-`test_quant_formats.py` — les clés synthétiques (marqueurs Qwen) et la classe
+`test_quant_formats.py`: les clés synthétiques (marqueurs Qwen) et la classe
 monkeypatchée (`QwenImageTransformer2DModel` → `Flux2Transformer2DModel`).
 
 Smoke test du protocole :
@@ -360,11 +360,11 @@ Smoke test du protocole :
 
 `FLUX.2-klein-4B` est sous **Apache 2.0** : usage commercial libre, pas de plafond de
 chiffre d'affaires, pas de filtrage de contenu imposé, pas de révocation. C'est la
-licence la plus permissive de toute la lignée crispz — l'inverse exact de crispz-krea2.
+licence la plus permissive de toute la lignée crispz, l'inverse exact de crispz-krea2.
 
 ⚠️ **`FLUX.2-klein-9B` est une autre licence.** Non commerciale, filtres de contenu,
 et dépôt *gated* sur Hugging Face. Il est **proposé dans le dropdown** depuis la
-1.19.0 — un projet peut le vouloir — mais le sélectionner affiche la licence, l'accès
+1.19.0, un projet peut le vouloir, mais le sélectionner affiche la licence, l'accès
 gated et les ~29 Go de VRAM avant le premier run, et l'échec d'accès du Hub est
 traduit en consigne (accepter la licence, poser un token).
 
@@ -395,7 +395,7 @@ pas le dépôt. Pour ne jamais le voir offert : `"klein_base_repos": [...]` dans
       `Flux2KleinInpaintPipeline` (validé par install.bat lui-même).
 - [x] `requirements-lock.txt` : `gguf` + `hf_xet` ajoutés (§ E).
 - [x] `.venv` du fork installé (`install.bat`, 8,6 Go) ; `config.txt` généré depuis
-      le sample porte bien les défauts klein — le piège du clonage est clos par
+      le sample porte bien les défauts klein: le piège du clonage est clos par
       construction.
 - [x] Suite héritée 13/13 et e2e revalidés **sur le venv du fork**.
 - [x] Entrée `klein` dans `comics2crispz/config.json` ; caps atteint par la route
@@ -409,6 +409,6 @@ pas le dépôt. Pour ne jamais le voir offert : `"klein_base_repos": [...]` dans
 ## Note d'exploitation
 
 La famille partage le port 7860 (décision v1 : « pas de port par outil »). Tant qu'une
-autre app crispz tourne, `caps` par l'URL renvoie CELLE-LÀ — comics2crispz le détecte
+autre app crispz tourne, `caps` par l'URL renvoie CELLE-LÀ, comics2crispz le détecte
 (`tool_mismatch: True`) et `upscale`/`gen` refusent proprement. Pour utiliser klein,
 fermer l'autre app et lancer `run.bat`, ou passer par la route CLI (`--local`).

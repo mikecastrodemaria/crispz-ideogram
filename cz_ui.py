@@ -4432,8 +4432,12 @@ def build_ui():
                             rembg_status = gr.Markdown("*Local (rembg). Output = transparent PNG. "
                                                        "First use downloads the u2net model.*")
 
-                        with gr.Tab("Cloud (Ideogram)"):
-                            import cz_cloud_ui
+                        # The Ideogram cloud tab exists only while ideogram_cloud_enabled
+                        # is true (read at startup): this studio is used locally, the
+                        # cloud code stays, hidden (Mike, 02/11/2026).
+                        import cz_cloud_ui
+                        import cz_magic as _czm
+                        with gr.Tab("Cloud (Ideogram)", visible=_czm.cloud_enabled()):
                             cloud_panel = cz_cloud_ui.build_tab()
 
                         with gr.Tab("Inpaint / Outpaint"):

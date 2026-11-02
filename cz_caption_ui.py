@@ -230,11 +230,14 @@ def build_panel():
             p["preset_btn"] = gr.Button("Load preset (sets the size)", scale=1)
         with gr.Row():
             usable, why = cz_magic.cloud_status()
-            engines = [(cz_magic.ENGINE_LABELS[e], e) for e in cz_magic.ENGINES]
+            cloud_shown = cz_magic.cloud_enabled()      # hidden while the cloud is off
+            engines = [(cz_magic.ENGINE_LABELS[e], e) for e in cz_magic.visible_engines()]
             p["engine"] = gr.Radio(engines, value=cz_magic.engine(), label="Magic prompt engine",
-                                   info=("Local and Ollama stay on this machine. Ideogram API "
-                                         "= CLOUD: the prompt goes to the United States. "
-                                         + ("" if usable else why)), scale=3)
+                                   info=(("Local and Ollama stay on this machine. Ideogram "
+                                          "API = CLOUD: the prompt goes to the United States. "
+                                          + ("" if usable else why)) if cloud_shown else
+                                         "Both engines run on this machine: nothing leaves."),
+                                   scale=3)
             p["magic_btn"] = gr.Button("Magic prompt: idea -> caption", variant="primary",
                                        scale=1)
         with gr.Accordion("Describe an image -> caption (local Qwen3-VL-8B)", open=False):
@@ -249,9 +252,10 @@ def build_panel():
                     p["describe_btn"] = gr.Button("Describe -> caption", variant="primary")
                     p["describe_cloud_btn"] = gr.Button(
                         "Cloud: Describe with Ideogram 4.0", variant="secondary",
-                        interactive=usable)
+                        interactive=usable, visible=cloud_shown)
                     gr.Markdown("**Cloud**: the image goes to api.ideogram.ai (United "
-                                "States). " + ("Logged on every call." if usable else why))
+                                "States). " + ("Logged on every call." if usable else why),
+                                visible=cloud_shown)
         p["hld"] = gr.Textbox(label="Summary (high_level_description)", lines=2)
         with gr.Row():
             p["kind"] = gr.Radio(list(KINDS), value=list(KINDS)[0], label="Style type")

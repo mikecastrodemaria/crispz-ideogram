@@ -578,6 +578,22 @@ Points ouverts, aucun bloquant :
   toutes les fonctions), puis `--spend` (edit qualité low + remove background, facturés),
   sortie `bench/lot4/`.
 
+### Bilan du lot 4 (02/11/2026) : clos sur l'acceptation SANS clé, cloud caché
+
+- **Décision de Mike** : il n'utilisera pas le cloud Ideogram, seulement le modèle local.
+  Le code du lot 4 est GARDÉ mais CACHÉ tant que `ideogram_cloud_enabled` vaut false (lu
+  au démarrage) : pas d'onglet Cloud, pas de bouton Describe cloud, pas de moteur « Ideogram
+  API » dans le magic prompt. Un moteur cloud resté dans les préférences retombe sur le
+  local, dit une fois dans le log. Pour le réactiver : `"ideogram_cloud_enabled": true`
+  dans config.txt, redémarrer, puis la clé dans l'onglet Cloud.
+- Acceptation sans clé vérifiée chez Mike : `tools/api_lot4_check.py` refuse et n'envoie
+  rien. La partie « avec une clé » n'a PAS été faite : aucun appel réel n'a jamais été
+  envoyé à l'API, les chemins et champs ne sont vérifiés que contre la spec publiée.
+- Tests : 4 de plus dans `test_ideogram_api.py` (entrées cloud cachées quand c'est coupé,
+  visibles quand c'est activé, repli du moteur). Suite : 635 passent, 0 échec, 1 skip.
+- Conséquence pour le lot 5 (alternatives locales) : il devient le seul chemin pour le
+  détourage, la vectorisation et l'édition.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

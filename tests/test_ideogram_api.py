@@ -412,3 +412,52 @@ def test_protocol_caps_report_the_cloud_without_running_it(on):
     import cz_protocol
     c = cz_protocol.caps_dict()["supports"]["cloud"]
     assert c["enabled"] and "edit" in c["ops"] and c["via"] == "ui"
+
+
+# --- Hidden while off (Mike, 02/11/2026: the studio is used locally) --------------------------
+
+def _caption_panel():
+    import gradio as gr
+    import cz_caption_ui
+    with gr.Blocks():
+        return cz_caption_ui.build_panel()
+
+
+def test_while_off_no_cloud_engine_and_no_cloud_describe(off):
+    assert "ideogram_api" not in cz_magic.visible_engines()
+    p = _caption_panel()
+    assert p["describe_cloud_btn"].visible is False
+    assert "ideogram_api" not in [v for _, v in p["engine"].choices]
+    assert "United States" not in (p["engine"].info or "")
+
+
+def test_a_cloud_engine_left_in_the_settings_falls_back_on_local_and_says_so(off, monkeypatch):
+    lines = []
+    monkeypatch.setattr(cz_magic, "_log", lambda m: lines.append(str(m)))
+    monkeypatch.setitem(cz_magic._prefs, "magic_prompt_engine", "ideogram_api")
+    cz_magic._ENGINE_FALLBACK_SAID.clear()
+    assert cz_magic.engine() == "local" and cz_magic.engine() == "local"
+    assert sum("local engine is used instead" in m for m in lines) == 1
+
+
+def test_while_on_the_cloud_entries_are_shown(on):
+    assert "ideogram_api" in cz_magic.visible_engines()
+    p = _caption_panel()
+    assert p["describe_cloud_btn"].visible is True
+    assert "ideogram_api" in [v for _, v in p["engine"].choices]
+
+
+def _cloud_tab_visible():
+    import gradio as gr
+    import cz_ui
+    demo = cz_ui.build_ui()
+    tabs = [b for b in demo.blocks.values()
+            if isinstance(b, gr.Tab) and b.label == "Cloud (Ideogram)"]
+    assert len(tabs) == 1
+    return tabs[0].visible
+
+
+def test_the_cloud_tab_is_hidden_while_off_and_shown_when_on(off, monkeypatch):
+    assert _cloud_tab_visible() is False
+    monkeypatch.setitem(cz_magic._prefs, "ideogram_cloud_enabled", True)
+    assert _cloud_tab_visible() is True

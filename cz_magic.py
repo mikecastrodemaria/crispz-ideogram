@@ -48,10 +48,27 @@ def _setting(key, default=None):
     return default if v is None else v
 
 
+_ENGINE_FALLBACK_SAID = set()
+
+
+def visible_engines():
+    """The engines the UI offers: the cloud one only while `ideogram_cloud_enabled` is
+    true (Mike's choice, 02/11/2026: local only, the cloud stays in the code, hidden)."""
+    return tuple(e for e in ENGINES if e != "ideogram_api" or cloud_enabled())
+
+
 def engine():
     e = _setting("magic_prompt_engine", CONFIG.get("magic_prompt_engine", "local"))
     e = str(e or "local").strip().lower()
-    return e if e in ENGINES else "local"
+    if e not in ENGINES:
+        return "local"
+    if e not in visible_engines():
+        if e not in _ENGINE_FALLBACK_SAID:
+            _ENGINE_FALLBACK_SAID.add(e)
+            _log(f"magic prompt engine '{e}' needs the Ideogram cloud, which is off "
+                 f"(`ideogram_cloud_enabled`: false): the local engine is used instead")
+        return "local"
+    return e
 
 
 def cloud_enabled():

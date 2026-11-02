@@ -81,7 +81,7 @@
     "magic_prompt_ollama_model": "",
     "_magic_prompt_temperature_help": "Sampling temperature of the Ollama magic prompt.",
     "magic_prompt_temperature": 0.7,
-    "_ideogram_cloud_enabled_help": "OFF by default. true allows the Ideogram cloud functions: the magic prompt and Describe of the caption editor, and the Cloud (Ideogram) tab (precise edit 4.5, replace background 4.5, remix, remove background, upscale, transparent, vectorize, SVG). Your prompts and images are sent to api.ideogram.ai in the United States. Every call is logged with a CLOUD: line and written to ideogram_cloud_journal.jsonl in the output folder. Also settable in the Cloud tab.",
+    "_ideogram_cloud_enabled_help": "OFF by default, and then HIDDEN: no Cloud tab, no cloud button, no cloud magic prompt engine; nothing leaves the machine. true (then restart the app) shows the Ideogram cloud functions: the Cloud (Ideogram) tab (precise edit 4.5, replace background 4.5, remix, remove background, upscale, transparent, vectorize, SVG), the cloud Describe and the Ideogram API magic prompt engine. Your prompts and images are then sent to api.ideogram.ai in the United States, every call logged with a CLOUD: line and written to ideogram_cloud_journal.jsonl in the output folder.",
     "ideogram_cloud_enabled": false,
     "_ideogram_api_key_help": "Ideogram API key (ideogram.ai/platform), or env IDEOGRAM_API_KEY. Unused while ideogram_cloud_enabled is false.",
     "ideogram_api_key": "",

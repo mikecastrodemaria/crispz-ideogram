@@ -68,8 +68,9 @@ def main():
     RESULTS["status"] = "on" if ok else f"off: {why}"
     _say(f"status: {RESULTS['status']}")
     if not ok:
-        _say("nothing sent. To go further: set ideogram_cloud_enabled and the key in the "
-             "Cloud (Ideogram) tab (Cloud settings), or in config.txt.")
+        _say("nothing sent. The cloud is off and hidden in the app. To use it: "
+             "\"ideogram_cloud_enabled\": true in config.txt, restart the app, then the key "
+             "in the Cloud (Ideogram) tab (or env IDEOGRAM_API_KEY).")
         _save()
         return
     img, src = _test_image()

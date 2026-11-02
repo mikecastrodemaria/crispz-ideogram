@@ -1676,11 +1676,66 @@ def _ui_remove_bg(image, history, save_mode, output_dir):
         try:
             dst = build_output_path(None, save_mode, output_dir, "png", tag="nobg", size=res.size)
             if dst:
-                save_image(res, dst, "png")
+                save_image(res, dst, "png", meta={"local": True, "op": "remove_background",
+                                                  "tool": "rembg (u2net)",
+                                                  "size": list(res.size)})
         except Exception as e:
             _dbg(f"save nobg failed: {e}")
     new_hist = ([res] + list(history or []))[:200]
-    return [res], "Background removed (transparent PNG).", new_hist, new_hist
+    return [res], "Background removed locally (rembg, transparent PNG).", new_hist, new_hist
+
+
+def _ui_handoff(image, r1, r2, r3, instruction, main_prompt, seed, history, output_dir,
+                progress=gr.Progress(track_tqdm=True)):
+    """Edit in crispz-flux3 tab -> (gallery, status, history, history)."""
+    import cz_handoff
+    image = _editor_img(image)
+    text = (instruction or "").strip() or (main_prompt or "").strip()
+    try:
+        seed = int(seed) if seed is not None else -1
+    except (TypeError, ValueError):
+        seed = -1
+    try:
+        imgs, res, route = cz_handoff.edit(image, text, [r1, r2, r3], seed, output_dir,
+                                           free_vram=cz_pipeline.free_vram)
+    except cz_handoff.HandoffError as e:
+        return [], f"**crispz-flux3:** {e}", history, history
+    except Exception as e:
+        _log(f"handoff failed: {type(e).__name__}: {e}")
+        return [], f"**crispz-flux3:** {type(e).__name__}: {e}", history, history
+    new_hist = (imgs + list(history or []))[:200]
+    how = "its running app" if route == "instance" else "its own process (cold)"
+    warn = res.get("warnings") or []
+    return (imgs, f"Edited by crispz-flux3 ({how}): `{os.path.basename(res['images'][0])}`"
+            + (f". Warnings: {'; '.join(warn[:3])}" if warn else ""), new_hist, new_hist)
+
+
+def _ui_vectorize(image, preset, colors, remove_bg, save_mode, output_dir):
+    """Vectorize (SVG) tab: local vtracer -> (preview html, svg file, status). The SVG is
+    saved like the other outputs; in display mode a temporary file still lets it be
+    downloaded."""
+    import tempfile
+    import cz_vector
+    image = _editor_img(image)
+    if image is None:
+        return "", None, "Drop an image first."
+    try:
+        svg, info = cz_vector.vectorize(image, preset, colors, remove_bg)
+    except Exception as e:
+        _log(f"vectorize failed: {type(e).__name__}: {e}")
+        return "", None, f"Vectorize failed: {e}"
+    path = None
+    try:
+        path = cz_vector.save(svg, info, save_mode, output_dir)
+    except Exception as e:
+        _log(f"vectorize: SVG not saved ({type(e).__name__}: {e})")
+    if path is None:
+        fd, path = tempfile.mkstemp(suffix=".svg", prefix="crispz_vector_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(svg)
+    msg = cz_vector.summary(info) + (f" Saved: `{os.path.basename(path)}`"
+                                     if save_mode != "display" else " Display only (Save tab).")
+    return cz_vector.preview_html(svg), path, msg
 
 
 def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, harmonize_denoise,
@@ -4125,7 +4180,12 @@ def build_ui():
             _sample_urls[n] = "/gradio_api/file=" + os.path.abspath(p).replace("\\", "/")
     js_full = CZ_JS.replace("__MAP__", json.dumps(_sample_urls))
     # Omni (multi-reference) is only offered when an Omni/Edit model is configured.
-    omni_on = bool((cz_pipeline.OMNI_MODEL or "").strip())
+    # crispz-ideogram: Ideogram 4 has no edit pipeline (cz_protocol.OMNI_SUPPORTED is
+    # False), whatever OMNI_MODEL says (the FLUX.3 code sets it to the base repo): the
+    # Edit (references) tab and input mode stay hidden. Editing: the Edit in crispz-flux3
+    # tab (lot 5).
+    import cz_protocol as _czproto
+    omni_on = _czproto.OMNI_SUPPORTED and bool((cz_pipeline.OMNI_MODEL or "").strip())
 
     with gr.Blocks(title=f"crispz-ideogram {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
                    js=js_full, head=_ui_head()) as demo:
@@ -4230,7 +4290,7 @@ def build_ui():
                     # The txt2img -> upscale chaining (left) + Improve prompt (right), aligned.
                     auto_upscale_cb = gr.Checkbox(
                         value=bool(CONFIG.get("default_auto_upscale", False)), scale=4,
-                        label="Upscale after generate: chain each txt2img or Edit (references) image "
+                        label="Upscale after generate: chain each txt2img image "
                               "through the Upscale pipeline (ESRGAN + refine), no manual step")
                     improve_btn = gr.Button("Improve prompt", scale=1, min_width=130,
                                             visible=IMPROVE_ENABLED)
@@ -4431,6 +4491,57 @@ def build_ui():
                             rembg_btn = gr.Button("Remove background", variant="primary", size="sm")
                             rembg_status = gr.Markdown("*Local (rembg). Output = transparent PNG. "
                                                        "First use downloads the u2net model.*")
+
+                        with gr.Tab("Edit in crispz-flux3"):
+                            import cz_handoff
+                            _ho_ok, _ho_why = cz_handoff.status()
+                            gr.Markdown("*Ideogram 4 does not edit. This sends the image and "
+                                        "the instruction to **crispz-flux3** on this "
+                                        "machine (protocol v1): through its app when it "
+                                        "runs, otherwise in its own process after "
+                                        "crispz-ideogram frees its VRAM. Nothing leaves "
+                                        "the machine. Up to 3 references.*")
+                            with gr.Row():
+                                ho_dir = gr.Textbox(value=cz_handoff.flux3_dir(),
+                                                    label="crispz-flux3 folder",
+                                                    placeholder=r"D:\Github\crispz-flux3",
+                                                    scale=4)
+                                ho_save = gr.Button("Save", size="sm", scale=1)
+                            ho_status = gr.Markdown(("Ready: " if _ho_ok else "**Off:** ")
+                                                    + _ho_why)
+                            with gr.Row():
+                                ho_img = _crop_input("Image to edit", 260)
+                                with gr.Column():
+                                    ho_refs = [gr.Image(type="pil", label=f"Reference {i}",
+                                                        height=110) for i in (1, 2, 3)]
+                            ho_prompt = gr.Textbox(label="Edit instruction (empty = the "
+                                                         "main prompt)", lines=2)
+                            ho_btn = gr.Button("Edit in crispz-flux3 (local)",
+                                               variant="primary", size="sm",
+                                               interactive=_ho_ok)
+
+                        with gr.Tab("Vectorize (SVG)"):
+                            import cz_vector
+                            _vec_ok, _vec_why = cz_vector.available()
+                            gr.Markdown("*Local (vtracer): image -> SVG, nothing leaves the "
+                                        "machine. Made for logos, icons and flat colours; a "
+                                        "photo gives a heavy SVG. Fewer colours = cleaner "
+                                        "shapes.*" + ("" if _vec_ok else f" **{_vec_why}**"))
+                            with gr.Row():
+                                vec_img = _crop_input("Image", 280)
+                                vec_preview = gr.HTML(label="SVG")
+                            with gr.Row():
+                                vec_preset = gr.Dropdown(list(cz_vector.PRESETS),
+                                                         value=cz_vector.DEFAULT_PRESET,
+                                                         label="Preset")
+                                vec_colors = gr.Slider(0, 32, value=8, step=1,
+                                                       label="Colours (0 = keep all)")
+                                vec_rembg = gr.Checkbox(value=False,
+                                                        label="Remove background first (local)")
+                            vec_btn = gr.Button("Vectorize", variant="primary", size="sm",
+                                                interactive=_vec_ok)
+                            vec_file = gr.File(label="SVG file", interactive=False)
+                            vec_status = gr.Markdown("")
 
                         # The Ideogram cloud tab exists only while ideogram_cloud_enabled
                         # is true (read at startup): this studio is used locally, the
@@ -5326,6 +5437,15 @@ def build_ui():
                           [prompt, compose_status])
         rembg_btn.click(_ui_remove_bg, [rembg_img, history, save_mode, output_dir],
                         [out, report, history, history_gallery])
+        ho_btn.click(_ui_handoff, [ho_img, *ho_refs, ho_prompt, prompt, seed, history,
+                                   output_dir], [out, ho_status, history, history_gallery])
+
+        def _ho_save(folder):
+            ok, why = cz_handoff.save_setting(folder)
+            return ("Ready: " if ok else "**Off:** ") + why, gr.update(interactive=ok)
+        ho_save.click(_ho_save, [ho_dir], [ho_status, ho_btn])
+        vec_btn.click(_ui_vectorize, [vec_img, vec_preset, vec_colors, vec_rembg, save_mode,
+                                      output_dir], [vec_preview, vec_file, vec_status])
         cz_cloud_ui.wire(cloud_panel, prompt, width, height, save_mode, output_dir,
                          output_format, history, out, report, history_gallery,
                          extra_buttons=[caption_panel["describe_cloud_btn"]], demo=demo)

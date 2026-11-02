@@ -91,6 +91,7 @@ omegaconf==2.4.0
 protobuf==7.36.2
 requests==2.34.2
 tqdm==4.70.1
+vtracer==0.6.15
 psutil==7.2.2
 
 # the optional tabs (Remove BG, Face Swap). rembg 2.0.82+ closes its Dependabot alerts.

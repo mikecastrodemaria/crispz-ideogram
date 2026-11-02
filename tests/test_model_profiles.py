@@ -61,7 +61,11 @@ def test_config_sample_matches_the_code_and_starts_on_ideogram():
     assert cfg["ideogram_model"] == REPO and "klein_model" not in cfg and "flux3_model" not in cfg
     assert cfg["ideogram_base_repos"][0] == REPO and "flux3_base_repos" not in cfg
     assert cfg["ideogram_precision"] == "nf4"
+    # crispz_flux3_dir is this studio's own setting (the Edit in crispz-flux3 tab, lot 5),
+    # not a FLUX.3 leftover
     for k in cfg:
+        if k.lstrip("_").startswith("crispz_flux3_dir"):
+            continue
         assert "klein_" not in k and "flux3_" not in k, k
     with open(os.path.join(ROOT, "preferences.example.json"), encoding="utf-8") as f:
         prefs = json.load(f)

@@ -85,6 +85,8 @@
     "ideogram_cloud_enabled": false,
     "_ideogram_api_key_help": "Ideogram API key (ideogram.ai/platform), or env IDEOGRAM_API_KEY. Unused while ideogram_cloud_enabled is false.",
     "ideogram_api_key": "",
+    "_crispz_flux3_dir_help": "The crispz-flux3 install folder (e.g. D:\\Github\\crispz-flux3), for the Edit in crispz-flux3 tab: the image and the instruction are handed to its protocol v1 CLI on this machine (its running app when there is one, otherwise its own process after crispz-ideogram frees its VRAM). Empty = the tab says how to set it. Env CRISPZ_FLUX3_DIR. Also settable in the tab.",
+    "crispz_flux3_dir": "",
     "_ideogram_cloud_timeout_help": "Seconds a cloud call may take, polling included (replace background, vectorize and SVG answer later; the app waits for them). Minimum 30. Past it, the result may still arrive in your Ideogram account.",
     "ideogram_cloud_timeout": 300,
     "_ideogram_base_repos_help": "The Ideogram 4 repos offered in the Models menu: HF repo ids (the gated official one needs its licence accepted ON THAT REPO and an HF token) or local diffusers folders. The first is the default.",

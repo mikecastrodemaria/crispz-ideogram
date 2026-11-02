@@ -594,6 +594,44 @@ Points ouverts, aucun bloquant :
 - Conséquence pour le lot 5 (alternatives locales) : il devient le seul chemin pour le
   détourage, la vectorisation et l'édition.
 
+### Lot 5 (02/11/2026) : alternatives locales, livré
+
+Le seul chemin pour le détourage, la vectorisation et l'édition depuis que le cloud est
+caché. Rien ne quitte la machine.
+- **Remove BG local** (rembg, u2net), onglet déjà là : vérifié sur CPU (détourage net,
+  55 s au premier appel dont le téléchargement du modèle de 176 Mo, puis 1,1 s). Le PNG
+  sauvé porte désormais ses métadonnées (`local`, `rembg (u2net)`).
+- **Vectorize (SVG)**, nouvel onglet, `cz_vector.py` : vtracer 0.6.15 (MIT, wheels
+  Windows 3.10 à 3.14, ajouté à `requirements.txt` et au lock). Quatre presets (logo à
+  aplats, illustration, noir et blanc, angles vifs), réduction des couleurs avant le tracé
+  (le bruit d'un rendu de diffusion devient sinon des formes), détourage local en option
+  (plus de rectangle de fond), au-delà de 4096 px réduit et dit. Aperçu par `<img>` en
+  data URI (jamais de SVG inline), fichier `.svg` + `.json` dans la sortie. Mesuré : un
+  logo, 3 chemins en 0,05 s ; une photo 768 px, environ 2 000 chemins et 2 Mo en 3 s,
+  signalé comme lourd.
+- **Edit in crispz-flux3**, nouvel onglet, `cz_handoff.py` : l'image (et jusqu'à 3
+  références) écrites en PNG sous `<sortie>/handoff/<date>/`, puis le CLI protocole v1 DE
+  crispz-flux3 (`cz_protocol.py`, lancé avec son propre `.venv`). Son app tourne : l'edit
+  passe par son instance. Sinon : `--local`, crispz-ideogram libère sa VRAM d'abord (dit).
+  Une instance qui répond sous le nom crispz-ideogram (même port dans les deux configs)
+  n'est pas prise pour crispz-flux3. Réglage `crispz_flux3_dir` (champ dans l'onglet, env
+  `CRISPZ_FLUX3_DIR`). Ligne `HANDOFF:` dans le log, `handoff.json` à côté des fichiers.
+  **Piège relevé dans crispz-flux3 (f371426)** : l'op `edit` remplace `spec.refs` par la
+  seule image d'entrée ; avec des références on envoie donc `gen` + `refs` (même voie
+  multi-références) à la taille de l'image. Les deux specs passent le vrai
+  `validate_spec` de crispz-flux3 sans avertissement.
+- **Reste FLUX.3 trouvé** : l'onglet « Edit (references) » et le mode d'entrée du même
+  nom étaient visibles (`omni_on` ne regardait que `OMNI_MODEL`, que le code FLUX.3 pose
+  au repo de base) ; un clic aboutissait à un refus. Désormais `omni_on` suit
+  `cz_protocol.OMNI_SUPPORTED` (False), test à l'appui.
+- Tests : `test_vector.py` (10), `test_handoff.py` (9, dont un vrai sous-processus contre
+  un faux dossier crispz-flux3), `test_local_tools.py` (3). Vérifié dans Chromium
+  (Vectorize, onglet crispz-flux3 grisé avec sa raison). Suite : 657 passent, 0 échec,
+  1 skip ; smoke 22/22.
+- À essayer chez Mike : l'onglet crispz-flux3 avec son vrai dossier, app crispz-flux3
+  ouverte puis fermée (attention : deux apps sur le même port 7860, donner un autre port
+  à l'une des deux).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

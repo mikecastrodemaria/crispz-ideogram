@@ -96,3 +96,17 @@ def test_set_precision_knows_only_nf4_and_persists_the_ideogram_key(monkeypatch)
     monkeypatch.setattr(cz_ui, "_save_prefs_keys", lambda d: saved.update(d))
     msg = cz_ui._ui_set_precision("nf4")
     assert saved == {"ideogram_precision": "nf4"} and "nf4" in msg
+
+
+def test_refine_steps_follow_ideogram_not_flux3_distilled():
+    """Lot 7: the upscale / img2img presets and the refine default were sized for FLUX.3
+    distilled (16 steps): 12 to 16. On Ideogram 4 (48) that left 3 or 4 steps actually
+    run at denoise 0.3. They are scaled 3x; the config sample and the code agree."""
+    import cz_ui
+    for name, p in cz_ui.PRESETS.items():
+        if "steps" in p:
+            assert p["steps"] >= 24, (name, p["steps"])
+    with open(os.path.join(ROOT, "config-sample.txt"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert cfg["default_refine_steps"] == 36
+    assert cz_core.DEFAULT_STEPS in (36, int(cz_core.CONFIG.get("default_refine_steps", 36)))

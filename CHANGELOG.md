@@ -27,6 +27,11 @@ The details, measurements and decisions of every lot are in CLAUDE.md section 8.
   default, then hidden; every call logged and journaled. Never called with a real key.
 - **Lot 5, local alternatives**: Vectorize (SVG) with vtracer, Remove BG metadata, and
   Edit in crispz-flux3 (the image handed to crispz-flux3's protocol v1 CLI).
+- **Lot 7**: a VRAM fallback during an img2img no longer keeps the old weights on the
+  card when the caller still holds the pipe (`IdeogramPipe.release`); the upscale and
+  refine presets rescaled for Ideogram's 48 steps (to confirm on images); the progress
+  bar and the live preview of an emulated img2img count the steps that run;
+  `tools/gpu_lot7_check.py`.
 - **Lot 6**: the 44 inherited FLUX.3 tests rewritten or removed (suite green in CI), a
   GPU end-to-end test for Ideogram (`tests/test_ideogram_e2e.py`), README, FORK.md, a
   Pinokio launcher (`pinokio/`), `--ideogram-model` / `--ideogram-transformer` on the

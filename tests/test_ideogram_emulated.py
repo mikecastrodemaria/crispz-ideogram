@@ -168,3 +168,31 @@ def test_mask_tokens_max_pool():
 def test_an_image_without_strength_is_still_refused_by_name():
     with pytest.raises(NotImplementedError, match="crispz-flux3"):
         _pipe()(prompt="x", image=_init(), num_inference_steps=2)
+
+
+def test_progress_and_preview_count_the_steps_that_run():
+    """Lot 7: diffusers sized its bar on the full schedule (14/48, then stopped), and the
+    live preview said "step 5 of 48". Both now count the steps the emulated img2img
+    really runs; everything is put back after the call."""
+    pipe = _pipe()
+    inner = pipe._pipe
+    totals, previews = [], []
+    real_bar = type(inner).progress_bar
+
+    def spy_bar(self, iterable=None, total=None):
+        totals.append(total)
+        return real_bar(self, iterable=iterable, total=total)
+
+    def cb(p, i, t, kw):
+        previews.append(getattr(p, "_cz_run_steps", None))
+        return kw
+    type(inner).progress_bar = spy_bar
+    try:
+        pipe(prompt="x", image=_init(), strength=0.5, width=256, height=256,
+             num_inference_steps=8, generator=_gen(), callback_on_step_end=cb)
+    finally:
+        type(inner).progress_bar = real_bar
+    assert totals == [4], totals
+    assert previews and set(previews) == {4} and len(previews) == 4
+    assert "progress_bar" not in vars(inner) and inner._cz_run_steps is None
+    assert "set_timesteps" not in vars(inner.scheduler)

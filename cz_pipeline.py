@@ -605,6 +605,15 @@ def _cached_prompt_embeds(pipe, prompt, kw):
         return None
 
 
+def _fresh(pipe, kind="txt2img"):
+    """`pipe`, or a fresh one when it was released by free_vram (a reference kept across
+    a VRAM fallback or an unload). Said in the debug log."""
+    if getattr(pipe, "released", False) is True:
+        _dbg(f"stale pipeline reference ({kind}): taking the current one")
+        return get_pipe(kind)
+    return pipe
+
+
 def _qwen_call(pipe, **kw):
     """Calls the pipeline (a cz_flux3.Flux3Pipe in crispz-ideogram), absorbing the API gaps
     with upstream: the guidance policy (distilled = 1.0, base = the slider), the prompt
@@ -623,6 +632,7 @@ def _qwen_call(pipe, **kw):
     The name `_qwen_call` is kept to limit the conflict surface when merging from
     `qwen/main` (some thirty callsites).
 """
+    pipe = _fresh(pipe)          # a reference that outlived free_vram (lot 7)
     # guidance_scale: klein is distilled -> diffusers IGNORES any value > 1.0 and logs a
     # warning on EVERY call. So 1.0 is passed explicitly (= no CFG, the model's truth) to
     # silence the noise. Should an UNdistilled FLUX.2 checkpoint ever be loaded,
@@ -3346,7 +3356,10 @@ def _step_end_kwargs(total_steps=0, width=0, height=0):
             pipe._interrupt = True
             return cb_kwargs
         if preview and (i % LIVE_PREVIEW_EVERY == 0):
-            _store_preview(cb_kwargs.get("latents"), i + 1, total_steps, width, height,
+            # An emulated img2img / inpaint runs the tail of the schedule only: count the
+            # steps it really runs (set by cz_ideogram._prepare_emulated).
+            total = getattr(pipe, "_cz_run_steps", None) or total_steps
+            _store_preview(cb_kwargs.get("latents"), i + 1, total, width, height,
                            pipe=pipe)
         return cb_kwargs
     return {"callback_on_step_end": _cb}
@@ -3379,6 +3392,13 @@ def free_vram():
     (step 3: unload on idle or the /unload endpoint). Lazy reload."""
     global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS, _APPLIED_LOKRS
     global _ENCODER_TRIMMED, _TEXT_ENCODER_ACTIVE
+    # A caller may still hold the pipe (an argument of _refine_whole, a tile loop...):
+    # releasing the wrapper drops its weights all the same. The stale wrapper is swapped
+    # for a fresh pipe by _qwen_call / _refine_whole (see _fresh).
+    for _p in {id(x): x for x in [_BASE_PIPE, *(_DERIVED or {}).values()]
+               if x is not None}.values():
+        if hasattr(_p, "release") and isinstance(_p, engine.IdeogramPipe):
+            _p.release()
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
@@ -5225,6 +5245,7 @@ def _refine_whole(pipe, image, denoise, steps, prompt, seed):
     h = round_to_multiple(image.height, 16)
     # Two attempts at most: the VRAM guard at the first step (see generate), then a retry in 'model'.
     for _attempt in (0, 1):
+        pipe = _fresh(pipe, "img2img")       # the caller's pipe may have been released
         _set_slicing(pipe, max(image.size))   # to set again on the pipe the retry reloaded
         out = _qwen_call(
             pipe,
@@ -5239,8 +5260,9 @@ def _refine_whole(pipe, image, denoise, steps, prompt, seed):
         ).images[0]
         if not _VRAM_DOWNGRADE:
             return out
-        pipe = None                  # see generate(); the CALLER's argument may still
-                                     # hold the pipe here: to recheck at lot 3 (img2img)
+        pipe = None                  # see generate(). The CALLER may still hold the
+                                     # pipe: free_vram releases the wrapper's weights
+                                     # anyway (IdeogramPipe.release), lot 7
         _consume_vram_downgrade()
         pipe = get_pipe("img2img")   # reload with the downgraded offload
     return out

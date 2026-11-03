@@ -386,7 +386,7 @@ class IdeogramPipe:
     enable_model_cpu_offload, maybe_free_model_hooks...)."""
 
     _OWN = {"_pipe", "repo", "variant", "_said", "_cfg", "_all_hooks", "_tr_pre",
-            "_te_on_gpu", "_offload_device", "_vl_processor"}
+            "_te_on_gpu", "_offload_device", "_vl_processor", "released"}
 
     def __init__(self, pipe, repo=DEFAULT_REPO):
         object.__setattr__(self, "_pipe", pipe)
@@ -398,12 +398,26 @@ class IdeogramPipe:
             object.__setattr__(self, k, None)
         object.__setattr__(self, "_all_hooks", [])
         object.__setattr__(self, "_te_on_gpu", False)
+        object.__setattr__(self, "released", False)
+
+    def release(self):
+        """Lets go of the real pipeline, so that a reference to THIS wrapper kept by some
+        caller no longer pins 15 GB of weights on the card (cz_pipeline.free_vram calls
+        it). A released wrapper refuses any use; cz_pipeline swaps it for a fresh pipe."""
+        object.__setattr__(self, "_pipe", None)
+        object.__setattr__(self, "released", True)
+        object.__setattr__(self, "_all_hooks", [])
+        object.__setattr__(self, "_vl_processor", None)
 
     def __getattr__(self, name):
         if name == "encode_prompt":
             # Hidden on purpose, see the module docstring (embedding cache).
             raise AttributeError(name)
-        return getattr(object.__getattribute__(self, "_pipe"), name)
+        inner = object.__getattribute__(self, "_pipe")
+        if inner is None:
+            raise RuntimeError("this Ideogram pipeline was released (VRAM freed): "
+                               "get a fresh one from cz_pipeline.get_pipe()")
+        return getattr(inner, name)
 
     def __setattr__(self, name, value):
         if name in self._OWN:
@@ -688,12 +702,22 @@ class IdeogramPipe:
                 k["sigmas"] = list(k["sigmas"])[start:]
             return real_set(*a, **k)
         sch.set_timesteps = set_timesteps
+        # The progress bar and the live preview count the steps that RUN, not the full
+        # schedule: diffusers sizes its bar on num_inference_steps (it showed 14/48 and
+        # stopped there), and the preview callback reads _cz_run_steps (lot 7).
+        run = steps - start
+        real_bar = p.progress_bar
+        p.progress_bar = lambda iterable=None, total=None: real_bar(
+            iterable=iterable, total=run if total is not None else None)
+        p._cz_run_steps = run
 
         def restore():
-            try:
-                del sch.set_timesteps
-            except AttributeError:
-                pass
+            for obj, name in ((sch, "set_timesteps"), (p, "progress_bar")):
+                try:
+                    delattr(obj, name)
+                except AttributeError:
+                    pass
+            p._cz_run_steps = None
         mask = None
         if mask_image is not None and not self._is_full_mask(mask_image):
             mask = self._mask_tokens(mask_image, w, h, x0.device)

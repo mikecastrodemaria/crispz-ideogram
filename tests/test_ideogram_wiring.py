@@ -298,3 +298,59 @@ def test_extra_checkpoint_folder_and_subfolders_are_scanned(tmp_path, monkeypatc
     assert said and "single-file Ideogram 4" in said[0], logs
     assert P.resolve_checkpoint("ideogram4_fp8Scaled.safetensors").endswith(
         os.path.join("ideogram", "comfy", "ideogram4_fp8Scaled.safetensors"))
+
+
+def test_refine_whole_downgrade_frees_the_weights_the_caller_still_holds(monkeypatch):
+    """Lot 7 (lot 3's open point): _refine_whole gets its pipe from the CALLER, which keeps
+    it during the VRAM fallback. free_vram now releases the IdeogramPipe wrapper, so the
+    real pipeline is unreachable at reload time although the caller still holds the
+    wrapper; the stale wrapper is then swapped for the fresh pipe."""
+    import gc
+    import types
+    import weakref
+    import cz_ideogram
+    from PIL import Image
+
+    class Inner:
+        pass
+    inner = Inner()
+    ref = weakref.ref(inner)
+    held = cz_ideogram.IdeogramPipe(inner)          # what the caller keeps
+    del inner
+    calls, alive_at_reload, fresh = [], [], []
+
+    def fake_call(pipe, **kw):
+        calls.append(pipe)
+        if len(calls) == 1:
+            P._VRAM_DOWNGRADE = True
+        return types.SimpleNamespace(images=[Image.new("RGB", (64, 64))])
+
+    def fake_get_pipe(kind="txt2img"):
+        if P._BASE_PIPE is not None:
+            return P._BASE_PIPE
+        gc.collect()
+        alive_at_reload.append(ref() is not None)
+        new = types.SimpleNamespace(released=False)
+        fresh.append(new)
+        P._BASE_PIPE = new
+        return new
+
+    monkeypatch.setattr(P, "_BASE_PIPE", held)
+    monkeypatch.setattr(P, "_DERIVED", {"txt2img": held})
+    monkeypatch.setattr(P, "_qwen_call", fake_call)
+    monkeypatch.setattr(P, "get_pipe", fake_get_pipe)
+    monkeypatch.setattr(P, "_set_slicing", lambda *a, **k: None)
+    monkeypatch.setattr(P.cz_hw, "record_downgrade", lambda *a, **k: None)
+    monkeypatch.setattr(P, "OFFLOAD_MODE", "auto")
+    monkeypatch.setattr(P, "_AUTO_OFFLOAD", "none")
+    try:
+        out = P._refine_whole(held, Image.new("RGB", (64, 64)), 0.3, 4, "x", 1)
+    finally:
+        P._VRAM_DOWNGRADE = False
+    assert out is not None and len(calls) == 2
+    assert alive_at_reload == [False], "the caller's reference pinned the old weights"
+    assert held.released and calls[1] is fresh[0]
+    import pytest
+    with pytest.raises(RuntimeError, match="released"):
+        held.transformer
+    assert P._fresh(held) is fresh[0], "a stale wrapper is swapped for the current pipe"

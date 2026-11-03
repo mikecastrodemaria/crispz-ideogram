@@ -94,15 +94,20 @@ PRESETS = {
     # ComfyUI Ultimate SD Upscale style settings (x2, 1024 tiles, a low denoise). The
     # presets do NOT touch the offload any more (except Low VRAM): forcing 'none' overrode
     # the 'auto' VRAM test's verdict and froze tight cards (a spill into shared RAM).
-    "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 12, "tile": 1024, "overlap": 32,
+    # crispz-ideogram (lot 7): the steps are the length of the EMULATED img2img schedule,
+    # of which the denoise runs the tail. They were sized for FLUX.3 distilled (a 16-step
+    # model: 12 to 16 here); Ideogram 4 runs 48, so they are scaled by the same 3x
+    # (Photo: 36 x 0.30 = about 11 steps actually run). To confirm on images:
+    # tools/gpu_lot7_check.py compares the old and the new counts.
+    "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 24, "tile": 1024, "overlap": 32,
                             "refine_tile": 1024, "refine_overlap": 64},
-    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 12, "refine_tile": 0},
-    "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 16, "refine_tile": 0},
-    "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 16},
-    "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 14},
-    "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 12, "tile": 1024, "overlap": 32,
+    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 36, "refine_tile": 0},
+    "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 48, "refine_tile": 0},
+    "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 48},
+    "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 42},
+    "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 36, "tile": 1024, "overlap": 32,
                             "refine_tile": 1024, "refine_overlap": 64},
-    "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 12, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
+    "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 36, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
 }
 # an internal param -> a CLI flag, to apply a preset without overriding an explicit flag.
 PRESET_FLAGMAP = {
@@ -4428,8 +4433,8 @@ def build_ui():
                                     factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
                                     denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
                                                         label="Refine denoise (strength) - 0 = skip refine (ESRGAN only)")
-                                    refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1,
-                                                             label="Refine steps (runs at upscaled res -> higher = slower)")
+                                    refine_steps = gr.Slider(4, 80, value=DEFAULT_STEPS, step=1,
+                                                             label="Refine steps (the schedule length; the denoise runs its tail, at upscaled res)")
                             with gr.Accordion("\U0001F4C4 Read prompt / metadata from an image (PNG Info)",
                                               open=False):
                                 gr.Markdown("*Drop a PNG/JPG to read its embedded prompt & parameters "

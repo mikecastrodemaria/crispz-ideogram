@@ -660,6 +660,33 @@ caché. Rien ne quitte la machine.
   `APP_VERSION` de 0.1.0-dev à 0.1.0, création du repo `crispz-ideogram.pinokio` (et son
   icône), lancement du e2e GPU.
 
+### Lot 7 (03/11/2026) : points ouverts des lots 1 et 3, sans GPU
+
+Mike absent (« avance sur le prochain lot ») ; les six lots du cahier étant livrés, ce
+lot traite les points ouverts techniques qui ne demandent pas sa décision. Son dossier
+local n'est pas accessible depuis la session cloud (Remote Control : dossier non proposé),
+le e2e GPU du lot 6 reste donc à lancer chez lui.
+- **`_refine_whole` au repli 'model'** (ouvert depuis le lot 1) : l'appelant tient le
+  pipe pendant `free_vram()`, les 15 Go restaient sur la carte au rechargement.
+  `IdeogramPipe.release()` lâche le vrai pipeline ; `free_vram` l'appelle sur tout pipe
+  Ideogram en cache ; une référence périmée est remplacée par le pipe courant
+  (`cz_pipeline._fresh`, dans `_qwen_call` et `_refine_whole`), un usage direct lève une
+  erreur claire. Test : `test_refine_whole_downgrade_frees_the_weights_the_caller_still_holds`
+  (échoue sans `release`, vérifié).
+- **Presets d'upscale et refine** : dimensionnés pour FLUX.3 distillé (12 à 16 steps),
+  soit 3 ou 4 steps réellement joués à denoise 0,3 sur Ideogram. Multipliés par 3 (48/16) :
+  24 à 48 selon le preset, `default_refine_steps` 36, curseur 4 à 80. **À juger sur
+  images** : `tools/gpu_lot7_check.py` compare 12 et 36 steps sur l'affiche.
+- **Compteur de l'img2img émulé** : la barre de diffusers se dimensionnait sur le planning
+  entier (14/48 puis arrêt) et l'aperçu live disait « step 5 sur 48 ». Les deux comptent
+  désormais les steps joués (`_cz_run_steps`), tout est remis en place après l'appel.
+- **`tools/gpu_lot7_check.py`** : upscale x2 + refine à 12 puis 36 steps (même seed),
+  upscale x4 en tuiles (preset 4K, `--skip-tiled` pour le sauter), détailleur visages sur
+  un portrait généré ; temps et pics dans `bench/lot7/report.md`. Répété à blanc sur CPU.
+- Suite CPU : 661 passent, 0 échec, 1 skip ; smoke 22/22.
+- À faire chez Mike : `git pull`, `pip install vtracer==0.6.15`, le e2e du lot 6, puis
+  `tools\gpu_lot7_check.py` (app et crispz-flux3 fermées).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

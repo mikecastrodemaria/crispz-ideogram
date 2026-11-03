@@ -5,7 +5,7 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
-## 0.1.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
+## 1.0.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
 
 The details, measurements and decisions of every lot are in CLAUDE.md section 8.
 

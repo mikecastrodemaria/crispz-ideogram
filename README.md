@@ -63,7 +63,7 @@ The first render downloads about 15 GB (two nf4 transformers of 5.2 GB, the Qwen
 encoder 5.5 GB, the VAE), 20 s to load from the cache afterwards. The first magic prompt
 adds a 1.2 GB head; the first Remove BG the 176 MB u2net model.
 
-**An old `config.txt`** (written by crispz-flux3 or before 0.1.0) keeps its values:
+**An old `config.txt`** (written by crispz-flux3 or before 1.0.0) keeps its values:
 check `default_model_profile` (48 steps, guidance 7) and the performance preset.
 
 ## Measured on an RTX 5090

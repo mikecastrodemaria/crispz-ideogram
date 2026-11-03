@@ -33,7 +33,7 @@ import torch
 from PIL import Image
 
 # The application's version (shown in the title; one CHANGELOG.md entry per version).
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.0.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_PATH = os.path.join(HERE, "preferences.json")

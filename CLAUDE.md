@@ -741,6 +741,9 @@ libre (`nvidia-smi`, 0 à 5 % d'utilisation) avant toute mesure.
   « Aa » aux couleurs de l'affiche du lot 2 (Inter Display Black, licence OFL), à
   remplacer par une icône générée avec l'app (preset Logo) si Mike le souhaite.
 - Suite des travaux : depuis `main`, sur une nouvelle branche par sujet.
+- **Version 1.0.0** (décision de Mike, 03/11/2026) : la 0.1.0 n'a jamais été taguée ;
+  `APP_VERSION` passe à 1.0.0, l'entrée du CHANGELOG est renommée, tag `v1.0.0` posé sur
+  `main`, release GitHub créée à la main par Mike à partir des notes fournies.
 
 ### CI GitHub (31/10/2026)
 

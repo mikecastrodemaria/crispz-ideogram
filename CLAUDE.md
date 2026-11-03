@@ -687,6 +687,26 @@ le e2e GPU du lot 6 reste donc à lancer chez lui.
 - À faire chez Mike : `git pull`, `pip install vtracer==0.6.15`, le e2e du lot 6, puis
   `tools\gpu_lot7_check.py` (app et crispz-flux3 fermées).
 
+### e2e GPU du lot 6 sur la 5090 (03/11/2026) : PASSÉ, temps à confirmer
+
+`tests/test_ideogram_e2e.py`, offload 'model' : les 6 étapes passent leurs assertions
+(chargement, gen 1024, gen 2048, img2img 0,35, inpaint hors masque identique au pixel,
+Stop au step 3). Pics de VRAM normaux (17,3 Go à 1024, 23,4 Go à 2048).
+
+| | e2e | référence lots 1 à 3 |
+|---|---|---|
+| chargement | 40,8 s | 20 à 23 s |
+| 1024, 48 steps | 112,3 s | 61 s |
+| 2048, 48 steps | 734,6 s | 394 s |
+| img2img 0,35 | 36,8 s (2,2 s/step) | ~1,3 s/step |
+| Stop (3 steps) | 5,4 s | |
+
+Tout est environ 1,8 fois plus lent, chargement compris, alors que le chemin de rendu
+n'a pas changé depuis le lot 3 (mesures conformes au lot 1). Hypothèse : état de la
+machine (carte bridée ou partagée, antivirus sur les poids). À trancher par
+`gpu_lot1_check.py --offload model --skip-raw --skip-2048` (61 s attendus) et
+`nvidia-smi` pendant le rendu.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

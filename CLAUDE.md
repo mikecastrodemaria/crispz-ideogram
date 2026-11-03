@@ -732,6 +732,16 @@ libre (`nvidia-smi`, 0 à 5 % d'utilisation) avant toute mesure.
 - Ainsi se ferment les points ouverts des lots 1 et 3 (refine au repli, presets,
   compteur, tuiles, détailleur). Suite CPU : 661 passent, 0 échec, 1 skip ; smoke 22/22.
 
+### Livraison 0.1.0 (03/11/2026), décision de Mike
+
+- `APP_VERSION` 0.1.0 ; `wip/ideogram-engine` fusionnée dans `main` (avance rapide, sans
+  commit de fusion : `main` n'avait pas bougé depuis 2272b08).
+- Launcher publié dans son propre repo `mikecastrodemaria/crispz-ideogram.pinokio` (créé
+  par Mike) ; le dossier `pinokio/` quitte ce repo (une seule source). Icône provisoire
+  « Aa » aux couleurs de l'affiche du lot 2 (Inter Display Black, licence OFL), à
+  remplacer par une icône générée avec l'app (preset Logo) si Mike le souhaite.
+- Suite des travaux : depuis `main`, sur une nouvelle branche par sujet.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

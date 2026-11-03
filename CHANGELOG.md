@@ -5,7 +5,7 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
-## 0.1.0-dev (crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
+## 0.1.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
 
 The details, measurements and decisions of every lot are in CLAUDE.md section 8.
 
@@ -34,8 +34,8 @@ The details, measurements and decisions of every lot are in CLAUDE.md section 8.
   their short step counts (12 and 36 steps give the same image, 36 is 53 % slower); the
   x4 tiled upscale and the face detailer validated on images.
 - **Lot 6**: the 44 inherited FLUX.3 tests rewritten or removed (suite green in CI), a
-  GPU end-to-end test for Ideogram (`tests/test_ideogram_e2e.py`), README, FORK.md, a
-  Pinokio launcher (`pinokio/`), `--ideogram-model` / `--ideogram-transformer` on the
+  GPU end-to-end test for Ideogram (`tests/test_ideogram_e2e.py`, passed on an RTX 5090),
+  README, FORK.md, the Pinokio launcher (its own repo, crispz-ideogram.pinokio), `--ideogram-model` / `--ideogram-transformer` on the
   CLI, the FLUX.3 wording removed from the visible UI, no em dash left in the repo
   (outside `third_party/`).
 

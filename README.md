@@ -47,7 +47,7 @@ field is greyed out and says why.
 ## Install
 
 Windows: `install.bat`, then `run.bat`. Linux: `install.sh`, then `run.sh`. Or the
-Pinokio launcher (files in [pinokio/](pinokio/), repo `crispz-ideogram.pinokio`).
+Pinokio launcher: [crispz-ideogram.pinokio](https://github.com/mikecastrodemaria/crispz-ideogram.pinokio).
 
 Do **not** run `pip install -r requirements.txt` in the installed `.venv`: gradio 5.50
 declares `pillow<12` and pip would downgrade Pillow 13 (the install scripts handle it).

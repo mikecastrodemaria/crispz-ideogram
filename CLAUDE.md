@@ -710,6 +710,28 @@ Contre-mesure le même jour, carte libérée, `gpu_lot1_check.py --offload model
 chiffres du lot 1. Les temps du README restent valables. Leçon : vérifier que la carte est
 libre (`nvidia-smi`, 0 à 5 % d'utilisation) avant toute mesure.
 
+### Bilan du lot 7 (03/11/2026) : mesuré sur la 5090, clos
+
+`tools/gpu_lot7_check.py`, carte libre, offload 'model' encodeur seul, affiche du lot 2 :
+
+| | temps | pic |
+|---|---|---|
+| portrait 1024 (pour le détailleur) | 76,4 s | 17,3 Go |
+| upscale x2 + refine 0,30, 12 steps | 35,6 s | 16,4 Go |
+| upscale x2 + refine 0,30, 36 steps | 54,4 s | 16,3 Go |
+| upscale x4 en tuiles (preset 4K) | 167,5 s, 2880x4096 | 17,5 Go |
+| détailleur visages | 37,5 s | 16,5 Go |
+
+- **12 contre 36 steps** : images identiques à l'œil (écart moyen 2 sur 255, textes
+  inchangés au trait près à 100 %), 36 coûte 53 % de plus. **Décision : retour aux presets
+  d'origine** (12 à 16 steps, `default_refine_steps` 12) ; le curseur reste à 80.
+  L'hypothèse « 3 ou 4 steps joués, c'est trop peu » ne tient pas à ces denoise.
+- **Tuiles x4** : aucune couture visible, texte intact, VRAM sous 18 Go à 2880x4096.
+- **Détailleur** : visage trouvé et retouché (dents, yeux plus nets), sans couture, reste
+  de l'image inchangé. Validé sur la carte.
+- Ainsi se ferment les points ouverts des lots 1 et 3 (refine au repli, presets,
+  compteur, tuiles, détailleur). Suite CPU : 661 passent, 0 échec, 1 skip ; smoke 22/22.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

@@ -143,7 +143,7 @@
     "_default_auto_upscale_help": "Tick 'Upscale after generate' by default (each txt2img render is chained into the ESRGAN + refine pipeline).",
     "default_auto_upscale": false,
     "default_refine_first": false,
-    "default_refine_steps": 36,
+    "default_refine_steps": 12,
     "_default_steps_help": "Legacy name, kept for config.txt files written before default_refine_steps existed: the step count of `czp upscale` / `czp inpaint` falls back to it. default_refine_steps wins when both are set, and generation reads default_gen_steps.",
     "default_steps": 12,
     "default_tile": 760,

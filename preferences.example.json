@@ -4,7 +4,7 @@
   "model": "4x-ClearRealityV1_Soft.safetensors",
   "factor": 2.0,
   "denoise": 0.3,
-  "steps": 36,
+  "steps": 12,
   "prompt": "",
   "seed": -1,
   "tile": 760,

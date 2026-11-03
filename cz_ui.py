@@ -95,19 +95,19 @@ PRESETS = {
     # presets do NOT touch the offload any more (except Low VRAM): forcing 'none' overrode
     # the 'auto' VRAM test's verdict and froze tight cards (a spill into shared RAM).
     # crispz-ideogram (lot 7): the steps are the length of the EMULATED img2img schedule,
-    # of which the denoise runs the tail. They were sized for FLUX.3 distilled (a 16-step
-    # model: 12 to 16 here); Ideogram 4 runs 48, so they are scaled by the same 3x
-    # (Photo: 36 x 0.30 = about 11 steps actually run). To confirm on images:
-    # tools/gpu_lot7_check.py compares the old and the new counts.
-    "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 24, "tile": 1024, "overlap": 32,
+    # of which the denoise runs the tail. Measured on the 5090 (03/11/2026, the lot 2
+    # poster, x2 + refine at denoise 0.30): 12 steps 35.6 s, 36 steps 54.4 s, images
+    # identical to the eye (mean difference 2/255, the texts unchanged at 100 %). The
+    # short counts stay: more steps cost time for nothing at these denoise values.
+    "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 12, "tile": 1024, "overlap": 32,
                             "refine_tile": 1024, "refine_overlap": 64},
-    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 36, "refine_tile": 0},
-    "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 48, "refine_tile": 0},
-    "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 48},
-    "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 42},
-    "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 36, "tile": 1024, "overlap": 32,
+    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 12, "refine_tile": 0},
+    "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 16, "refine_tile": 0},
+    "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 16},
+    "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 14},
+    "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 12, "tile": 1024, "overlap": 32,
                             "refine_tile": 1024, "refine_overlap": 64},
-    "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 36, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
+    "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 12, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
 }
 # an internal param -> a CLI flag, to apply a preset without overriding an explicit flag.
 PRESET_FLAGMAP = {

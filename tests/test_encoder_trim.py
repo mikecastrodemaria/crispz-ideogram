@@ -1,28 +1,7 @@
-"""The pruning of the text encoder, and the VRAM budget that depends on it.
-
-FLUX.2 does not read the LLM's output: it stacks the hidden states of three INTERMEDIATE
-layers (hence a context_embedder 3 x hidden wide). Everything that comes after the last
-layer read -- eight blocks of a Qwen3-8B and a projection onto 152,000 tokens -- is
-computed for every image then thrown away. Since hidden_states[k] is the output AFTER k
-blocks, removing them is EXACT, not approximate: checked bit for bit on the real model
-(15.3 -> 11.2 GB, encoding 5.0 -> 3.2 s, torch.equal true on the three layers read).
-
-These tests lock down the two traps met while writing it:
-
-1. THE METHOD'S NAME. The first version looked for `_get_qwen_prompt_embeds`;
-   diffusers calls it `_get_qwen3_prompt_embeds` here. So the pruning never fired
-   -- and it SAID so, but nobody reads a log when a lower figure is already there and
-   wrong. We now look for the method by its PARAMETER.
-
-2. A BUDGET ON AN INTENTION. The worst consequence of point 1: the VRAM budget deducted
-   the pruning's 4 GB without checking that it had happened. Measured: 29.7 GB announced,
-   32.3 GB really resident, 0.0 GB free -- and under Windows it does not even crash, it
-   spills into shared memory and the render collapses in silence. So the budget now
-   follows the _ENCODER_TRIMMED flag only, never TRIM_TEXT_ENCODER.
-
-Run:  .venv/Scripts/python tests/test_encoder_trim.py
-
-"""
+"""Text encoder trim (cz_pipeline): the read layers are found by parameter not by name, an
+unreadable signature trims nothing, the trim keeps exactly the read blocks, twice changes
+nothing, the VRAM budget follows the deed, the trim is announced on FLUX.3."""
+# scope: family
 import os
 import sys
 

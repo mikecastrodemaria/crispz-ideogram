@@ -1,7 +1,5 @@
-"""Unit tests for the model-loading progress pure helpers (_fmt_load / _load_pct).
-
-Run:  .venv/Scripts/python tests/test_load.py
-"""
+"""Model-loading progress helpers (_fmt_load / _load_pct / _load_monitor)."""
+# scope: family
 import os
 import sys
 

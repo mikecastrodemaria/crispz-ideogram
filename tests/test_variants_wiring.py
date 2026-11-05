@@ -1,21 +1,7 @@
-"""{a|b|c} variant groups wired into crispz-klein (prompt_variants + cz_prompt).
-
-Covers the family rules for the variant syntax:
-  - rule 3: a prompt WITHOUT group gives exactly the same text, the same random
-    draws, hence the same image as before (checked against the pre-variants
-    _apply_wildcards, copied verbatim below);
-  - groups are seed-bound, walk the batch index in order mode, and resolve BEFORE
-    __wildcards__ (a placeholder in an unpicked option is never read);
-  - the negative prompt is expanded too (inert on klein: the protocol clears it);
-  - protocol: <lora:...> tags are read on the EXPANDED text (a LoRA in an unpicked
-    option is never applied);
-  - seed -1 is resolved to a concrete value where a prompt is expanded (UI Omni,
-    CLI, protocol).
-
-No torch run, no GPU: the pipeline calls are stubbed.
-
-Run:  .venv/Scripts/python tests/test_variants_wiring.py
-"""
+"""{a|b|c} variant groups wired into cz_prompt and the protocol: a prompt without a group
+gives the same text and the same draws, groups are seed-bound and resolve before the
+wildcards, <lora:> tags are read on the expanded text, seed -1 is resolved. No torch."""
+# scope: family
 import os
 import re
 import sys

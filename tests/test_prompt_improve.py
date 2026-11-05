@@ -1,13 +1,7 @@
-"""custom-28 / custom-31 / custom-34: Improve prompt via Ollama, against a fake local
-Ollama server (standard library only).
-
-Ported unchanged from Fooocus2026 (tests/test_ollama_improve.py); only the import differs.
-The last class (TestCrispzAdaptations) covers what the crispz copy adds: settings passed
-with configure(), the transport (127.0.0.1, proxy ignored), keep_alive 0 by default and
-extra Ollama options.
-
-Run:  .venv/Scripts/python tests/test_prompt_improve.py
-"""
+"""Improve prompt via Ollama (prompt_improve) against a fake local server, ported from
+Fooocus2026 (tests/test_ollama_improve.py). The last class covers the crispz additions:
+configure(), the 127.0.0.1 transport, keep_alive 0 by default, extra Ollama options."""
+# scope: family
 import json
 import os
 import sys

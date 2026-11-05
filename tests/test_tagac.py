@@ -1,7 +1,6 @@
-"""Unit tests for the tag-autocomplete server side (atomic download, sources, naming).
-
-Run:  .venv/Scripts/python tests/test_tagac.py
-"""
+"""Tag autocomplete server side (cz_tags): atomic download, a failure cleans its temp file,
+the source file names, resilient ensure_sources, CSV filtering."""
+# scope: family
 import http.server
 import os
 import sys

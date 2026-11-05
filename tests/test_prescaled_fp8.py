@@ -1,14 +1,6 @@
-"""FP8/INT8 weights stored ALREADY scaled: the weight_scale supplied does not apply.
-
-Caught in the library on 2026-09-10: kleinFinalcutFP16FP8_comfyQuant rendered coloured
-noise for every prompt. The file stores the weights as they are in FP8 and supplies
-weight_scale = amax / 448 anyway. The loader multiplied: weights 1,200 to 1,700 times
-too small. The criterion adopted, measured on the library's 17 quantised files:
-max|stored| / (scale x range) is 1.03 for it, 71 to 1,691 for the others.
-
-Run:  .venv/Scripts/python tests/test_prescaled_fp8.py
-
-"""
+"""FP8 / INT8 single files stored ALREADY scaled (cz_pipeline): the detector separates the two
+layouts, the loader reads a file mixing both."""
+# scope: family
 import os
 import sys
 import tempfile

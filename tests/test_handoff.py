@@ -1,6 +1,7 @@
-"""Lot 5: Edit in crispz-flux3 (cz_handoff). The image goes to crispz-flux3's own protocol
-v1 CLI on this machine; nothing leaves it. A fake crispz-flux3 folder answers like the
-real one (a tiny cz_protocol.py run by a real subprocess)."""
+"""Edit in crispz-flux3 (cz_handoff): the image goes to crispz-flux3's own protocol v1 CLI on
+this machine, nothing leaves it. A fake crispz-flux3 folder answers like the real one
+(a tiny cz_protocol.py run by a real subprocess)."""
+# scope: ideogram
 import json
 import os
 import sys

@@ -1,20 +1,7 @@
-"""A LoRA applied under offload (crispz-klein 1.36.6).
-
-Two DoRA LoRAs chosen as edit LoRAs put an end to the session: the
-loading failed on "Cannot copy out of meta tensor", then ALL the renders
-that followed on "Cannot generate a cpu tensor from a generator of type cuda".
-It covers:
-  - the LoRAs are loaded with low_cpu_mem_usage=False (no layer on 'meta',
-    a filtered key keeps its init value);
-  - a load that fails after diffusers has removed the offload hooks gets them
-    put back, instead of leaving the pipe on the CPU;
-  - restore_offload repairs a pipe left on the CPU and touches nothing otherwise.
-
-Neither a GPU nor a model: the pipe is simulated, the LoRAs are tiny files.
-
-Run:  .venv/Scripts/python tests/test_lora_offload.py
-
-"""
+"""A LoRA applied under offload: loaded with low_cpu_mem_usage=False, the hooks put back
+after a load that fails, restore_offload repairs a pipe left on the CPU and touches
+nothing otherwise. Simulated pipe, tiny LoRA files."""
+# scope: family
 import os
 import shutil
 import sys

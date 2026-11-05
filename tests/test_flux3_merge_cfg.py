@@ -1,24 +1,7 @@
-"""A real CFG for a single-file checkpoint: the pipeline's `is_distilled` flag.
-
-The FLUX.2 klein pipeline decides on its own whether it does the prompt-free pass:
-
-    do_classifier_free_guidance = guidance_scale > 1 and not config.is_distilled
-
-and `config.is_distilled` comes from the BASE REPO (True for klein 4B and 9B). A
-single-file only replaces the transformer: the config stays "distilled". So the app
-passed on the guidance of an 'undistilled' checkpoint while writing "guidance 3.5
-passed on", and diffusers answered on the next line "Guidance scale 3.5 is ignored
-for step-wise distilled models". Caught on the 2026-09-10 bench: kleinForeskin at 28
-steps cost 0.6 s/step, exactly like a distilled one, instead of double.
-
-These tests lock it down: the flag is raised DURING the call, restored AFTER (even on
-an error -- the pipeline is shared, a forgotten flag would put all the following calls
-into CFG), never touched on the base repo, and the empty negative the
-pipeline imposes is cached like the positive one.
-
-Run:  .venv/Scripts/python tests/test_real_cfg.py
-
-"""
+"""Real CFG on a single-file FLUX.2 checkpoint (_qwen_call, path kept for merges from
+crispz-flux3): is_distilled lifted during the call only and restored on an error, guidance
+1.0 changes nothing, the empty negative encoded once, the announcement made once."""
+# scope: flux3
 import os
 import sys
 

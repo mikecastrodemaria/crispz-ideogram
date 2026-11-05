@@ -1,5 +1,6 @@
 """Lot 5: local vectorization (cz_vector, the Vectorize (SVG) tab). vtracer, nothing
 leaves the machine."""
+# scope: ideogram
 import json
 import os
 import sys

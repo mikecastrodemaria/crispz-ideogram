@@ -1,14 +1,6 @@
-"""A card that refuses an offload mode: the ladder down (_place_pipe).
-
-Putting a big model on the card in 'none' copies the whole thing at once, and that can
-fail in the DRIVER rather than in torch's allocator -- "CUDA error: out of memory", or
-the opaque "CUDA error: unknown error". It used to end in a raw traceback. Each mode
-further down needs less VRAM, so the placement walks down the ladder and says so.
-
-Neither GPU nor model: the pipe is simulated.
-
-Run:  .venv/Scripts/python tests/test_offload_fallback.py
-"""
+"""The offload ladder (_place_pipe): a card that refuses 'none' in the DRIVER walks down to
+'model' then 'sequential' and says so, instead of a raw traceback. Simulated pipe."""
+# scope: family
 import os
 import sys
 

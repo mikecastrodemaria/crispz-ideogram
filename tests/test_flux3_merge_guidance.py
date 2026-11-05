@@ -1,15 +1,7 @@
-"""An "undistilled" checkpoint rendered a blurry mush, without a word.
-
-klein-4B/9B are distilled: the guidance is INERT on them (measured bit-for-bit identical
-from 1.0 to 8.0, see test_klein_guidance.py), so _qwen_call forces it to 1.0. But that
-`is_distilled` flag describes the BASE REPO. With a single-file override it no longer
-says anything about the model that computes -- and there exist community checkpoints
-explicitly NOT distilled ("undistilled - use with Turbo Lora") that require a
-real CFG. Forcing them to 1.0 gave a smoothed, unreadable image.
-
-Run:  .venv/Scripts/python tests/test_undistilled_guidance.py
-
-"""
+"""Guidance on the FLUX.2 path kept for merges from crispz-flux3 (_qwen_call): the base repo
+stays at 1.0, a single-file override gets the slider, an explicit guidance is never
+overridden and the ignored one is announced once, the undistilled preset and profile."""
+# scope: flux3
 import os
 import sys
 

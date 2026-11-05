@@ -1,14 +1,6 @@
-"""The checkpoints folder may have subfolders.
-
-A library gets tidied sooner or later -- 4b/ and 9b/, by author, by family. The listing
-used to be a single os.listdir, so tidying made every model vanish from the app, and the
-presets that named them broke. Both halves are pinned here: the walk, and the lookup by
-bare file name for everything written before the tidy-up.
-
-Neither GPU nor model: the files are empty, only the paths are checked.
-
-Run:  .venv/Scripts/python tests/test_checkpoints_subfolders.py
-"""
+"""The checkpoints folder may have subfolders: recursive walk, and the lookup by bare file
+name keeps the presets written before the tidy-up. Empty files, only the paths are checked."""
+# scope: family
 import os
 import shutil
 import sys

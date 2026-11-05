@@ -1,27 +1,7 @@
-"""A handler wired on no outputs must return nothing.
-
-Gradio 5 warns on EVERY firing when a returned value has no component to receive it
-("A function returned too many output values"). On a slider that is a pair of warnings per
-movement -- noise that ends up hiding a real warning.
-
-This reads cz_ui.py's wirings from the AST, not with a regex. The regex version missed four
-forms Gradio treats exactly like `outputs=None`:
-  - `outputs=None` passed as a KEYWORD;
-  - `outputs=[]`, an empty list;
-  - the outputs argument simply OMITTED (it defaults to None);
-  - anything that is not `.change/.click/.input/.release/.select` -- two
-    `.then(set_sampler, [sampler_dd], None)` chains warned on every "Apply CivitAI
-    recommended settings" click in three forks and the pattern did not look at .then.
-And it could not follow a LAMBDA nor a handler living in another module
-(cz_detailer.set_enabled), which together are most of the wirings here.
-
-A detector nobody checks is worse than none, so this file TESTS ITS OWN DETECTOR first,
-against a sample holding known-bad and known-good wirings, and only then applies it to
-cz_ui.py.
-
-Run:  .venv/Scripts/python tests/test_ui_binding_returns.py
-
-"""
+"""A handler wired on no outputs returns nothing (the Gradio 5 warning): cz_ui's wirings are
+read from the AST, outputs=None / [] / omitted and .then chains included, lambdas and
+handlers from other modules followed."""
+# scope: family
 import ast
 import io
 import os

@@ -1,36 +1,7 @@
-"""A sampler/schedule change must never swap the scheduler under a running generation.
-
-The scheduler lives on the SHARED pipe, so replacing it is not a local change: a denoise
-loop already running keeps its own `timesteps` list but steps whatever `pipe.scheduler`
-points at by then. A fresh scheduler knows nothing of those timesteps and has no
-begin_index, so diffusers looks the current timestep up, finds nothing, and raises
-"IndexError: index 0 is out of bounds for dimension 0 with size 0" in
-_init_step_index -> index_for_timestep, halfway through the render.
-
-Met on crispz-krea2 on 2026-09-28: checkpoint switched, then "Apply CivitAI recommended
-settings" (which sets the sampler AND the schedule), then Generate. Gradio does not
-serialise the events of different listeners, so the two overlap.
-
-What is checked:
-  - the lock free -> the swap happens at once (the normal case, unchanged);
-  - the lock HELD by another thread -> `pipe.scheduler` is NOT touched, the request is
-    recorded, and the status says "on the next run" instead of claiming it is live;
-  - the next get_pipe() applies it, which is the path every generation goes through;
-  - the same thread holding the lock (the job queue between two jobs) still applies at
-    once: an RLock is re-entrant, and that thread is not inside a denoise loop;
-  - a schedule the installed diffusers cannot build falls back to Euler rather than
-    leaving the pipe without a scheduler.
-
-The schedule used is chosen from what the installed diffusers can really build, not
-hard-coded: 'beta' needs scipy, which requirements.txt does not pull, so on a venv without
-it (the CI runner, for one) the scheduler refuses to be built and _apply_sampler falls back
-to Euler -- correct behaviour, but this test would then be asserting on the fallback.
-
-Neither a GPU nor a model: the pipes are stubs, only the scheduler objects are real.
-
-Run:  .venv/Scripts/python tests/test_sampler_race.py
-
-"""
+"""A sampler or schedule change never swaps the scheduler under a running generation
+(_GPU_LOCK): applied at once when the lock is free, deferred and applied after the render
+otherwise, the deferred value wins over the running one."""
+# scope: family
 import os
 import sys
 import threading

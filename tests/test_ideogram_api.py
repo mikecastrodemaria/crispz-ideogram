@@ -1,17 +1,7 @@
-"""Lot 4: the Ideogram cloud functions (cz_ideogram_api, cz_cloud_ui).
-
-Nothing here touches the network: the module's one transport function (_http) is
-replaced by a fake server that records every request. What is guarded:
-  - OFF by default: with the switches off (or no key) nothing is sent, the reason is said,
-    the UI buttons are greyed out;
-  - what is sent: the right endpoint, the Api-Key header, the fields of the published
-    API v2 (01/11/2026), the mask in the API's convention (black = edit), private=true
-    where the API allows it;
-  - every call logs a CLOUD: line naming the United States, and is journaled without the
-    key; price estimates use dry_run=true and bill nothing;
-  - results: sync and async (polling, 429 Retry-After, failure, timeout), safety-blocked
-    items counted, images and SVGs saved with their metadata.
-"""
+"""Ideogram cloud functions (cz_ideogram_api, cz_cloud_ui) against a fake transport: off by
+default and hidden, the exact requests of the API v2, the CLOUD: log and the journal
+without the key, sync and async results, images and SVGs saved with metadata. No network."""
+# scope: ideogram
 import io
 import json
 import os

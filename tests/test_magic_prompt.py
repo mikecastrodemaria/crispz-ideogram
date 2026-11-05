@@ -1,11 +1,7 @@
-"""cz_magic: plain idea -> JSON caption, three engines (lot 2).
-
-No network, no GPU: Ollama and the Ideogram API are mocked at their transport, the local
-engine runs the real IdeogramPipe.magic_prompt on the tiny Ideogram 4 (random weights, so
-the text is garbage: what is checked is the plumbing, the encoder offload and the head).
-
-Run:  .venv/Scripts/python -m pytest tests/test_magic_prompt.py -q
-"""
+"""cz_magic: plain idea -> JSON caption, three engines. Ollama and the Ideogram API are
+mocked at their transport; the local engine runs the real IdeogramPipe.magic_prompt on
+the tiny Ideogram 4 (random weights: the plumbing, the offload and the head are checked)."""
+# scope: ideogram
 import io
 import json
 import os

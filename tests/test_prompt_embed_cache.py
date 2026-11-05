@@ -1,17 +1,7 @@
-"""Encoding a prompt moves the Qwen3 encoder onto the GPU. Doing it twice for
-the same text is pure transfer.
-
-In 'model' offload that cost is paid on EVERY pipeline call. The detailer pays
-it once per hand, with the SAME prompt (empty by default). Measured on
-klein-9B GGUF, a hand pass at 4 steps: prompt+setup 5.8 s for 0.3 s of
-diffusion -- the computation had disappeared, what was left was moving the weights.
-
-encode_prompt() short-circuits the encoder as soon as it is passed prompt_embeds.
-No model is loaded here: the pipeline is a fake.
-
-Run:  .venv/Scripts/python tests/test_prompt_embed_cache.py
-
-"""
+"""Prompt embeddings cache (cz_pipeline): one encode per prompt, cleared by free_vram, bounded,
+disabled by config, an encoder failure never breaks the render, explicit embeds win.
+The pipeline is a fake."""
+# scope: family
 import os
 import sys
 

@@ -1,13 +1,7 @@
-"""cz_pipeline on a FLUX.3 engine: the call sites written for Flux2Klein* must run through
-the ONE Flux3Pipe (txt2img, edit, refine, inpaint, outpaint). CPU, a tiny random Flux3Pipe
-injected as the cached base: nothing is downloaded, nothing is loaded.
-
-crispz-ideogram keeps the FLUX.3 code path in cz_pipeline, unreached by the app, so that
-fixes from crispz-flux3 still merge; these tests keep that path runnable. The FLUX.3
-POLICIES (guidance by variant, single files loaded through cz_flux3) were removed: here a
-FLUX.3 file is refused, and the Ideogram policies live in test_ideogram_wiring.py and
-test_ideogram_engine.py.
-"""
+"""cz_pipeline on a FLUX.3 engine, a tiny Flux3Pipe injected as the cached base: the call
+sites kept for merges from crispz-flux3 stay runnable (generate, edit, refine, inpaint,
+outpaint, swap). A FLUX.3 file is refused here; the Ideogram policies live elsewhere."""
+# scope: flux3
 import os
 import sys
 

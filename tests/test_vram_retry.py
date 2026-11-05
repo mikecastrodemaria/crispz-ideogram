@@ -1,19 +1,7 @@
-"""Out-of-VRAM recovery (crispz-klein 1.36.4).
-
-A Edit (references) batch with Upscale after generate and the detailer ran out of VRAM
-at the fourth image, then every later render failed until the app was restarted.
-Covers:
-  - is_oom recognizes both forms (torch allocator, direct CUDA call);
-  - retry_on_oom frees the VRAM and retries ONCE, frees it again when the retry fails
-    too, and leaves the other errors alone;
-  - release_vram puts the base pipe's weights back on the CPU only in 'model' offload;
-  - the detailer retries a pass, then skips the remaining regions if still out of VRAM;
-  - the UI Omni loop retries, and reports what to lower when the retry fails.
-
-No torch run, no GPU: the pipeline calls are stubbed.
-
-Run:  .venv/Scripts/python tests/test_vram_retry.py
-"""
+"""Out-of-VRAM recovery: is_oom on both forms, retry_on_oom frees and retries ONCE and leaves
+other errors alone, release_vram under 'model' offload only, the detailer skips the
+remaining regions, the UI loop retries and reports what to lower. Stubbed pipeline."""
+# scope: family
 import importlib.util
 import os
 import sys

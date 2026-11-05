@@ -1,4 +1,6 @@
-"""tools/gpu_lot2_check.py: the 'blocked by safety filter' card detector (no GPU)."""
+"""tools/gpu_lot2_check.py without a GPU: the 'blocked by safety filter' card detector and
+the hand-made caption that passes the schema with real texts."""
+# scope: ideogram
 import os
 import sys
 

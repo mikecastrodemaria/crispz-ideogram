@@ -1,13 +1,6 @@
-"""A detailer pass ran at 12 steps on a model distilled for 4.
-
-The "Refine steps" slider (12 by default) comes from crispz-studio / Z-Image. On klein
-it tripled the cost of EVERY hand and EVERY face without changing anything in the image.
-Measured (RTX 5090, 2 hands): 4B 2.0 -> 0.9 s/hand, 9B GGUF 12.2 -> 6.4 s/hand, for
-an image difference of MAE 0.7.
-
-Run:  .venv/Scripts/python tests/test_detailer_steps.py
-
-"""
+"""Detailer steps (cz_detailer): follow the model profile by default (48 on Ideogram), never
+raise the slider, a config value overrides."""
+# scope: ideogram
 import os
 import sys
 

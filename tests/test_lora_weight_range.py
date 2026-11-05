@@ -1,7 +1,5 @@
-"""Unit tests for the configurable LoRA weight range (lora_weight_min / lora_weight_max).
-
-Run:  .venv/Scripts/python tests/test_lora_weight_range.py
-"""
+"""The configurable LoRA weight range (lora_weight_min / lora_weight_max)."""
+# scope: family
 import os
 import sys
 

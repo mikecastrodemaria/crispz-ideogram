@@ -1,13 +1,6 @@
-"""Extra LoRA folders: the library lives outside the app folder.
-
-loras_dir + loras_extra_dirs are merged into ONE list. Everything that lists or resolves
-a LoRA has to read that list -- the slots, the Asset Browser, the CivitAI enrichment --
-or a library shared with ComfyUI or Forge is simply invisible.
-
-Neither GPU nor model: the LoRAs are empty files.
-
-Run:  .venv/Scripts/python tests/test_lora_extra_dirs.py
-"""
+"""Extra LoRA folders: loras_dir + loras_extra_dirs merged into ONE list read by the slots,
+the Asset Browser and the CivitAI enrichment. The LoRAs are empty files."""
+# scope: family
 import os
 import shutil
 import sys

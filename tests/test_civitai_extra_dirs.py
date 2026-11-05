@@ -1,14 +1,6 @@
-"""The CivitAI sheet of a model kept in an EXTRA folder.
-
-The Asset Browser catalogue lists the main folder AND the extra ones (loras_extra_dirs /
-checkpoints_extra_dir), but the "Fetch from CivitAI" button joined the relative path to the
-main folder ALONE: any LoRA of a library kept outside the app folder -- the normal case --
-answered "model file not found".
-
-Neither network nor model: only the path resolution is checked.
-
-Run:  .venv/Scripts/python tests/test_civitai_extra_dirs.py
-"""
+"""'Fetch from CivitAI' resolves a model kept in an extra folder (loras_extra_dirs /
+checkpoints_extra_dir), not only in the main one. Only the path resolution is checked."""
+# scope: family
 import os
 import shutil
 import sys

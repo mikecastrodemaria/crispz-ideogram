@@ -1,7 +1,7 @@
-"""cz_flux3.Flux3Pipe, the adapter between the FLUX.3 modular pipeline and the Flux2Klein
-calling convention the rest of crispz uses. CPU, tiny random components (tests/flux3_tiny.py),
-no download except the optional Qwen3-VL processor test, which skips offline.
-"""
+"""cz_flux3.Flux3Pipe on tiny random components (tests/flux3_tiny.py): the FLUX.3 path kept
+so that fixes still merge from crispz-flux3 (txt2img, edit, img2img, inpaint, interrupt,
+LoRA under offload, single-file formats). No download; the processor test skips offline."""
+# scope: flux3
 import os
 import sys
 

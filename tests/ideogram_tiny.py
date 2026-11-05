@@ -1,10 +1,7 @@
-"""A tiny random Ideogram 4 pipeline for CPU tests (no gated download).
-
-Real architecture, toy sizes: Ideogram4Transformer2DModel x2 (1 layer, 2 heads of 16),
-a 36-layer Qwen3-VL text encoder 16 wide (the pipeline taps layers 0..35, so the depth
-must stay), the tiny AutoencoderKLFlux2 of the flux3 tests, and the real Qwen3-VL-8B
-tokenizer (public, a few MB). llm_features_dim = 13 taps x 16 = 208.
-"""
+"""A tiny random Ideogram 4 pipeline for the CPU tests (no gated download): two 1-layer
+transformers, a 36-layer Qwen3-VL encoder 16 wide (the pipeline taps layers 0..35), the
+tiny AutoencoderKLFlux2 of flux3_tiny, the real Qwen3-VL-8B tokenizer (13 x 16 = 208)."""
+# scope: ideogram
 import os
 import sys
 

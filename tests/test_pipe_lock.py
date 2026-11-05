@@ -1,30 +1,7 @@
-"""Releasing the shared pipeline must wait for the render in progress.
-
-Same shared state as the scheduler race (see test_sampler_race.py), other half of the rule:
-`free_vram()` drops _BASE_PIPE / _DERIVED and pulls the weights back to the CPU. Doing that
-under a running denoise loop takes the model out from under it. Gradio does not serialise
-the events of different listeners, so the Free VRAM button, the encoder dropdown and the
-offload radio can all fire while Generate is running.
-
-Unlike a sampler change, these cannot be deferred -- you pressed Free VRAM to have it
-happen -- so they WAIT on _GPU_LOCK.
-
-What is checked:
-  - free_vram() blocks while another thread holds the GPU, and goes through once released;
-  - a call from INSIDE a generation does not deadlock (retry_on_oom and
-    _consume_vram_downgrade both free the VRAM on the generation's own thread; _GPU_LOCK is
-    an RLock for exactly that);
-  - the three setters that release the pipe through free_vram() wait too;
-  - the setters that only write a global do NOT wait, which is the verified reason they are
-    left alone: set_loras and set_zimage_transformer are read by the next _ensure_base,
-    under the lock, so a running render is untouched. Locking them would only make the UI
-    hang for nothing.
-
-Neither a GPU nor a model: no pipe is ever loaded.
-
-Run:  .venv/Scripts/python tests/test_pipe_lock.py
-
-"""
+"""free_vram() waits for the render in progress (_GPU_LOCK): it blocks while another thread
+holds the GPU, a call from inside a generation does not deadlock, the Free VRAM button,
+the encoder dropdown and the offload radio are serialised with Generate."""
+# scope: family
 import os
 import sys
 import threading

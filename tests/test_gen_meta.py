@@ -1,23 +1,7 @@
-"""The generation metadata: it must describe the image, not the intention.
-
-Three holes, all of the same kind -- an image that cannot be reproduced from its own
-file, or worse, that asserts something false:
-
-1. THE EDIT LoRAs were not in there at all. The edit set is SEPARATE from the base set
-   and it is the one that shapes an edit's result; the omni path only passed
-   `extra={"refs": n}`.
-2. THE LIST WAS THE ONE OF THE LoRAs ASKED FOR, not of the LoRAs applied. Now that a LoRA
-   can be discarded along the way (the wrong 4B/9B variant, an unsupported LyCORIS, a
-   quantised build, a missing file), signing an image with a LoRA it does not carry
-   becomes easy. And a LoKr, merged into the weights, appears in NO PEFT
-   adapter: without _APPLIED_LOKRS it disappeared from the metadata.
-3. THE BASE REPO was missing as soon as a single-file was chosen. A single-file only
-   replaces the transformer -- the VAE, the text encoder and the architecture config come
-   from the repo -- and the 4B/9B are not interchangeable.
-
-Run:  .venv/Scripts/python tests/test_gen_meta.py
-
-"""
+"""Generation metadata (cz_imageio + cz_pipeline) describes the image as rendered: the LoRAs
+really applied (a discarded one is absent, a merged LoKr present), the edit set, the base
+repo even with a single file, the encoder."""
+# scope: family
 import os
 import sys
 

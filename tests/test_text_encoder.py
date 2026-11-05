@@ -1,22 +1,7 @@
-"""A replacement text encoder (Models > Checkpoints > Text encoder).
-
-FLUX.2 reads three INTERMEDIATE hidden states of the Qwen3 encoder in a
-context_embedder 3 x hidden wide: another encoder only plugs in when it has the
-same family, the same width and the same number of layers. A Qwen3-4B "abliterated"
-suits the 4B; the same one on the 9B (4096 wide) cannot work, and the refusal must
-say so BEFORE reading 8 GB.
-
-These tests also lock down what would make the option silently dangerous:
-  - a change of encoder empties the embeddings cache (otherwise the old encodings
-    stay served) and the encoder is part of the cache KEY -- id(enc) alone is not
-    enough, CPython recycles the ids of freed objects;
-  - the metadata names the encoder that REALLY ran, by its folder name
-    and never by its path (which would end up in the shared PNGs);
-  - the queue keeps the job's encoder.
-
-Run:  .venv/Scripts/python tests/test_text_encoder.py
-
-"""
+"""A replacement text encoder (Models > Checkpoints > Text encoder): refused before loading
+unless same family, width and depth; a change empties the embeddings cache and is part of
+its key; the metadata names the encoder's folder, never its path; the queue keeps it."""
+# scope: ideogram
 import json
 import os
 import sys

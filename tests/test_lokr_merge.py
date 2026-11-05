@@ -1,21 +1,7 @@
-"""A LyCORIS LoKr: merged into the weights (dW = w1 (x) w2).
-
-Why a merge and not an adapter: on FLUX.2 the q/k/v is FUSED on the
-checkpoint side ([3d, d]) and SEPARATE on the diffusers side (three [d, d]). A Kronecker
-product cannot be cut in three -- on SNOFS, w1 is [4,4] and w2 [3072,1024], so w1's
-blocks are 3072 rows where the cut falls on 4096. The MATERIALISED delta, for its part,
-cuts like any other matrix. That is what these tests lock down, going through
-diffusers' own key converter (the same one as from_single_file), not through
-a correspondence table copied by hand that could drift from it.
-
-The scale is the other trap. LyCORIS applies NO scalar when w1 and w2 are
-full (there is no rank), and peft computes alpha/r. The ai-toolkit files
-then write alpha = lora_dim -- 1e10 on SNOFS, measured on the real file -- so
-that both conventions give 1.0. Both are tested.
-
-Run:  .venv/Scripts/python tests/test_lokr_merge.py
-
-"""
+"""A LyCORIS LoKr merged into the weights (cz_pipeline): the Kronecker delta lands on the
+right weight through diffusers' own key converter, a fused qkv is split, the scale
+conventions (full factors, alpha/rank), mismatches reported, kept out of the PEFT set."""
+# scope: ideogram
 import os
 import sys
 

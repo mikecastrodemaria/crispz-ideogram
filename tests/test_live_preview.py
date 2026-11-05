@@ -1,15 +1,7 @@
-"""The live preview, formed in the result gallery (_with_live_preview).
-
-The render runs in a thread and the wrapper hands out, while it works, the frames the
-denoise drops into cz_pipeline -- then the real result. This file covers what breaks when
-that is got wrong: the ORDER (frames before the result, never after), errors (they must
-reach the interface unchanged), the flag (always lowered) and the gradio CONTEXT, without
-which the progress bar would go silent inside the thread.
-
-Neither GPU nor model: the render is simulated and the images are 8x8.
-
-Run:  .venv/Scripts/python tests/test_live_preview.py
-"""
+"""Live preview in the result gallery (_with_live_preview): frames before the result and
+never after, errors reach the interface unchanged, the flag always lowered, the gradio
+context kept inside the render thread. Simulated render, 8x8 images."""
+# scope: family
 import contextvars
 import os
 import sys

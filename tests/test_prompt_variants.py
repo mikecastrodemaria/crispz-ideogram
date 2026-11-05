@@ -1,12 +1,7 @@
-"""custom-29: {a|b|c} variant groups (dynamic-prompts syntax), standard library only.
-
-Ported unchanged from Fooocus2026 (tests/test_prompt_variants.py); only the import
-differs (prompt_variants.py sits at the repo root here).
-
-Run:  .venv/Scripts/python tests/test_prompt_variants.py
-(not `-m unittest tests.test_prompt_variants`: some venvs of the family carry a
-third-party top-level `tests` package in site-packages that shadows this folder.)
-"""
+"""{a|b|c} variant groups (prompt_variants), ported unchanged from Fooocus2026. Run through
+pytest, never `-m unittest tests.test_prompt_variants`: some venvs of the family carry a
+third-party top-level `tests` package that shadows this folder."""
+# scope: family
 import os
 import random
 import sys

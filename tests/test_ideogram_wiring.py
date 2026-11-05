@@ -1,12 +1,7 @@
-"""cz_pipeline / cz_protocol / cz_core on the Ideogram engine (lot 1, CPU).
-
-A tiny IdeogramPipe is put in place of the loaded model and the real entry point runs:
-generate(). Also: get_pipe hands the one object back, the guidance slider reaches the
-adapter as the schedule's peak, no negative prompt, the sampler is left alone, the
-protocol announces what lot 1 can and cannot do, the profile gives 48 steps / 7.0, and
-a FLUX.3 LoRA is refused with the app it belongs to.
-Run: python -m pytest tests/test_ideogram_wiring.py -q
-"""
+"""cz_pipeline / cz_protocol / cz_core on the Ideogram engine: generate() through a tiny
+IdeogramPipe, the guidance slider as the schedule's peak, no negative, the sampler left
+alone, the caps, the 48 / 7.0 profile, a foreign LoRA refused with its studio."""
+# scope: ideogram
 import json
 import os
 import struct

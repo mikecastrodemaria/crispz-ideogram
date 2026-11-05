@@ -1,10 +1,6 @@
-"""The inner monologue of a reasoning model must NEVER end up in the prompt.
-
-A regression: with a thinking model (Qwen3, DeepSeek-R1, Kimi...), Describe /
-Improve / Vision Mix returned "Okay, the user wants a prompt for..." stuck
-in front of the real prompt, which went as it was into the text encoder.
-
-"""
+"""Reasoning models through Ollama: the inner monologue never ends up in the prompt, the
+options disable thinking, the HTTP call retries without 'think' on an older server."""
+# scope: family
 import os
 import sys
 

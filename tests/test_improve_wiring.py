@@ -1,17 +1,7 @@
-"""Improve prompt wired into the tool (cz_ollama + UI handlers + CLI), against a fake
-local Ollama server. No GPU, no real Ollama.
-
-- positive: the model picked for Improve, else the first installed; directives travel;
-  a failure keeps the text untouched (no silent local keyword fallback any more);
-- negative: an empty box starts from the standard negative; Ollama down -> that
-  negative is inserted as is, with a warning;
-- config compatibility: a CUSTOM ollama_improve_prompt becomes the positive instruction,
-  the shipped one does not; keep_alive falls back on ollama_keep_alive;
-- transport: a 'localhost' URL works (rewritten to 127.0.0.1);
-- CLI: --improve / --improve-negative / --directives rewrite before generating.
-
-Run:  .venv/Scripts/python tests/test_improve_wiring.py
-"""
+"""Improve prompt wired through cz_ollama, the UI handlers and the CLI, against a fake Ollama
+server: the model picked, directives, a failure keeps the text, the negative, config
+compatibility, the localhost transport. No GPU, no real Ollama."""
+# scope: family
 import json
 import os
 import sys

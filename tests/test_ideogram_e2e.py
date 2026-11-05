@@ -1,24 +1,7 @@
-"""Ideogram 4 on the real GPU, end to end, through the app's own functions (lot 6):
-
-    gen 1024   -> generate()        txt2img, 48 steps, a poster with text
-    gen 2048   -> generate()        native 2K (CZ_E2E_2048=0 skips it: about 6.5 min)
-    img2img    -> _refine_whole()   emulated SDEdit, strength 0.35
-    inpaint    -> inpaint_run()     emulated latent blending; outside the mask the
-                                    original comes back pixel for pixel
-    stop       -> an interrupt at step 3 still returns an image
-
-A GPU run, not a unit test: it loads the real gated nf4 checkpoint (accept the licence
-on https://huggingface.co/ideogram-ai/ideogram-4-nf4-diffusers and log in) and SKIPS
-cleanly without CUDA, without access to the repo, or when CZ_E2E=0. Close crispz-flux3
-and any other GPU app first. Images in tests/e2e_*.png (gitignored), timings and VRAM
-peaks in tests/e2e_timings.txt.
-
-    IDEOGRAM_E2E_MODEL   another base repo or local folder
-    CZ_E2E=0             skip even with a GPU
-    CZ_E2E_2048=0        skip the 2048 render
-
-Run:  .venv\\Scripts\\python -m pytest tests\\test_ideogram_e2e.py -s
-"""
+"""Ideogram 4 on the real GPU through the app's own functions: gen 1024, gen 2048 (CZ_E2E_2048=0
+skips it), img2img 0.35, inpaint, Stop at step 3. Skips without CUDA, without access to the
+gated repo or with CZ_E2E=0. Images in tests/e2e_*.png, timings in tests/e2e_timings.txt."""
+# scope: ideogram
 import os
 import sys
 import time

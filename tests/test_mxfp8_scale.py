@@ -1,17 +1,7 @@
-"""MXFP8: the scale is an EXPONENT, not a multiplier.
-
-The FLUX.2 checkpoint 'snofs14Flux2Klein9b_14Distilled' is quantised in mxfp8
-(OCP microscaling, group_size 32). Its scale is a uint8 encoding an E8M0
-exponent -> a real factor of 2^(s-127). Two successive bugs led there:
-  1. the [out, nb] scale made the broadcast crash deep inside torch, on
-     "The size of tensor a (4096) must match the size of tensor b (128)";
-  2. read as a linear multiplier (~115 instead of 2^-12), it gave
-     weights 470000x too large -- std 17093 instead of 0.024 -- that is to say a
-     smoothed image, with no step reporting anything at all.
-
-Run:  .venv/Scripts/python tests/test_mxfp8_scale.py
-
-"""
+"""MXFP8 single files (cz_pipeline dequant): the scale is an E8M0 EXPONENT, the groups run
+along the input dimension, float scales are untouched, an unknown layout is named, not
+crashed."""
+# scope: family
 import os
 import sys
 

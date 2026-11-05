@@ -1,23 +1,6 @@
-"""A VAE kept among the checkpoints is refused by its name.
-
-Caught in the library on 2026-09-10: `diffusion_pytorch_model.safetensors`, 160 MB,
-251 encoder/decoder/bn/post_quant_conv tensors -- FLUX.2's autoencoder, not a
-transformer. It went through every guard, appeared in the menu, and crashed on
-"Cannot copy out of meta tensor": loaded as a transformer, no weight finds its
-place and everything stays on 'meta'. "diffusion_pytorch_model" is the name diffusers gives
-to the weights of ANY component, hence the confusion (which was mine first:
-I had taken it for a transformer shard).
-
-Two traps these tests lock down, both caught on the real files:
-  - the all-in-one BUNDLES (transformer + encoder + VAE) carry the same 251 VAE
-    keys. The historical transformer counter did not see their keys prefixed
-    'model.diffusion_model.double_blocks.*': reused, it would have made them refused.
-  - a T5 text encoder also has 'encoder.*' keys. Only a marker specific to the
-    VAE (post_quant_conv, decoder.conv_in) tells it apart.
-
-Run:  .venv/Scripts/python tests/test_vae_guard.py
-
-"""
+"""A VAE kept among the checkpoints is refused by its tensor names, and an all-in-one bundle
+(transformer + encoder + VAE) is not mistaken for one. Tiny files."""
+# scope: family
 import os
 import sys
 

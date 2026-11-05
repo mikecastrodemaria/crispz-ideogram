@@ -1,23 +1,7 @@
-"""CivitAI LoRA search + download, ported from crispz-studio.
-
-The part that is NOT a copy is the ranking. The single-base forks compare the CivitAI
-base label for EQUALITY ('Z-Image'); that would match nothing here, because CivitAI labels
-these LoRAs 'Flux.2 Klein 4B-base' -- read from a real sidecar on this machine. So klein
-matches on a normalised PREFIX, and the VARIANT matters: a 4B LoRA does not load on a 9B
-base (cz_pipeline refuses it with its reason), so the versions of the LOADED variant come
-first and 'Klein only' filters on the family.
-
-No network: _api_get and the download stream are stubbed. What is checked:
-  - the ranking puts the loaded variant first, the other Klein ones next, the rest last;
-  - 'Klein only' keeps both Klein variants and drops the foreign bases;
-  - an unreadable variant degrades to the family ranking instead of breaking the search;
-  - search_loras flattens one entry per model VERSION and survives a network failure;
-  - a download whose SHA256 does not match is refused AND the file is removed;
-  - an existing file is never overwritten.
-
-Run:  .venv/Scripts/python tests/test_civitai_search.py
-
-"""
+"""CivitAI LoRA search and download (cz_civitai + cz_ui): ranking by the loaded family, the
+family-only filter, an unreadable variant degrades to the family ranking, the download
+stream. No network: _api_get and the stream are stubbed."""
+# scope: family
 import hashlib
 import io
 import os

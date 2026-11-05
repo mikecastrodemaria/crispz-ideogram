@@ -1,7 +1,6 @@
-"""Unit tests for the job queue pure helpers (no Gradio event needed).
-
-Run:  .venv/Scripts/python tests/test_queue.py
-"""
+"""Job queue pure helpers (cz_ui): labels, moving and removing ticked jobs, rendering, the
+queue re-seeded from disk at page load and rendered at build time."""
+# scope: family
 import os
 import sys
 

@@ -1,8 +1,6 @@
-"""Unit tests for the forced-aspect-ratio modes (crop / extend) on Upscale/img2img.
-The extend path stubs outpaint_directions (no GPU): only the geometry is checked.
-
-Run:  .venv/Scripts/python tests/test_force_ratio.py
-"""
+"""Forced aspect ratio (crop / extend) on Upscale and img2img: the geometry only, the
+outpaint call is stubbed."""
+# scope: family
 import os
 import sys
 

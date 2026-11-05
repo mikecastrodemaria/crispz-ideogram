@@ -1,20 +1,7 @@
-"""An X/Y/Z grid: the "Edit LoRA weight" axis, and the parser that crashed on a newline.
-
-TWO LoRA SETS. The BASE set (cz_pipeline.LORAS) is applied on every generation;
-the EDIT set (EDIT_LORAS) is only applied by _ui_generate's omni branch --
-use_input + the U.EDIT_MODE mode + at least one reference image. So an axis that
-varied the edit weight on a txt2img grid would render N IDENTICAL images, with no error
-and no explanation: the worst possible outcome. The axis refuses that
-case, saying what to tick.
-
-THE PARSER. `csv.reader([s])` refused a newline in an unquoted field
-(_csv.Error: new-line character seen in unquoted field), and the error left as a Gradio
-trace: noisy in the console, mute in the interface. Pasting a list over several
-lines is a normal gesture, though.
-
-Run:  .venv/Scripts/python tests/test_xyz_edit_lora.py
-
-"""
+"""The 'Edit LoRA weight' X/Y/Z axis (cz_ui), FLUX.3 path kept for merges from crispz-flux3:
+accepted on an edit run, refused with the reason on a txt2img grid, without a selected
+edit LoRA or with the checkbox off; a value rewrites only the edit set."""
+# scope: flux3
 import os
 import sys
 

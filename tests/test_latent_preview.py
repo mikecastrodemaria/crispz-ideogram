@@ -1,13 +1,7 @@
-"""The latent -> RGB projection of the live preview (FLUX.2, packed latents).
-
-FLUX.2 hands the callback its latents PACKED: (batch, h*w, 128), one token per 16x16
-block of pixels. Getting the grid wrong does not raise -- it shows a scrambled image, or
-a correct-looking one at the wrong aspect ratio -- so the shape rules are pinned here.
-
-Neither GPU nor model: the latents are zeros, only the geometry is checked.
-
-Run:  .venv/Scripts/python tests/test_latent_preview.py
-"""
+"""Latent -> RGB projection of the live preview: the packed-latent geometry, the FLUX.2 helpers
+of diffusers, and the Ideogram projection (token order and bn stats folded into one
+matrix, checked against the exact inverse of the decode). No GPU, no model."""
+# scope: ideogram
 import os
 import sys
 

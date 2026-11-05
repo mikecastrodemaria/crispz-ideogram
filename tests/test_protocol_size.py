@@ -1,11 +1,6 @@
-"""The size asked for must reach the omni route, for EVERY op.
-
-Regression (inherited from crispz-qwen-edit): `size_explicit` was only computed in
-the op == "edit" branch. But a `gen` WITH refs takes the SAME omni route -- it left
-without the flag, and generate_omni kept the dimensions of the REFERENCE. An
-800x1312 panel rendered from a 1280x832 reference came back in landscape, then got
-cropped at layout time (a cover with its title cut off).
-"""
+"""The requested size reaches the omni route for EVERY op (size_explicit on a gen with refs,
+not only on edit); one dimension alone is not explicit."""
+# scope: family
 import os
 import sys
 

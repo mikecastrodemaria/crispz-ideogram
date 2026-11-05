@@ -1,11 +1,7 @@
-"""Unit tests for the transformer hot-swap (_swap_transformer), no model is loaded.
-
-Regression guard for: switching checkpoint A -> B (same base repo) used to
-free_vram() and reload the WHOLE pipeline (transformer + VAE + Qwen3-4B text encoder).
-Only the transformer must be reloaded; the base components stay in VRAM.
-
-Run:  .venv/Scripts/python tests/test_model_swap.py
-"""
+"""Transformer hot-swap (_swap_transformer): only the transformer reloads, the LoRAs and the
+offload hooks are reapplied on the new one, a failure falls back, the base pipe is not
+freed by a transformer or single-file change. No model."""
+# scope: family
 import os
 import sys
 import tempfile

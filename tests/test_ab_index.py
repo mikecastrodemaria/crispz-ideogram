@@ -1,12 +1,6 @@
-"""Tests of the Asset Browser's metadata cache (the reindexing).
-
-A regression: every opening re-read the PNG tags of ALL the images
-(~25 ms/image -> 295 s for 9278 images), to the point that the SPA's polling (180 s)
-timed out before the end -> "there are images missing".
-
-Run:  .venv/Scripts/python tests/test_ab_index.py
-
-"""
+"""Asset Browser metadata cache (cz_assetbrowser): second pass from the cache, modified or
+deleted images, a corrupt cache ignored, per-day manifests, the incremental hook."""
+# scope: family
 import os
 import sys
 import json

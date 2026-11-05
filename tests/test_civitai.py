@@ -1,7 +1,6 @@
-"""Unit tests for the local/pure CivitAI helpers (no network hit).
-
-Run:  .venv/Scripts/python tests/test_civitai.py
-"""
+"""cz_civitai pure helpers: SHA256 with its cache and the sidecar, previews, examples, the
+version lookup by hash, the update flag per base model. No network."""
+# scope: family
 import os
 import sys
 import json

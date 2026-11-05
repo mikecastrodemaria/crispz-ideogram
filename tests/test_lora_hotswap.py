@@ -1,11 +1,7 @@
-"""Unit tests for the LoRA hot-swap logic (_apply_loras), no model is loaded.
-
-Regression guard for: activating a LoRA used to call free_vram() and reload the whole
-pipeline (transformer + VAE + Qwen3 encoder, ~9s). LoRAs must now be swapped
-on the cached pipe instead.
-
-Run:  .venv/Scripts/python tests/test_lora_hotswap.py
-"""
+"""LoRA hot-swap (_apply_loras) on the cached pipe: a no-op, a weight-only change, a swap,
+the removal of all, a missing file ignored, the adapter registry, the base cache key
+without the LoRAs, a failure reported for the full-reload fallback. No model."""
+# scope: family
 import os
 import sys
 import tempfile

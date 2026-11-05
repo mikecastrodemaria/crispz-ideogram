@@ -1,11 +1,7 @@
-"""Lot 3: img2img and inpaint EMULATED on Ideogram 4 (tiny random pipeline, CPU).
-
-What the acceptance asks (CLAUDE.md lot 3): reduced steps, the area outside the mask
-kept, a Stop that still returns the partial image. Plus: the schedule really is the tail
-of Ideogram's own, the guidance is rotated, the scheduler is left as it was.
-
-Run:  .venv/Scripts/python -m pytest tests/test_ideogram_emulated.py -q
-"""
+"""img2img and inpaint EMULATED on Ideogram 4 (tiny random pipeline, CPU): the tail of
+Ideogram's own schedule, the guidance rotated, the area outside the mask kept exactly,
+a Stop that still returns the partial image, edit still refused."""
+# scope: ideogram
 import os
 import sys
 

@@ -1,7 +1,5 @@
-"""Unit tests for the parallel thumbnail rebuild (Asset Browser 'Rebuild ALL thumbnails').
-
-Run:  .venv/Scripts/python tests/test_thumbs.py
-"""
+"""Parallel thumbnail rebuild (Asset Browser 'Rebuild ALL thumbnails')."""
+# scope: family
 import os
 import sys
 import tempfile

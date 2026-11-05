@@ -1,17 +1,7 @@
-"""The GitHub update offered at startup: when it is safe, when it blocks.
-
-It works on REAL temporary git repos (a bare repo plays GitHub), with no network:
-  - up to date -> nothing to offer;
-  - behind, a clean tree -> safe (boot_check.bat offers Y/N);
-  - a local change on a file the update touches -> blocked;
-  - a local change ELSEWHERE -> safe, and the file is announced as kept;
-  - a file present here outside git, which the update ADDS -> blocked (git overwrites
-    an ignored file without a word; tests/ is ignored in these repos);
-  - a diverged branch -> blocked; no tracked branch / not a repo -> nothing.
-
-Run:  .venv/Scripts/python tests/test_update_check.py
-
-"""
+"""The GitHub update offered at startup (_update_check) on real temporary git repos: up to
+date, behind and clean, blocked by a local change the update touches or by an untracked
+file it adds, safe with a change elsewhere, blocked on a diverged branch. No network."""
+# scope: family
 import os
 import shutil
 import subprocess

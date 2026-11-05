@@ -1,5 +1,6 @@
 """Lot 5: the local alternatives to the cloud functions. Remove BG (rembg) saves a
 transparent PNG with its metadata; nothing leaves the machine."""
+# scope: ideogram
 import json
 import os
 import sys

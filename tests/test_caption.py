@@ -1,11 +1,7 @@
-"""cz_caption: the Ideogram 4 JSON caption (schema of ideogram-oss/ideogram4, docs/prompting.md).
-
-No model, no GPU. The fixtures are the examples of the reference docs and of diffusers'
-prompt enhancer: they must pass the reference CaptionVerifier with no warning, and the
-editor round trip (fields -> caption -> fields) must not lose anything.
-
-Run:  .venv/Scripts/python -m pytest tests/test_caption.py -q
-"""
+"""cz_caption: the Ideogram 4 JSON caption (schema of ideogram-oss/ideogram4). The reference
+examples pass the CaptionVerifier without a warning and the editor round trip
+(fields -> caption -> fields) loses nothing. No model, no GPU."""
+# scope: ideogram
 import json
 import os
 import sys

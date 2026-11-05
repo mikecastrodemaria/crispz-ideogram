@@ -1,14 +1,7 @@
-"""Edit-LoRA presets on crispz-flux3.
-
-The catalogue ships ONE preset, the CivitAI "FLUX 3 Image Klein Outpaint LoRA"
-(2026-10-28); crispz-klein's two Consistence-Edit files are FLUX.2 (refused by family).
-What these tests lock down:
-  - the shipped preset: its trigger sentence, the author's weight, a CivitAI source that
-    downloads through cz_civitai (SHA256 carried) and lands under the stable name;
-  - a preset declared in config.txt ('edit_loras') is picked up, by name and adapter name;
-  - a FLUX.2 edit LoRA is refused by the family guard with one sentence;
-  - picking a preset in the UI applies it at ITS advised weight and moves the slider.
-"""
+"""Edit-LoRA presets (cz_edit_loras), FLUX.3 path kept for merges from crispz-flux3: the
+shipped catalogue, a CivitAI download through cz_civitai, a config preset, a local copy,
+a FLUX.2 file refused by family, the slider set to the preset weight."""
+# scope: flux3
 import os
 import sys
 import shutil

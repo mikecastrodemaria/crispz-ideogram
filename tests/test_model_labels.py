@@ -1,17 +1,7 @@
-"""What a model IS, shown in the menu that offers it.
-
-A library of 27 checkpoints and 105 LoRAs offered nothing but file names, and the one
-thing that decides whether a file loads at all -- 4B or 9B -- was invisible until it
-failed. The menus now carry the variant, the size and, for a checkpoint, the format.
-
-The contract that matters: the VALUE behind each entry is unchanged. Presets, queued
-jobs and image metadata store a file name, and relabelling the menu must not touch it.
-
-Neither GPU nor model: tiny safetensors are written with the shapes that give the
-variant away.
-
-Run:  .venv/Scripts/python tests/test_model_labels.py
-"""
+"""Model menu labels (cz_pipeline): the family, the size and the format shown, and the VALUE
+behind each entry unchanged (presets, queued jobs and metadata store the file name).
+Tiny safetensors written with the shapes that give the family away."""
+# scope: ideogram
 import os
 import shutil
 import sys

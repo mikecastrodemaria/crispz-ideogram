@@ -1,7 +1,6 @@
-"""Unit tests for the batch CivitAI enrichment core (no network).
-
-Run:  .venv/Scripts/python tests/test_civitai_batch.py
-"""
+"""cz_civitai_batch, the batch CivitAI enrichment: sharding, which files need it, every
+LoRA folder scanned, the folder argument priority, accounting. No network."""
+# scope: family
 import os
 import sys
 import json

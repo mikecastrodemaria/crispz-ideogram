@@ -1,17 +1,7 @@
-"""Two LoRA traps specific to the klein fork (the edit pipe == the base pipe).
-
-1. THE KEY DIALECT. diffusers/peft expects `.lora_A.weight` / `.lora_B.weight`.
-   Some published LoRAs write `.lora.down.weight` / `.lora.up.weight` -- and
-   some MIX the two (lrzjason/Consistance_Edit_Lora: 160 PEFT keys +
-   40 down/up keys). peft then loads what it recognises and creates a NEW
-   adapter for the rest: the LoRA applies partially, WITHOUT an error.
-
-2. THE ADAPTERS' NAMESPACE. Upstream, editing and the base are two distinct
-   models. Here it is the same object: the two sets fought over `cz_lora_i`
-   ("Adapter name cz_lora_0 already in use") and `set_adapters` silently
-   disabled the base LoRAs. So _apply_edit_loras synchronises the UNION.
-
-"""
+"""LoRA key dialects (cz_pipeline): down/up keys folded to the PEFT names, alpha keys folded
+and dropped, a mixed file normalised, kohya naming left to diffusers, the base and edit
+sets share one adapter namespace (the union is synchronised)."""
+# scope: ideogram
 import os
 import sys
 

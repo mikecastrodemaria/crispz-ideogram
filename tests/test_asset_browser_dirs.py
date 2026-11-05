@@ -1,13 +1,6 @@
-"""The Asset Browser's Models tab came out EMPTY on a normal install.
-
-It only scanned the MAIN checkpoints folder and only recognised
-.safetensors. On a machine that keeps its models elsewhere (the "extra" folder,
-another disk) the main one is empty: the tab showed 0 models although the
-library held 22, with the GGUFs never listed on the way.
-
-Run:  .venv/Scripts/python tests/test_asset_browser_dirs.py
-
-"""
+"""Asset Browser Models tab: the main AND the extra checkpoint folders are scanned, a GGUF
+counts as a model, the main folder wins on a duplicate, a missing folder is no error."""
+# scope: family
 import os
 import shutil
 import sys

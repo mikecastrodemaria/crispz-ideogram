@@ -1,10 +1,7 @@
-"""Unit tests for the quantized-checkpoint support: header routing
-(_safetensors_unsupported / _safetensors_dequant), the ComfyUI FP8/INT8 dequant
-loader (_load_dequant_state_dict) and the GGUF guards (_gguf_arch /
-_gguf_layout_unsupported). Synthetic files only (a few KB), no model download.
-
-Run:  .venv/Scripts/python tests/test_quant_formats.py
-"""
+"""Quantized single files (cz_pipeline): header routing (_safetensors_unsupported /
+_safetensors_dequant), the ComfyUI FP8 / INT8 dequant loader, the GGUF guards (_gguf_arch,
+_gguf_layout_unsupported, the llama.cpp file type). Synthetic files of a few KB."""
+# scope: family
 import json
 import os
 import sys

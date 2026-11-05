@@ -1,10 +1,7 @@
-"""Unit tests for cz_protocol (family CLI protocol v1).
-No torch, no GPU: the heavy path (run_gen) is exercised against a FAKE
-cz_pipeline injected in sys.modules, and the remote route against a local
-HTTP server that mimics the Gradio /gradio_api/call endpoints.
-
-Run:  .venv/Scripts/python tests/test_protocol.py
-"""
+"""cz_protocol, the family CLI protocol v1: caps, the validate_spec codes, run_gen against a
+FAKE cz_pipeline injected in sys.modules, the remote route against a local HTTP server
+that mimics the Gradio /gradio_api/call endpoints. No torch, no GPU."""
+# scope: family
 import os
 import io
 import sys

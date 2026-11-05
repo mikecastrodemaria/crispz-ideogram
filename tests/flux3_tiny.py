@@ -1,14 +1,7 @@
-"""Miniature FLUX.3 components for the CPU tests (no download, random weights).
-
-The real model is 5.6B parameters behind a gated repo; the tests need the SHAPES and the
-control flow, not the weights. So: a 1+1 block transformer 16 wide, a VAE with 8-channel
-blocks, a stub text encoder that returns random embeddings of the right width (8 hidden
-states x TEXT_HIDDEN, the way FLUX.3 stacks Qwen3-VL's), all wired into the real diffusers
-modular blocks through cz_flux3.build_blocks, so the adapter is exercised against the real
-block chain and not a mock of it.
-
-Shared by tests/test_flux3_adapter.py and tests/test_flux3_wiring.py.
-"""
+"""Miniature FLUX.3 components for the CPU tests (random weights, no download): a tiny
+transformer, VAE and stub text encoder wired into the real diffusers modular blocks
+through cz_flux3.build_blocks. Shared by the test_flux3_merge_* files."""
+# scope: flux3
 import os
 import sys
 

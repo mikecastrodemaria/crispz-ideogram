@@ -1,14 +1,6 @@
-"""The hands detailer was declared absent although it was ready to run.
-
-At run time it only requires onnxruntime + a .onnx exported once into cache/.
-'ultralytics' only serves that export, and the docstring of cz_detailer._ensure_hand_onnx
-formally forbids letting it live in the diffusion process (it corrupts
-the shared weights during the offload transfers). So gating the feature on the import
-of ultralytics punished exactly those who had followed that advice.
-
-Run:  .venv/Scripts/python tests/test_hands_available.py
-
-"""
+"""Hands detailer availability (cz_detailer): an exported ONNX in cache/ is enough,
+ultralytics alone is enough, no onnxruntime means no."""
+# scope: family
 import importlib.util
 import os
 import sys

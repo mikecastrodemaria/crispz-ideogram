@@ -1,7 +1,6 @@
-"""Unit tests for the X/Y/Z grid pure helpers (parse, validate, build, assemble).
-
-Run:  .venv/Scripts/python tests/test_xyz.py
-"""
+"""X/Y/Z grid pure helpers (cz_ui): parse (commas, quotes and newlines), match, validate,
+schedule aliases, build, assemble, CSV round trip, suggestions, the LoRA axes."""
+# scope: family
 import os
 import sys
 import tempfile

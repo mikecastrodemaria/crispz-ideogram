@@ -1,16 +1,7 @@
-"""crispz-klein told its 4B and 9B apart by width. Since crispz-flux3 (and here, Ideogram 4)
-the FAMILY is read from the tensor names instead, and the width helpers below only serve
-to NAME a FLUX.2 file in a message.
-
-crispz-klein's original note: the 4B and the 9B share the architecture AND the tensor names.
-
-So the architecture guard lets both through, and a 9B loaded in a 4B pipeline
-blew up after reading gigabytes, on an unreadable diffusers
-message: "expected shape [18432, 3072], but got [24576, 4096]".
-Only the HIDDEN DIMENSION separates them -- readable from the header, without loading a
-single weight.
-
-"""
+"""Checkpoint and LoRA family guard (cz_pipeline): the hidden width read from the header, a
+foreign file or LoRA refused in one sentence naming its studio, an Ideogram one passes
+whatever the base, an unknown base or a missing signature never discards."""
+# scope: ideogram
 import os
 import sys
 

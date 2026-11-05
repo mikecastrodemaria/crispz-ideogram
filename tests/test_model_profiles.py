@@ -1,10 +1,7 @@
-"""The model profiles and presets of crispz-ideogram (rewritten from crispz-flux3's lot B).
-
-The trap this guards: profile_for_model matches by substring, first match wins, and an
-unknown name (a local diffusers folder, a renamed mirror) falls back on the default
-profile. Inherited from FLUX.3, that default was 16 steps at guidance 1.0: on Ideogram 4
-it means a guidance schedule peaking at 1.0, almost no CFG. Every path must give 48 / 7.0.
-"""
+"""Model profiles and presets (cz_core): substring match, first match wins, and an unknown
+name (a local folder, a renamed mirror) falls back on 48 steps / 7.0, never on an
+inherited default."""
+# scope: ideogram
 import json
 import os
 import sys

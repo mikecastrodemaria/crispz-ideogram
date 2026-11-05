@@ -1,11 +1,7 @@
-"""cz_ideogram.IdeogramPipe on a tiny random Ideogram 4 (CPU, ~30 s, no gated download).
-
-Lot 1: text to image through crispz's calling convention, the guidance schedule kept in
-shape for any step count, size fitting, callback and Stop, the named refusals of the
-paths lot 3 / lot 4 will bring (img2img, inpaint, edit), the negative prompt dropped,
-and the family detection the LoRA and checkpoint guards rely on.
-Run: python -m pytest tests/test_ideogram_engine.py -q
-"""
+"""cz_ideogram.IdeogramPipe on a tiny random Ideogram 4 (CPU, no gated download): guidance
+schedule kept in shape, size fitting, callback and Stop, the negative dropped, family
+detection, the live preview projection, the encoder-only offload, the sparse text norm."""
+# scope: ideogram
 import os
 import sys
 

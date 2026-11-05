@@ -2458,6 +2458,13 @@ def _flux3_file_refusal(path):
     if fam != engine.FAMILY:
         return ("no Ideogram 4 transformer tensor in it (a VAE, a text encoder, or "
                 "another model family); crispz-ideogram only runs Ideogram 4.0")
+    from cz_ideogram_instant import is_instant_name
+    if is_instant_name(path):
+        hdr = _safetensors_header(path)
+        if any(v.get("dtype") not in ("BF16", "F16", "F32")
+               for k, v in hdr.items() if k != "__metadata__" and isinstance(v, dict)):
+            return "Ideogram Instant: use the BF16 checkpoint; INT8 ConvRot / FP8 are not supported"
+        return None
     # An Ideogram 4 transformer in ONE file: diffusers 0.42.1 has no single-file
     # converter for it. Said in the listing rather than at load time.
     return ("single-file Ideogram 4 transformers are not supported yet (diffusers has no "
@@ -3672,6 +3679,10 @@ def _base_vram_need_gb(base=None):
     is dequantized at load time).
 """
     t = ZIMAGE_TRANSFORMER
+    if t:
+        from cz_ideogram_instant import is_instant_name
+        if is_instant_name(t) and os.path.isfile(t):
+            return _FLUX3_REST_GB + os.path.getsize(t) / 1024 ** 3
     if not t:
         return _FLUX3_REST_GB + _FLUX3_TRANSFORMER_GB.get(PRECISION, 9.7)
     if _is_gguf_path(t) or engine._bfl_quant_of(t):
@@ -3872,8 +3883,12 @@ def _load_transformer(path=None, base=None):
     # single file (no diffusers converter for Ideogram 4). The FLUX.3 path below stays for
     # merges from crispz-flux3 and is not reached.
     if path and _is_single_file(path):
-        raise RuntimeError(f"{os.path.basename(path)}: "
-                           f"{_flux3_file_refusal(path) or 'not loadable here'}")
+        why = _flux3_file_refusal(path)
+        if why:
+            raise RuntimeError(f"{os.path.basename(path)}: {why}")
+        return _load_monitor(f"Instant transformer {os.path.basename(path)}",
+                             lambda: engine.load_transformer(base, DTYPE, single_file=path,
+                                                             token=_hf_token()))
     return _load_monitor(f"transformer {base} ({PRECISION})",
                          lambda: engine.load_transformer(base, DTYPE, precision=PRECISION,
                                                          token=_hf_token()))
@@ -4364,6 +4379,11 @@ def _swap_transformer(pipe):
     global _APPLIED_LORAS, _DERIVED
     t0 = time.time()
     old_t = _LOADED_KEY[1] if _LOADED_KEY else None
+    from cz_ideogram_instant import is_instant_name
+    if is_instant_name(old_t) or is_instant_name(ZIMAGE_TRANSFORMER):
+        # The pipeline class and guidance branch change, not just the weights.
+        _log("Instant checkpoint change -> full pipeline reload")
+        return False
     # Switching to/from a GGUF changes the EFFECTIVE offload (a GGUF forces 'model')
     # -> the accelerate hooks and the placement differ: no tinkering, we reload.
     if _effective_offload(old_t) != _effective_offload(ZIMAGE_TRANSFORMER):
@@ -5578,4 +5598,8 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
             m["edit_speed"] = EDIT_SPEED["name"]
     if extra:
         m.update(extra)
+    from cz_ideogram_instant import is_instant_name
+    if is_instant_name(m.get("model")):
+        m.update(guidance=1.0, sampler="euler/simple", flow_shift=5.25,
+                 model_variant="ideogram_instant")
     return m

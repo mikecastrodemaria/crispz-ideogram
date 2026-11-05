@@ -139,6 +139,9 @@ def profile_for_model(name):
     """The (steps, guidance) recommended for a model from its name (a substring match in
     model_profiles, first match wins), otherwise the default profile."""
     n = (name or "").lower().replace("_", "-")
+    if "ideogram-instant" in n or "fal-ideo-4-nsfw" in n:
+        prof = MODEL_PROFILES.get("ideogram_instant", {"steps": 8, "guidance": 1.0})
+        return int(prof.get("steps", 8)), float(prof.get("guidance", 1.0))
     for key, prof in MODEL_PROFILES.items():
         k = key.lower()
         if k not in n:

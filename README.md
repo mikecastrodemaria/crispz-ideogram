@@ -44,6 +44,70 @@ field is greyed out and says why.
   encoder when the card has under 40 GB.
 - Python 3.11 or later (3.13 advised), Windows or Linux.
 
+## Experimental single-file Safetensors support
+
+A single-file checkpoint is a packaging format, not a complete pipeline or an
+inference recipe. For this integration, it contains the Ideogram diffusion
+transformer weights; the tokenizer, Qwen text encoder and VAE remain separate.
+A `.safetensors` extension alone does not establish architecture compatibility.
+
+| Property | What must be checked |
+|---|---|
+| Container | One `.safetensors` file, with a valid header and complete tensor data |
+| Precision | Dense BF16 weights; the current converter also accepts dense F16/F32 inputs and casts them to the requested compute dtype |
+| Architecture | Ideogram tensor names, full parameter coverage and matching dimensions |
+| Tensor layout | Original/ComfyUI fused QKV or Diffusers split Q/K/V projections; optional namespace prefixes |
+| Quantization | INT8 ConvRot, FP8, NF4 and NVFP4 single-file exports require their own loaders/runtime support; they are outside this converter |
+| Inference profile | Standard dual-transformer guidance or distilled single-transformer generation, selected independently of storage precision |
+
+For a roughly 9.28-billion-parameter transformer, dense BF16 weights occupy about
+18.6 GB on disk. That excludes shared components, activations and CUDA overhead;
+file size is not a VRAM requirement. Floating-point tensors exported from a
+quantization-aware training process may still require the intended quantized
+runtime. BF16 storage therefore does not guarantee usable BF16 inference.
+
+### Code changes already present
+
+| Module | Implemented change |
+|---|---|
+| `cz_ideogram_instant.py` | Inspect tensor names/shapes/dtypes before loading; remove recognized namespace prefixes; split fused QKV; map output projection names; reject missing, duplicate, unknown or mismatched tensors; load with strict parameter coverage |
+| `cz_ideogram.py` | Experimental single-file loading route and single-transformer adapter; reuse shared components; stage the text encoder and transformer separately in GPU memory |
+| `cz_pipeline.py` | Experimental checkpoint listing/loading, full reload when the pipeline type changes, file-size-based memory estimate and recording of actual sampling settings |
+| `cz_core.py`, `cz_ui.py`, `cz_cli.py` | Experimental profile defaults, transformer override controls and CLI help |
+| `tests/test_ideogram_instant.py` | Conversion round-trip, strict rejection, component loading, one denoiser call per step, callbacks, switching, metadata and staged offload checks |
+
+These changes are an experimental implementation, not general single-file support.
+The current route still recognizes a limited set of filenames. Its distilled
+sampling recipe must not be applied to an arbitrary BF16 checkpoint. The separate
+single-file loading route does not yet cover standard dual-transformer checkpoints.
+
+### Follow-up changes required for general format support
+
+1. **Separate format detection from profile selection.** Identify architecture,
+   tensor layout and precision from the header. Obtain the inference profile from
+   an explicit setting or a documented sidecar manifest, rather than a filename.
+2. **Read and validate the architecture configuration.** Support a supplied
+   transformer config, checking dimensions, layer count, attention heads, positional
+   encoding and feature layout instead of assuming one architecture configuration.
+3. **Select the correct pipeline.** Preserve both branches for standard asymmetric
+   guidance; load only the conditional branch for a distilled checkpoint. Reuse
+   compatible tokenizer/encoder/VAE components with a pinned source revision.
+4. **Make sampling a profile property.** Specify steps, CFG behavior, sigma schedule,
+   time convention and terminal timestep handling. Precision alone must never select
+   Euler/simple, a fixed flow shift or an eight-step recipe.
+5. **Handle quantization explicitly.** Dispatch supported quantized exports to an
+   appropriate converter/runtime and reject unsupported schemes before allocating
+   the full model. Casting packed weights to BF16 is not a quantization implementation.
+6. **Validate actual renders.** Compare against a reference implementation using a
+   fixed structured caption, seed and resolution. Check image content, typography,
+   timing and peak memory in addition to unit tests and successful file loading.
+
+**Validation status:** tensor conversion and pipeline behavior pass automated tests.
+An initial full-size BF16 GPU experiment completed, but its output failed the image
+content check. Generic single-file rendering compatibility remains unvalidated.
+The existing download/test helpers are tied to one experimental profile and should
+be generalized before being presented as format-independent tools.
+
 ## Install
 
 Windows: `install.bat`, then `run.bat`. Linux: `install.sh`, then `run.sh`. Or the

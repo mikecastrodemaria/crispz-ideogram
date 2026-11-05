@@ -399,6 +399,10 @@ class IdeogramPipe:
         object.__setattr__(self, "_all_hooks", [])
         object.__setattr__(self, "_te_on_gpu", False)
         object.__setattr__(self, "released", False)
+        if getattr(getattr(pipe, "transformer", None), "_cz_ideogram_instant", False):
+            object.__setattr__(self, "variant", "ideogram_instant")
+            # Keep the family adapter's CFG policy: Instant handles CFG 1 itself.
+            self._cfg.update(ideogram_instant=True)
 
     def release(self):
         """Lets go of the real pipeline, so that a reference to THIS wrapper kept by some
@@ -460,11 +464,14 @@ class IdeogramPipe:
         self.remove_all_hooks()
         dev = torch.device(device) if device is not None else torch.device(
             "cuda" if gpu_id is None else f"cuda:{int(gpu_id)}")
+        instant = self.variant == "ideogram_instant"
+        if instant:
+            p._cz_execution_device = dev
         for name in ("transformer", "unconditional_transformer", "vae",
                      "prompt_enhancer_head"):
             m = getattr(p, name, None)
             if isinstance(m, torch.nn.Module):
-                m.to(dev)
+                m.to("cpu" if instant and name == "transformer" else dev)
         te = getattr(p, "text_encoder", None)
         if te is None:
             return
@@ -485,6 +492,8 @@ class IdeogramPipe:
 
     def _encoder_in(self):
         if self._offload_device is not None and not self._te_on_gpu:
+            if self.variant == "ideogram_instant":
+                self._pipe.transformer.to("cpu")
             self._pipe.text_encoder.to(self._offload_device)
             object.__setattr__(self, "_te_on_gpu", True)
 
@@ -492,6 +501,20 @@ class IdeogramPipe:
         if self._te_on_gpu:
             self._pipe.text_encoder.to("cpu")
             object.__setattr__(self, "_te_on_gpu", False)
+            if self.variant == "ideogram_instant":
+                self._pipe.transformer.to(self._offload_device)
+
+    def enable_sequential_cpu_offload(self, gpu_id=None, device=None):
+        if self.variant == "ideogram_instant":
+            self._say_once("instant_offload", "Instant: using staged encoder/transformer "
+                           "offload; sequential hooks are incompatible with the encoder path")
+            return self.enable_model_cpu_offload(gpu_id=gpu_id, device=device)
+        kw = {}
+        if gpu_id is not None:
+            kw["gpu_id"] = gpu_id
+        if device is not None:
+            kw["device"] = device
+        return self._pipe.enable_sequential_cpu_offload(**kw)
 
     def remove_all_hooks(self):
         for h in list(self._tr_pre or []):
@@ -503,6 +526,8 @@ class IdeogramPipe:
         object.__setattr__(self, "_all_hooks", [])
         object.__setattr__(self, "_te_on_gpu", False)
         object.__setattr__(self, "_offload_device", None)
+        if self.variant == "ideogram_instant":
+            self._pipe._cz_execution_device = None
         self._pipe.remove_all_hooks()
 
     def maybe_free_model_hooks(self):
@@ -766,7 +791,8 @@ class IdeogramPipe:
         if prompt_embeds is not None and prompt is None:
             raise ValueError("Ideogram 4: pass the prompt as text (embeddings depend on the "
                              "image grid and are rebuilt by the pipeline).")
-        steps = int(num_inference_steps or DEFAULTS["ideogram"]["steps"])
+        steps = int(num_inference_steps or (8 if self.variant == "ideogram_instant"
+                                          else DEFAULTS["ideogram"]["steps"]))
         if emulated:
             # Output size = the asked one, else the image's own (on Ideogram's grid).
             width = width or init.size[0]
@@ -776,7 +802,14 @@ class IdeogramPipe:
             self._say_once(("size", int(width), int(height)),
                            f"size {width}x{height} -> {w}x{h} (Ideogram 4: multiples of 16, "
                            f"{MIN_SIDE} to {MAX_SIDE} a side, ratio up to 6:1)")
-        sched = guidance_schedule(steps, guidance_scale)
+        instant = self.variant == "ideogram_instant"
+        if instant and emulated:
+            raise NotImplementedError("Ideogram Instant currently supports text to image only; "
+                                      "select the standard model for emulated img2img/inpaint")
+        if instant and guidance_scale is not None and float(guidance_scale) != 1.0:
+            self._say_once("instant_cfg", "Instant: guidance forced to constant 1.0 "
+                           "(the standard Ideogram guidance schedule does not apply)")
+        sched = [1.0] * steps if instant else guidance_schedule(steps, guidance_scale)
         kw = {"prompt": prompt if prompt is not None else "", "width": w, "height": h,
               "num_inference_steps": steps, "guidance_schedule": sched,
               "num_images_per_prompt": int(num_images_per_prompt or 1),
@@ -829,7 +862,16 @@ def load(repo=DEFAULT_REPO, dtype=torch.bfloat16, precision="nf4", transformer=N
         from diffusers import Ideogram4PromptEnhancerHead
         kw["prompt_enhancer_head"] = Ideogram4PromptEnhancerHead.from_pretrained(
             "diffusers/qwen3-vl-8b-instruct-lm-head", torch_dtype=dtype)
-    pipe = Ideogram4Pipeline.from_pretrained(repo, **kw)
+    if transformer is not None and getattr(transformer, "_cz_ideogram_instant", False):
+        from cz_ideogram_instant import IdeogramInstantPipeline
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        # No unconditional weights are downloaded, allocated or run. Euler receives
+        # already shifted sigmas, so its own shift must be the identity.
+        kw.update(unconditional_transformer=None,
+                  scheduler=FlowMatchEulerDiscreteScheduler(shift=1.0))
+        pipe = IdeogramInstantPipeline.from_pretrained(repo, **kw)
+    else:
+        pipe = Ideogram4Pipeline.from_pretrained(repo, **kw)
     return IdeogramPipe(pipe, repo=repo)
 
 
@@ -837,6 +879,9 @@ def load_transformer(repo, dtype, precision="nf4", single_file=None, token=None)
     """The conditional transformer alone (hot swap). Single files are not supported:
     diffusers 0.42.1 has no Ideogram 4 entry in its single-file converter."""
     if single_file:
+        from cz_ideogram_instant import is_instant_name, load_checkpoint
+        if is_instant_name(single_file):
+            return load_checkpoint(single_file, dtype=dtype)
         raise NotImplementedError(
             f"{os.path.basename(str(single_file))}: single-file Ideogram 4 transformers "
             "are not supported (diffusers has no converter for them yet). Use a diffusers "

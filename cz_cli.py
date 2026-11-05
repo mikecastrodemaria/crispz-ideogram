@@ -481,9 +481,9 @@ def cli_main(argv=None):
                              "NON-COMMERCIAL licence).")
     parser.add_argument("--ideogram-transformer", "--flux3-transformer", "--klein-transformer",
                         "--zimage-transformer", dest="zimage_transformer",
-                        help="Transformer override from a diffusers repo or folder. Single-file "
-                             "Ideogram 4 transformers are refused with the reason (no "
-                             "converter in diffusers).")
+                        help="Transformer override from a diffusers repo/folder, or experimental "
+                             "Fal_Ideo_4_NSFW_BF16.safetensors (Instant: txt2img, CFG 1). "
+                             "INT8 ConvRot is not supported.")
     parser.add_argument("--save-paths", action="store_true",
                         help="Save --esrgan-dir and --ideogram-model to preferences.json")
     # Reports

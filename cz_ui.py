@@ -728,6 +728,10 @@ def _profile_for_checkpoint(path):
     sidecar downloaded with the preview. So it is read.
 """
     base = os.path.basename(path)
+    from cz_ideogram_instant import is_instant_name
+    if is_instant_name(path):
+        st, g = profile_for_model(path)
+        return st, g, " Experimental Instant BF16: Euler/simple, shift 5.25, CFG 1, text to image only."
     try:
         import cz_civitai
         civ = cz_civitai.load_civitai_sidecar(path) or {}
@@ -4807,14 +4811,17 @@ def build_ui():
                                               step=16, label="Width")
                             height = gr.Slider(256, 2048, value=int(CONFIG.get("default_height", 1024)),
                                                step=16, label="Height")
-                        gen_steps = gr.Slider(2, 80, value=int(CONFIG.get("default_gen_steps", 48)),
+                        from cz_ideogram_instant import is_instant_name
+                        _instant_start = is_instant_name(cz_pipeline.ZIMAGE_TRANSFORMER)
+                        gen_steps = gr.Slider(2, 80, value=(8 if _instant_start else int(CONFIG.get("default_gen_steps", 48))),
                                               step=1, label="Generation steps (txt2img)")
                         with gr.Row():
-                            guidance = gr.Slider(0.0, 10.0, value=float(CONFIG.get("default_guidance", 7.0)),
+                            guidance = gr.Slider(0.0, 10.0, value=(1.0 if _instant_start else float(CONFIG.get("default_guidance", 7.0))),
                                                  step=0.5, label="CFG guidance", scale=2,
                                                  info="The PEAK of Ideogram 4's per-step guidance "
                                                       "schedule (official: 7.0, then 3.0 on the last "
-                                                      "steps; the shape is kept at any step count).")
+                                                      "steps; the shape is kept at any step count). "
+                                                      "Instant BF16 always uses a constant CFG of 1.")
                             # FLUX.3 runs its own FlowMatch Euler schedule (constant shift
                             # 6.93); the distilled checkpoint is a flow map that is told the
                             # next timestep at every step, so another sampler or a remapped
@@ -4948,9 +4955,9 @@ def build_ui():
                                 value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                                 label="Extra checkpoints folder (optional)",
                                 placeholder="e.g. D:\\models\\Ideogram",
-                                info="Merged into the checkpoint list above. Single-file Ideogram 4 transformers "
-                                     "(ComfyUI fp8 / int8 / nvfp4) are skipped and logged: diffusers "
-                                     "has no converter for them. Leave empty to disable.")
+                                info="Merged into the checkpoint list above. Experimental Instant BF16 "
+                                     "is supported. INT8 ConvRot / FP8 / NVFP4 are skipped and logged. "
+                                     "Leave empty to disable.")
                             esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
                                                        label="ESRGAN_DIR (.pth/.safetensors folder)")
                             with gr.Row():
@@ -4992,10 +4999,11 @@ def build_ui():
                             with gr.Column():
                                 transformer_tb = gr.Textbox(
                                     value="", scale=3,
-                                    label="Transformer override (HF repo / diffusers folder)",
+                                    label="Transformer override (HF repo / folder / Instant BF16 file)",
                                     placeholder="HF repo or folder with an Ideogram 4 transformer",
-                                    info="For community models with an incomplete tokenizer: "
-                                         "loads only the transformer, keeps base VAE/encoder.")
+                                    info="Instant BF16: select Fal_Ideo_4_NSFW_BF16.safetensors. "
+                                         "Reuses base VAE/encoder; 8 steps, CFG 1, text to image only. "
+                                         "INT8 ConvRot is not supported.")
                                 with gr.Row():
                                     transformer_apply_btn = gr.Button("Apply override", size="sm",
                                                                       variant="secondary")

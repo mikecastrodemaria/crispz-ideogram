@@ -143,7 +143,7 @@ portée partout (règle 5), puis mettre `tools/run_tests.py` en pytest pur.
    du transformer Ideogram) sur le modèle de `cz_flux3.family_from_keys`.
 5. Mesures sur la 5090 : chargement, VRAM, temps à 1024 et 2048, 48 steps.
 
-Acceptation : test CPU sur composants miniatures (comme `tests/test_flux3_adapter.py`),
+Acceptation : test CPU sur composants miniatures (comme `tests/test_flux3_merge_adapter.py`),
 puis une image 2048x2048 sur la 5090.
 
 ### Lot 2 : légendes JSON (le cœur de la valeur ajoutée)

@@ -102,7 +102,7 @@ OMNI_DEFAULT = (os.environ.get("IDEOGRAM_MODEL")
                 or "ideogram-ai/ideogram-4-nf4-diffusers")
 
 # klein-4B is step-wise distilled: diffusers ignores `guidance_scale` (measured
-# bit-identical renders from 1.0 to 8.0, tests/test_klein_guidance.py) and the
+# bit-identical renders from 1.0 to 8.0, crispz-klein's guidance probe) and the
 # Flux2Klein* pipelines expose no `negative_prompt`. A spec carrying `negative` is
 # therefore honoured with a WARNING, never silently - house rule.
 # crispz-ideogram: Ideogram 4's unconditional transformer takes NO text (asymmetric CFG):

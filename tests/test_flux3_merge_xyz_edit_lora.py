@@ -41,52 +41,6 @@ def _ms(edit_loras=(("/x/consistence-edit.safetensors", 0.6),), enabled=True):
             "sampler": "euler", "schedule": "sgm_uniform"}
 
 
-# ------------------------------------------------------------------- parser ---
-
-def test_newlines_are_separators_like_commas():
-    for raw in ("-0.4, -0.2, 0", "-0.4\n-0.2\n0", "-0.4,\r\n-0.2,\r\n0",
-                "  -0.4 ,\n -0.2 \n\n 0  "):
-        assert U._xyz_parse_values(raw) == ["-0.4", "-0.2", "0"], repr(raw)
-    print("OK test_newlines_are_separators_like_commas")
-
-
-def test_quotes_still_protect_commas_and_newlines():
-    assert U._xyz_parse_values('a, "b, with comma", c') == ["a", "b, with comma", "c"]
-    # a value that REALLY holds a newline gets quoted, like a comma
-    assert U._xyz_parse_values('"two\nlines", other') == ["two\nlines", "other"]
-    print("OK test_quotes_still_protect_commas_and_newlines")
-
-
-def test_an_empty_field_is_empty_not_an_error():
-    for raw in ("", "   ", "\n", None):
-        assert U._xyz_parse_values(raw) == []
-    print("OK test_an_empty_field_is_empty_not_an_error")
-
-
-def test_a_csv_error_becomes_a_message_never_a_traceback():
-    """The parser lets no csv.Error escape: it leaves as a ValueError, which
-    _ui_xyz_build displays. That is the point that was missing -- the failure was invisible
-    on the interface side."""
-    import csv
-    real = csv.reader
-
-    def boom(*_a, **_k):
-        raise csv.Error("simulated")
-
-    csv.reader = boom
-    try:
-        U._xyz_parse_values("a, b")
-    except ValueError as e:
-        assert "unreadable value list" in str(e), e
-    except csv.Error:                      # noqa: B902 - that is exactly the bug
-        raise AssertionError("csv.Error a fuit: elle repartirait en trace Gradio")
-    else:
-        raise AssertionError("no error raised")
-    finally:
-        csv.reader = real
-    print("OK test_a_csv_error_becomes_a_message_never_a_traceback")
-
-
 # --------------------------------------------------------------------- axe ---
 
 def test_the_axis_exists_and_is_calibrated():

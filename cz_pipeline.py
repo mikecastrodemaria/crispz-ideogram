@@ -27,8 +27,8 @@ Fork of crispz-qwen-edit (Qwen-Image). Mapping:
   (crispz-ideogram: all four are the ONE cz_flux3.Flux3Pipe; get_pipe hands the base back
   under every kind, and `strength` / `mask_image` are honoured by the adapter itself)
 
-klein-4B is DISTILLED (`is_distilled: true`). Measured on 2026-09-05 (tests/
-test_klein_guidance.py, RTX 5090): guidance_scale 1.0 / 4.0 / 8.0 -> bit-for-bit
+klein-4B is DISTILLED (`is_distilled: true`). Measured on 2026-09-05 (crispz-klein's
+guidance probe, RTX 5090): guidance_scale 1.0 / 4.0 / 8.0 -> bit-for-bit
 identical images (MAE 0.0000), with diffusers itself saying "Guidance scale is
 ignored for step-wise distilled models". So there is NEITHER a usable CFG NOR a
 usable negative prompt: `_cfg` returns {} and the protocol announces
@@ -357,7 +357,7 @@ _AUTO_OFFLOAD = ""
 _VRAM_DOWNGRADE = False
 
 # Guidance. klein-4B is DISTILLED: diffusers IGNORES guidance_scale (checked, see the
-# module docstring + tests/test_klein_guidance.py -> bit-for-bit identical images from 1.0
+# module docstring, crispz-klein's guidance probe -> bit-for-bit identical images from 1.0
 # to 8.0). The variable is kept because cz_ui / cz_cli / cz_protocol read and display it,
 # but _cfg() does NOT pass it to the pipeline any more: it has no effect.
 # Overridable through env KLEIN_CFG (no effect either, kept for symmetry).
@@ -514,8 +514,8 @@ def _cfg(negative=None, guidance=None):
 
     crispz-klein's note, still true of the distilled lane: klein-4B is step-wise
     distilled -> diffusers ignores `guidance_scale` (measured:
-    1.0 / 4.0 / 8.0 give bit-for-bit identical images, see
-    tests/test_klein_guidance.py) and the Flux2Klein* pipelines do NOT expose
+    1.0 / 4.0 / 8.0 give bit-for-bit identical images,
+    crispz-klein's guidance probe) and the Flux2Klein* pipelines do NOT expose
     `negative_prompt` (only `negative_prompt_embeds`, useless without CFG).
 
     So {} is returned rather than passing kwargs with no effect or making diffusers

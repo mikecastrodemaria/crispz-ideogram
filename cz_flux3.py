@@ -32,7 +32,7 @@ need ~28 GB on top of the generator. Its block is removed from the chain, the pr
 is encoded as given. crispz's own "Improve prompt" (Ollama) plays that role.
 
 Depends on torch / diffusers / transformers only (never on cz_pipeline or gradio), so
-it can be tested in isolation with tiny random components (tests/test_flux3_adapter.py).
+it can be tested in isolation with tiny random components (tests/test_flux3_merge_adapter.py).
 """
 
 import json

@@ -83,6 +83,51 @@ l'onglet Edit (local, voir lot 3).
   l'auto-hébergement ; données potentiellement clients).
 - Toute dégradation est annoncée dans le log (`_log`), jamais silencieuse.
 
+## 4 bis. Dossier `tests/` : règle commune à tous les crispz
+
+Constat du 05/11/2026 sur crispz-ideogram : 68 fichiers de test, 659 tests, 13 000 lignes.
+58 fichiers viennent de crispz-flux3, qui les tenait de crispz-klein, qui les tenait de
+crispz-qwen-edit, et ainsi de suite jusqu'à Fooocus2026. 44 fichiers parlent encore de
+klein, krea, FLUX.2, FLUX.3, SNOFS ou mxfp8 dans leur nom ou leur docstring ; dix sont nés
+ici. Chaque fork reprend `tests/` en bloc, puis chaque lot ajoute les siens : le dossier
+grossit et perd son contexte. Deux styles cohabitent (10 fichiers pytest, 58 scripts avec
+un `__main__`), et `test_klein_guidance.py` ne contient aucun test : c'est un banc d'essai
+GPU qui répond toujours 0. Les règles ci-dessous valent pour CE repo et pour tout crispz
+qui en dérive. Elles sont à copier telles quelles dans le CLAUDE.md de chaque studio.
+
+1. **Un test porte sur le code de CE studio.** Au fork, `tests/` n'est pas copié en bloc :
+   un fichier est gardé seulement si le module qu'il importe existe ici ET si le
+   comportement vérifié est joué par l'app. Un comportement que ce studio refuse (autre
+   famille de modèle, format de fichier écarté) se vérifie par UN test de refus dans le
+   fichier du moteur, pas en gardant le fichier entier de l'ancien studio.
+2. **Le nom du fichier dit la fonction de ce studio**, jamais le modèle d'un autre studio
+   ni le numéro d'un lot : `test_ideogram_engine.py`, pas `test_klein_variant.py` ni
+   `test_lot2_tools.py`. Un fichier par module de l'app (`cz_vector` donne
+   `test_vector.py`) ; un nouveau test rejoint le fichier existant au lieu d'en ouvrir un.
+3. **La docstring dit ce que le fichier verrouille ICI**, en trois lignes au plus.
+   L'histoire du bug (date, nom du checkpoint, studio où il a été vu) va dans `FORK-*.md`
+   ou dans le CHANGELOG, pas dans le test.
+4. **Un seul style : pytest** (fonctions `test_*`, `monkeypatch`, `skipif`). Plus de
+   `__main__`, plus de verdict imprimé. Un script de mesure (rendu, VRAM, temps, A/B) vit
+   dans `tools/`, jamais dans `tests/`.
+5. **Une ligne de portée en tête de chaque fichier**, juste sous la docstring :
+   `# scope: family` pour le code commun aux crispz (queue, XYZ, CivitAI, Asset Browser,
+   protocole v1, prompts, thumbs, mise à jour) ou `# scope: <moteur>` (`ideogram`,
+   `flux3`, `klein`...) pour ce qui dépend du modèle. Au fork, les `family` passent tels
+   quels ; les `<moteur>` de l'ancien studio sont réécrits ou retirés dans le premier lot,
+   jamais laissés en attente.
+6. **Pendant un lot, on lance les fichiers du module touché**
+   (`tools/run_tests.py queue xyz`) ; la suite entière une fois à la fin du lot et avant
+   chaque push. Un test qui casse parce que le comportement a changé est réécrit ou
+   supprimé dans le même commit, jamais mis en skip ni en xfail.
+7. **Le bilan de chaque lot donne le compte** (fichiers, tests, lignes) et nomme ce qui a
+   été ajouté, réécrit ou retiré, pour que la croissance se voie et se justifie.
+
+Reste à faire ici pour s'y conformer (lot à part, après validation) : renommer les fichiers
+hérités selon la règle 2, raccourcir les docstrings (règle 3), convertir les 58 scripts en
+pytest et déplacer `test_klein_guidance.py` vers `tools/` (règle 4), poser la ligne de
+portée partout (règle 5), puis mettre `tools/run_tests.py` en pytest pur.
+
 ## 5. Lots
 
 ### Lot 1 : moteur local (cz_ideogram.py)

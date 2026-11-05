@@ -5,6 +5,17 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased
+
+- **tests/ clean-up** (CLAUDE.md rule 4 bis, shared by every crispz): the inherited files
+  are named after what they lock down here (`test_checkpoint_family_guard.py`,
+  `test_bench_tools.py`, the FLUX.3 merge path under `test_flux3_merge_*`), docstrings
+  cut to three lines with the bug histories moved to FORK.md, a `# scope:` line per file
+  (family / ideogram / flux3), one style (pytest, the 58 `__main__` runners removed,
+  `tools/run_tests.py` runs pytest on every file), the silent skips made visible.
+  `tests/test_klein_guidance.py` removed: a GPU probe with no test in it.
+  657 tests pass, 5 skip, 0 fail.
+
 ## 1.0.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
 
 The details, measurements and decisions of every lot are in CLAUDE.md section 8.

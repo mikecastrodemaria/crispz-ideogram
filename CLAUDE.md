@@ -123,10 +123,8 @@ qui en dérive. Elles sont à copier telles quelles dans le CLAUDE.md de chaque 
 7. **Le bilan de chaque lot donne le compte** (fichiers, tests, lignes) et nomme ce qui a
    été ajouté, réécrit ou retiré, pour que la croissance se voie et se justifie.
 
-Reste à faire ici pour s'y conformer (lot à part, après validation) : renommer les fichiers
-hérités selon la règle 2, raccourcir les docstrings (règle 3), convertir les 58 scripts en
-pytest et déplacer `test_klein_guidance.py` vers `tools/` (règle 4), poser la ligne de
-portée partout (règle 5), puis mettre `tools/run_tests.py` en pytest pur.
+Mise en conformité faite le 05/11/2026 (voir « Ménage du dossier tests » au §8) ; le
+constat ci-dessus décrit l'état d'avant.
 
 ## 5. Lots
 
@@ -789,6 +787,41 @@ libre (`nvidia-smi`, 0 à 5 % d'utilisation) avant toute mesure.
 - **Version 1.0.0** (décision de Mike, 03/11/2026) : la 0.1.0 n'a jamais été taguée ;
   `APP_VERSION` passe à 1.0.0, l'entrée du CHANGELOG est renommée, tag `v1.0.0` posé sur
   `main`, release GitHub créée à la main par Mike à partir des notes fournies.
+
+### Ménage du dossier tests (05/11/2026), règle 4 bis appliquée
+
+Demandé par Mike après la règle. Un commit par étape, suite verte avant et après, aucun
+test désactivé, aucun skip ni xfail ajouté sur un comportement ; les trois « SKIP »
+imprimés et le `return` silencieux (cv2 absent, détecteur ONNX absent, chemin CUDA, modèle
+omni) deviennent des `pytest.skip` visibles dans le compte.
+- **Noms (règle 2)** : `test_klein_variant` -> `test_checkpoint_family_guard`,
+  `test_lot2_tools` -> `test_bench_tools`, et le chemin FLUX.3 gardé pour les fusions
+  depuis crispz-flux3 sous un seul préfixe : `test_flux3_adapter` ->
+  `test_flux3_merge_adapter`, `test_flux3_wiring` -> `test_flux3_merge_wiring`,
+  `test_real_cfg` -> `test_flux3_merge_cfg`, `test_undistilled_guidance` ->
+  `test_flux3_merge_guidance`, `test_edit_lora_presets` -> `test_flux3_merge_edit_loras`,
+  `test_xyz_edit_lora` -> `test_flux3_merge_xyz_edit_lora` (ses 4 tests du parseur
+  rejoignent `test_xyz.py`). `test_klein_guidance.py` supprimé : aucun test dedans, un
+  banc d'essai GPU de crispz-klein qui répondait toujours 0 depuis trois forks ; les
+  commentaires de `cz_pipeline` et `cz_protocol` qui le citaient nomment la mesure.
+- **Docstrings (règle 3)** : trois lignes au plus partout, ce que le fichier verrouille
+  ici. Les 39 journaux de bugs (dates, checkpoints, studio d'origine) sont dans
+  `FORK.md`, « Origine des tests hérités », une ligne par fichier.
+- **Portée (règle 5)** : `# scope: family` sur 41 fichiers (code commun aux crispz),
+  `# scope: ideogram` sur 21, `# scope: flux3` sur 7 (chemin de fusion). Au prochain fork :
+  les `family` passent tels quels, les `ideogram` sont réécrits ou retirés, les `flux3`
+  ne partent que si le fork fusionne encore depuis crispz-flux3.
+- **pytest seul (règle 4)** : les 58 runners `__main__` et les verdicts imprimés retirés
+  (683 lignes), `tools/run_tests.py` lance pytest sur chaque fichier (toujours un
+  processus par fichier : les tests touchent les globales des modules). Trouvé au
+  passage : `test_quant_formats.py` avait un test écrit APRÈS son bloc `__main__`, que le
+  runner n'a jamais joué ; pytest le joue.
+- Compte : 67 fichiers, **657 passent, 5 skip, 0 échec** (avant : 68
+  fichiers, 661 passent, 1 skip, dont 4 tests qui passaient sans rien vérifier, désormais
+  comptés en skip). `tools/run_tests.py` : 417 s sur CPU. `tests/` : 11 703 lignes
+  (13 000 avant). Smoke test 22/22, check_config_keys OK.
+- Les anciens noms restent dans les entrées datées de ce §8 et du CHANGELOG : ce sont des
+  journaux, ils ne sont pas réécrits.
 
 ### CI GitHub (31/10/2026)
 

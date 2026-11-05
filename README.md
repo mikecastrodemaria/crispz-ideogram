@@ -133,7 +133,10 @@ cloud is on (`supports.cloud`).
 
 ## Tests
 
-`.venv\Scripts\python -m pytest tests -q` (CPU, a tiny random Ideogram 4; green in CI).
+`.venv\Scripts\python tools\run_tests.py` (CPU, a tiny random Ideogram 4, pytest in one
+process per file; green in CI). Every file opens with a `# scope:` line: `family` for the
+code shared by the crispz studios, `ideogram` for what depends on the model, `flux3` for
+the FLUX.3 path kept so that fixes merge from crispz-flux3.
 On the GPU, app closed: `.venv\Scripts\python -m pytest tests\test_ideogram_e2e.py -s`
 (gen 1024, gen 2048, img2img, inpaint, Stop; images in `tests/e2e_*.png`). The lot
 scripts in `tools/` (`gpu_lot1_check.py`, `gpu_lot2_check.py`, `gpu_lot3_check.py`)

@@ -133,25 +133,3 @@ def test_collect_files_scans_every_lora_folder():
     open(os.path.join(d2, "Style", "b.safetensors"), "wb").write(b"x")
     files = B.collect_files("loras", loras_dir=[d1, d2])
     assert [os.path.basename(f) for f in files] == ["a.safetensors", "b.safetensors"], files
-
-
-if __name__ == "__main__":
-    # a mini monkeypatch shim (without pytest)
-    class _MP:
-        def __init__(self): self._undo = []
-        def setattr(self, obj, name, val):
-            self._undo.append((obj, name, getattr(obj, name)))
-            setattr(obj, name, val)
-        def undo(self):
-            for obj, name, val in reversed(self._undo):
-                setattr(obj, name, val)
-    for fn in (test_apply_shard_partition, test_needs_enrich, test_collect_files_and_shard,
-               test_resolve_dirs_arg_priority, test_resolve_dirs_includes_the_extra_lora_folders,
-               test_collect_files_scans_every_lora_folder):
-        fn(); print(f"OK {fn.__name__}")
-    mp = _MP()
-    try:
-        test_enrich_accounting(mp); print("OK test_enrich_accounting")
-    finally:
-        mp.undo()
-    print("All civitai_batch tests passed.")

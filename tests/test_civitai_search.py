@@ -231,12 +231,3 @@ def test_a_video_example_gives_a_poster_frame_as_preview():
     with _Api({"items": [_model(1, "Vid", [v])]}):
         out = cz_civitai.search_loras("vid")
     assert out[0]["previewUrl"] == "https://image.civitai.com/sig/uuid/anim=false,transcode=true/uuid.jpeg"
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} CivitAI search/download tests passed.")

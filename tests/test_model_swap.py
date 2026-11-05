@@ -4,6 +4,8 @@ freed by a transformer or single-file change. No model."""
 # scope: family
 import os
 import sys
+
+import pytest
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -81,8 +83,7 @@ def test_swap_reapplies_loras_on_the_new_transformer():
 
 def test_swap_offload_removes_and_reapplies_hooks():
     if P.DEVICE != "cuda":
-        print("   (skip: offload path is CUDA-only on this machine)")
-        return
+        pytest.skip("offload path is CUDA-only on this machine")
     new_t = FakeT("new")
     pipe = FakePipe(FakeT("old"))
     _swap_env(new_t, offload="model")
@@ -133,20 +134,3 @@ def test_set_zimage_model_new_base_repo_still_reloads():
     assert P.BASE_REPO == "black-forest-labs/FLUX.2-klein-4B"
     assert P._BASE_PIPE is None, "changing the base repo must release the pipe"
     assert P._LOADED_KEY is None
-
-
-if __name__ == "__main__":
-    _real = P._load_transformer
-    try:
-        for fn in (test_swap_keeps_pipe_and_replaces_only_transformer,
-                   test_swap_reapplies_loras_on_the_new_transformer,
-                   test_swap_offload_removes_and_reapplies_hooks,
-                   test_swap_failure_falls_back,
-                   test_set_zimage_transformer_does_not_free_the_pipe,
-                   test_set_zimage_model_single_file_does_not_free,
-                   test_set_zimage_model_new_base_repo_still_reloads):
-            fn()
-            print(f"OK {fn.__name__}")
-    finally:
-        P._load_transformer = _real
-    print("All model swap tests passed.")

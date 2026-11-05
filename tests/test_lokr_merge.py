@@ -49,7 +49,6 @@ def test_the_kronecker_product_lands_on_the_right_weight():
     assert (n, problems) == (1, []), (n, problems)
     got = t["transformer_blocks.0.attn.to_out.0.weight"]
     assert torch.allclose(got, torch.kron(w1, w2), atol=1e-5), (got, torch.kron(w1, w2))
-    print("OK test_the_kronecker_product_lands_on_the_right_weight")
 
 
 def test_a_fused_qkv_is_split_into_three_weights():
@@ -73,7 +72,6 @@ def test_a_fused_qkv_is_split_into_three_weights():
     # and sticking the three back together does give the whole kron again
     assert torch.allclose(torch.cat([t[k] for k in keys], dim=0),
                           torch.kron(w1, w2), atol=1e-5)
-    print("OK test_a_fused_qkv_is_split_into_three_weights")
 
 
 def test_the_lora_weight_scales_the_delta():
@@ -86,7 +84,6 @@ def test_the_lora_weight_scales_the_delta():
     P._merge_lokr(t, p, 0.5)
     assert torch.allclose(t["transformer_blocks.0.attn.to_out.0.weight"],
                           0.5 * torch.kron(w1, w2), atol=1e-5)
-    print("OK test_the_lora_weight_scales_the_delta")
 
 
 def test_full_factors_use_no_scalar():
@@ -96,7 +93,6 @@ def test_full_factors_use_no_scalar():
     assert P._lokr_scale(mod, None) == 1.0
     d = P._lokr_delta(mod)
     assert torch.allclose(d, torch.kron(mod["lokr_w1"], mod["lokr_w2"]), atol=1e-5)
-    print("OK test_full_factors_use_no_scalar")
 
 
 def test_factored_factors_use_alpha_over_rank():
@@ -107,7 +103,6 @@ def test_factored_factors_use_alpha_over_rank():
     assert P._lokr_scale(mod, 2) == 4.0
     d = P._lokr_delta(mod)
     assert torch.allclose(d, torch.kron(a @ b, mod["lokr_w2"]) * 4.0, atol=1e-4)
-    print("OK test_factored_factors_use_alpha_over_rank")
 
 
 def test_a_delta_without_a_target_is_reported_not_dropped():
@@ -122,7 +117,6 @@ def test_a_delta_without_a_target_is_reported_not_dropped():
     n, problems = P._merge_lokr(t, p, 1.0)
     assert n == 0, n
     assert len(problems) == 1 and "no such weight" in problems[0], problems
-    print("OK test_a_delta_without_a_target_is_reported_not_dropped")
 
 
 def test_a_shape_mismatch_is_reported_not_applied():
@@ -134,7 +128,6 @@ def test_a_shape_mismatch_is_reported_not_applied():
     n, problems = P._merge_lokr(t, p, 1.0)
     assert n == 0 and len(problems) == 1 and "vs weight" in problems[0], problems
     assert torch.count_nonzero(t["transformer_blocks.0.attn.to_out.0.weight"]) == 0
-    print("OK test_a_shape_mismatch_is_reported_not_applied")
 
 
 def test_a_lokr_is_kept_out_of_the_peft_set():
@@ -157,11 +150,3 @@ def test_a_lokr_is_kept_out_of_the_peft_set():
     assert P._lora_unsupported(lokr) is None          # supported, by merging
     assert "LoHa" in (P._lora_unsupported(loha) or "")
     assert P._lora_unsupported(lora) is None
-    print("OK test_a_lokr_is_kept_out_of_the_peft_set")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All LoKr merge tests passed.")

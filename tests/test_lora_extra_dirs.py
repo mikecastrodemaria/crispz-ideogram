@@ -106,12 +106,3 @@ def test_the_slots_resolve_through_the_extra_folders():
             assert os.path.isfile(P.LORAS[0][0])
         finally:
             P.LORAS = old
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} extra LoRA folder tests passed.")

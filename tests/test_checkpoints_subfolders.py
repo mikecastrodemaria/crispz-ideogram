@@ -89,12 +89,3 @@ def test_an_absolute_path_is_left_alone():
     with _Lib() as lib:
         p = lib.put(lib.main, "9b/model.safetensors")
         assert P.resolve_checkpoint(p) == p
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} checkpoint subfolder tests passed.")

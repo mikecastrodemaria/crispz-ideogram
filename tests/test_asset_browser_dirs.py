@@ -1,6 +1,7 @@
 """Asset Browser Models tab: the main AND the extra checkpoint folders are scanned, a GGUF
 counts as a model, the main folder wins on a duplicate, a missing folder is no error."""
 # scope: family
+import atexit
 import os
 import shutil
 import sys
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cz_assetbrowser as AB
 
 TMP = tempfile.mkdtemp(prefix="cz_ab_dirs_")
+atexit.register(shutil.rmtree, TMP, ignore_errors=True)
 
 
 def _mk(d, *names):
@@ -28,7 +30,6 @@ def test_extra_dir_is_scanned():
     assert names == {"alpha", "beta", "gamma"}, names
     # a single folder is still accepted (the old signature)
     assert {e["name"] for e in AB._scan_catalog(main, out, "models")} == {"alpha"}
-    print("OK test_extra_dir_is_scanned")
 
 
 def test_gguf_counts_as_a_model_but_not_as_a_lora():
@@ -37,7 +38,6 @@ def test_gguf_counts_as_a_model_but_not_as_a_lora():
     assert {e["name"] for e in AB._scan_catalog(d, out, "models")} == {"m", "q", "l"}
     # on the LoRA side, a .gguf has no business being there
     assert {e["name"] for e in AB._scan_catalog(d, out, "loras")} == {"m", "l"}
-    print("OK test_gguf_counts_as_a_model_but_not_as_a_lora")
 
 
 def test_same_name_the_main_folder_wins():
@@ -47,7 +47,6 @@ def test_same_name_the_main_folder_wins():
     out = os.path.join(TMP, "out3")
     items = AB._scan_catalog([main, extra], out, "models")
     assert len(items) == 1, items
-    print("OK test_same_name_the_main_folder_wins")
 
 
 def test_missing_dirs_are_not_an_error():
@@ -55,15 +54,3 @@ def test_missing_dirs_are_not_an_error():
     assert AB._scan_catalog([], out, "models") == []
     assert AB._scan_catalog(None, out, "models") == []
     assert AB._scan_catalog([os.path.join(TMP, "nope")], out, "models") == []
-    print("OK test_missing_dirs_are_not_an_error")
-
-
-if __name__ == "__main__":
-    try:
-        test_extra_dir_is_scanned()
-        test_gguf_counts_as_a_model_but_not_as_a_lora()
-        test_same_name_the_main_folder_wins()
-        test_missing_dirs_are_not_an_error()
-        print("ALL OK")
-    finally:
-        shutil.rmtree(TMP, ignore_errors=True)

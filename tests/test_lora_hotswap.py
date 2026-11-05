@@ -166,15 +166,3 @@ def test_base_cache_key_excludes_loras():
     import inspect
     src = inspect.getsource(P._ensure_base)
     assert "tuple(LORAS)" not in src, "the LoRAs must not be part of the cache key"
-
-
-if __name__ == "__main__":
-    for fn in (test_no_change_is_a_noop, test_weight_only_change_uses_set_adapters,
-               test_different_loras_unload_then_reload, test_removing_all_loras_unloads,
-               test_missing_file_is_ignored, test_swap_leaves_only_the_new_adapter_registered,
-               test_removing_all_clears_the_registry,
-               test_failure_returns_false_for_full_reload_fallback,
-               test_set_loras_does_not_free_the_pipe, test_base_cache_key_excludes_loras):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All lora hot-swap tests passed.")

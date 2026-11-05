@@ -184,7 +184,6 @@ def test_the_refusal_leads_with_the_action():
         # and the lasting repair of the old preset
         assert "Update selected" in status, status
     _with_lib(check)
-    print("OK test_the_refusal_leads_with_the_action")
 
 
 def test_saving_records_the_base_repo():
@@ -201,7 +200,6 @@ def test_saving_records_the_base_repo():
         U._ensure_model_presets(["good3.safetensors"])
         assert U._load_preset_file("good3").get("base_repo") == U.FLUX3_DISTILLED
     _with_lib(check)
-    print("OK test_saving_records_the_base_repo")
 
 
 def test_the_base_repo_is_announced_before_the_run():
@@ -258,7 +256,6 @@ def test_offload_is_forced_when_the_base_cannot_fit():
     finally:
         (P.DEVICE, P._total_vram_gb, P.OFFLOAD_MODE, P.BASE_REPO, P.ZIMAGE_TRANSFORMER,
          P.PRECISION) = old
-    print("OK test_offload_is_forced_when_the_base_cannot_fit")
 
 
 def test_gated_repo_error_says_what_to_do():
@@ -278,11 +275,3 @@ def test_gated_repo_error_says_what_to_do():
     assert "licence itself" in with_tok, with_tok
     # an ordinary failure must NOT be dressed up as a licence problem
     assert P._hf_access_hint(U.FLUX3_BASE, OSError("disk full")) is None
-    print("OK test_gated_repo_error_says_what_to_do")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("ALL OK")

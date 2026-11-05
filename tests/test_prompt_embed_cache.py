@@ -49,7 +49,6 @@ def test_same_prompt_encodes_once():
     for kw in pipe.calls:
         assert kw["prompt"] is None, "the prompt must give way to the embeddings"
         assert kw["prompt_embeds"] is not None
-    print("OK test_same_prompt_encodes_once")
 
 
 def test_a_different_prompt_is_encoded():
@@ -59,7 +58,6 @@ def test_a_different_prompt_is_encoded():
     P._qwen_call(pipe, prompt="a harbour")
     P._qwen_call(pipe, prompt="a lighthouse")
     assert pipe.encodes == 2, pipe.encodes
-    print("OK test_a_different_prompt_is_encoded")
 
 
 def test_freeing_vram_clears_the_cache():
@@ -71,7 +69,6 @@ def test_freeing_vram_clears_the_cache():
     assert not P._EMBED_CACHE, "the cache must go with the pipeline"
     P._qwen_call(pipe, prompt="a lighthouse")
     assert pipe.encodes == 2, pipe.encodes
-    print("OK test_freeing_vram_clears_the_cache")
 
 
 def test_an_encoder_failure_never_breaks_the_render():
@@ -82,7 +79,6 @@ def test_an_encoder_failure_never_breaks_the_render():
     assert out.images == ["IMG"], "the render must succeed anyway"
     assert pipe.calls[0]["prompt"] == "a lighthouse", "falls back on the plain prompt"
     assert "prompt_embeds" not in pipe.calls[0]
-    print("OK test_an_encoder_failure_never_breaks_the_render")
 
 
 def test_disabled_by_config():
@@ -93,7 +89,6 @@ def test_disabled_by_config():
     assert pipe.encodes == 0, "disabled: no early encoding"
     assert pipe.calls[0]["prompt"] == "a lighthouse"
     _fresh()
-    print("OK test_disabled_by_config")
 
 
 def test_the_cache_is_bounded():
@@ -103,7 +98,6 @@ def test_the_cache_is_bounded():
         P._qwen_call(pipe, prompt=w)
     assert len(P._EMBED_CACHE) == 2, len(P._EMBED_CACHE)
     _fresh()
-    print("OK test_the_cache_is_bounded")
 
 
 def test_an_explicit_prompt_embeds_wins():
@@ -114,15 +108,3 @@ def test_an_explicit_prompt_embeds_wins():
     P._qwen_call(pipe, prompt="a lighthouse", prompt_embeds=mine)
     assert pipe.encodes == 0
     assert pipe.calls[0]["prompt_embeds"] is mine
-    print("OK test_an_explicit_prompt_embeds_wins")
-
-
-if __name__ == "__main__":
-    test_same_prompt_encodes_once()
-    test_a_different_prompt_is_encoded()
-    test_freeing_vram_clears_the_cache()
-    test_an_encoder_failure_never_breaks_the_render()
-    test_disabled_by_config()
-    test_the_cache_is_bounded()
-    test_an_explicit_prompt_embeds_wins()
-    print("ALL OK")

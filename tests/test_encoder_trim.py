@@ -40,7 +40,6 @@ def test_the_read_layers_are_found_by_parameter_not_by_name():
                  "_get_some_future_name_embeds"):
         p = _fake_pipe(method=name)
         assert P._encoder_layers_used(p) == 27, name
-    print("OK test_the_read_layers_are_found_by_parameter_not_by_name")
 
 
 def test_an_unreadable_signature_trims_nothing():
@@ -53,7 +52,6 @@ def test_an_unreadable_signature_trims_nothing():
     P._trim_text_encoder(p)
     assert len(p.text_encoder.model.layers) == 36
     assert P._ENCODER_TRIMMED is False, "the budget must deduct nothing"
-    print("OK test_an_unreadable_signature_trims_nothing")
 
 
 def test_trimming_keeps_exactly_the_blocks_that_are_read():
@@ -65,7 +63,6 @@ def test_trimming_keeps_exactly_the_blocks_that_are_read():
     assert all(a is b for a, b in zip(p.text_encoder.model.layers, kept))
     assert isinstance(p.text_encoder.lm_head, torch.nn.Identity)
     assert P._ENCODER_TRIMMED is True
-    print("OK test_trimming_keeps_exactly_the_blocks_that_are_read")
 
 
 def test_trimming_twice_changes_nothing():
@@ -73,7 +70,6 @@ def test_trimming_twice_changes_nothing():
     P._trim_text_encoder(p)
     P._trim_text_encoder(p)
     assert len(p.text_encoder.model.layers) == 28
-    print("OK test_trimming_twice_changes_nothing")
 
 
 def test_the_budget_follows_the_deed_not_the_intent():
@@ -92,7 +88,6 @@ def test_the_budget_follows_the_deed_not_the_intent():
         assert 14 <= whole <= 17, whole            # ~16 GB of nf4 files
     finally:
         P.BASE_REPO, P._ENCODER_TRIMMED, P.ZIMAGE_TRANSFORMER = old
-    print("OK test_the_budget_follows_the_deed_not_the_intent")
 
 
 def test_the_trim_on_flux3_is_announced_not_silent():
@@ -116,11 +111,3 @@ def test_the_trim_on_flux3_is_announced_not_silent():
     finally:
         P._log = real_log
         P._ENCODER_TRIMMED, P.TRIM_TEXT_ENCODER = old
-    print("OK test_the_trim_on_flux3_is_announced_not_silent")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All text-encoder trim tests passed.")

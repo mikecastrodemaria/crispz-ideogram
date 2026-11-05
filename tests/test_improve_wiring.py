@@ -208,13 +208,3 @@ def test_cli_improve_with_ollama_down_generates_nothing():
     cz_ollama.OLLAMA_URL = DOWN
     rc, got = _cli(["--prompt", "a fox", "--improve"])
     assert rc == 2 and not got
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} improve wiring tests passed.")
-    _SRV.shutdown()

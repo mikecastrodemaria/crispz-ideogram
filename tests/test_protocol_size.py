@@ -30,7 +30,6 @@ def test_size_explicit_on_gen_with_refs(tmpref=None):
     # the edit keeps its historical behaviour (the input's dimensions)
     out, _ = P.validate_spec(_spec(refs=[ref]))
     assert out["size_explicit"] is False, "no size asked for, nothing forced"
-    print("OK test_size_explicit_on_gen_with_refs")
 
 
 def test_size_explicit_without_refs():
@@ -38,18 +37,9 @@ def test_size_explicit_without_refs():
     assert out["size_explicit"] is True
     out, _ = P.validate_spec(_spec())
     assert out["size_explicit"] is False
-    print("OK test_size_explicit_without_refs")
 
 
 def test_one_dimension_only_is_not_explicit():
     """width without height (or the reverse) = an incomplete size -> nothing forced."""
     out, _ = P.validate_spec(_spec(width=800))
     assert out["size_explicit"] is False, out["size_explicit"]
-    print("OK test_one_dimension_only_is_not_explicit")
-
-
-if __name__ == "__main__":
-    test_size_explicit_on_gen_with_refs()
-    test_size_explicit_without_refs()
-    test_one_dimension_only_is_not_explicit()
-    print("All protocol size tests passed.")

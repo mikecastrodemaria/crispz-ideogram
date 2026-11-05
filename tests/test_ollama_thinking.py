@@ -33,14 +33,12 @@ def test_strip_thinking():
     for raw, want in CASES:
         got = O._strip_thinking(raw)
         assert got == want, f"{raw!r} -> {got!r} (attendu {want!r})"
-    print("OK test_strip_thinking")
 
 
 def test_gen_opts_disables_thinking():
     opts = O._ollama_gen_opts()
     assert opts.get("think") is False, opts
     assert opts.get("stream") is False, opts
-    print("OK test_gen_opts_disables_thinking")
 
 
 def test_http_retries_without_think():
@@ -73,11 +71,3 @@ def test_http_retries_without_think():
     assert out == {"response": "ok"}, out
     assert len(seen) == 2, seen
     assert "think" in seen[0] and "think" not in seen[1], seen
-    print("OK test_http_retries_without_think")
-
-
-if __name__ == "__main__":
-    test_strip_thinking()
-    test_gen_opts_disables_thinking()
-    test_http_retries_without_think()
-    print("All Ollama thinking tests passed.")

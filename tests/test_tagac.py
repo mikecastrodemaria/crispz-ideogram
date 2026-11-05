@@ -96,11 +96,3 @@ def test_list_filters_csv():
         assert names == ["B.CSV", "a.csv"]
     finally:
         cz_tags.TAGS_DIR = old
-
-
-if __name__ == "__main__":
-    for fn in (test_download_atomic_ok, test_download_failure_cleans_tmp,
-               test_source_filename, test_ensure_sources_resilient, test_list_filters_csv):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All tagac tests passed.")

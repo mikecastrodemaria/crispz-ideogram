@@ -318,7 +318,3 @@ class TestCrispzAdaptations(unittest.TestCase):
     def test_unknown_format_setting_falls_back_to_auto(self):
         I.configure({'format': 'poetry'})
         self.assertIn(I.FORMAT_NOTES['tags'], I._instruction('positive', '1girl, red hair'))
-
-
-if __name__ == '__main__':
-    unittest.main()

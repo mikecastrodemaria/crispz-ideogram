@@ -71,12 +71,3 @@ def test_an_empty_name_resolves_to_nothing():
     with _Dirs():
         assert cz_ui._civitai_model_path("", "loras") == ""
         assert cz_ui._civitai_model_path(None, "models") == ""
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} CivitAI extra-folder tests passed.")

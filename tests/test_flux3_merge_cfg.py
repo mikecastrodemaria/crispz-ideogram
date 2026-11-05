@@ -72,7 +72,6 @@ def test_the_base_repo_keeps_guidance_inert():
         _restore(old)
     assert pipe.calls == [{"is_distilled": True, "guidance": 1.0,
                            "has_negative": False}], pipe.calls
-    print("OK test_the_base_repo_keeps_guidance_inert")
 
 
 def test_a_single_file_gets_real_cfg_during_the_call_only():
@@ -86,7 +85,6 @@ def test_a_single_file_gets_real_cfg_during_the_call_only():
     assert call["is_distilled"] is False, "the pipeline must see a NON-distilled model"
     assert call["guidance"] == 3.5, call
     assert pipe.config.is_distilled is True, "the flag was not restored after the call"
-    print("OK test_a_single_file_gets_real_cfg_during_the_call_only")
 
 
 def test_the_flag_is_restored_even_when_the_call_fails():
@@ -103,7 +101,6 @@ def test_the_flag_is_restored_even_when_the_call_fails():
     finally:
         _restore(old)
     assert pipe.config.is_distilled is True, "the flag was not restored after an error"
-    print("OK test_the_flag_is_restored_even_when_the_call_fails")
 
 
 def test_guidance_one_changes_nothing():
@@ -115,7 +112,6 @@ def test_guidance_one_changes_nothing():
         _restore(old)
     assert pipe.calls[0]["is_distilled"] is True, pipe.calls
     assert pipe.calls[0]["guidance"] == 1.0, pipe.calls
-    print("OK test_guidance_one_changes_nothing")
 
 
 def test_the_empty_negative_is_encoded_once():
@@ -130,7 +126,6 @@ def test_the_empty_negative_is_encoded_once():
         _restore(old)
     assert all(c["has_negative"] for c in pipe.calls), pipe.calls
     assert pipe.encoded.count("") == 1, pipe.encoded
-    print("OK test_the_empty_negative_is_encoded_once")
 
 
 def test_the_announcement_is_made_once_not_per_image():
@@ -149,11 +144,3 @@ def test_the_announcement_is_made_once_not_per_image():
     said = [m for m in logged if "REAL CFG" in m]
     assert len(said) == 1, logged
     assert not any("transmise" in m for m in logged), logged
-    print("OK test_the_announcement_is_made_once_not_per_image")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All real-CFG tests passed.")

@@ -34,7 +34,6 @@ def test_detects_the_alternate_dialect():
             f"transformer.blocks.0.attn.to_q.{alt[0]}.weight",
             f"transformer.blocks.0.attn.to_q.{alt[1]}.weight"])
         assert P._lora_needs_normalizing(p) is True, alt
-    print("OK test_detects_the_alternate_dialect")
 
 
 def test_normalizes_a_mixed_file():
@@ -53,7 +52,6 @@ def test_normalizes_a_mixed_file():
         "transformer.transformer_blocks.0.attn.to_k.lora_A.weight",
         "transformer.transformer_blocks.0.attn.to_k.lora_B.weight"}, sorted(sd)
     assert len(sd) == 4, "no key must be lost or overwritten"
-    print("OK test_normalizes_a_mixed_file")
 
 
 def test_edit_loras_sync_the_union_with_the_base_set():
@@ -79,7 +77,6 @@ def test_edit_loras_sync_the_union_with_the_base_set():
 
     assert calls["wanted"] == [("/base/style.safetensors", 0.8),
                                ("/edit/consist.safetensors", 0.6)], calls["wanted"]
-    print("OK test_edit_loras_sync_the_union_with_the_base_set")
 
 
 def test_union_dedupes_on_path_first_weight_wins():
@@ -99,7 +96,6 @@ def test_union_dedupes_on_path_first_weight_wins():
     finally:
         (P._sync_adapters, P.LORAS, P.EDIT_LORAS, P.EDIT_LORAS_ENABLED) = old
     assert calls["wanted"] == [("/same.safetensors", 0.2)], calls["wanted"]
-    print("OK test_union_dedupes_on_path_first_weight_wins")
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +132,12 @@ def test_a_lokr_is_routed_to_the_lora_folder():
     assert why and "LoKr" in why, why
     assert "LoRA folder" in why, why
     assert P._lora_unsupported(p) is None, P._lora_unsupported(p)
-    print("OK test_a_lokr_is_routed_to_the_lora_folder")
 
 
 def test_a_loha_is_named_as_such():
     p = _lycoris("loha.safetensors", ("hada_w1_a", "hada_w1_b", "hada_w2_a", "hada_w2_b"))
     why = P._safetensors_unsupported(p)
     assert why and "LoHa" in why, why
-    print("OK test_a_loha_is_named_as_such")
 
 
 def test_a_real_peft_lora_still_passes():
@@ -153,7 +147,6 @@ def test_a_real_peft_lora_still_passes():
                 for i in range(6) for ab in ("A", "B")])
     assert P._lora_unsupported(p) is None
     assert P._safetensors_unsupported(p) is not None   # a LoRA stays refused as a checkpoint
-    print("OK test_a_real_peft_lora_still_passes")
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +184,6 @@ def test_a_bf16_lora_still_passes():
     """The control first: the guard must break nothing of what worked."""
     p = _lora_file("q_bf16.safetensors", torch.bfloat16, scaled=False)
     assert _with_9B_base(lambda: P._lora_unsupported(p)) is None
-    print("OK test_a_bf16_lora_still_passes")
 
 
 def test_an_fp8_lora_is_refused_and_points_at_bf16():
@@ -199,14 +191,12 @@ def test_an_fp8_lora_is_refused_and_points_at_bf16():
     why = _with_9B_base(lambda: P._lora_unsupported(p))
     assert why and "FP8" in why, why
     assert "bf16" in why, why
-    print("OK test_an_fp8_lora_is_refused_and_points_at_bf16")
 
 
 def test_an_int8_lora_is_refused_too():
     p = _lora_file("q_int8.safetensors", torch.int8)
     why = _with_9B_base(lambda: P._lora_unsupported(p))
     assert why and "INT8" in why, why
-    print("OK test_an_int8_lora_is_refused_too")
 
 
 def test_the_family_check_still_comes_first():
@@ -224,7 +214,6 @@ def test_the_family_check_still_comes_first():
     why = P._lora_unsupported(p)
     assert why and "FLUX.2" in why and "crispz-klein" in why, why
     assert "FP8" not in why, why
-    print("OK test_the_family_check_still_comes_first")
 
 
 def test_alpha_keys_are_folded_and_dropped():
@@ -252,7 +241,6 @@ def test_alpha_keys_are_folded_and_dropped():
     sd, n = P._load_lora_normalized(p)
     assert n == 0 and set(sd) == {base + ".lora_A.weight", base + ".lora_B.weight"}
     assert torch.allclose(sd[base + ".lora_B.weight"], B * 2.0)
-    print("OK test_alpha_keys_are_folded_and_dropped")
 
 
 def test_kohya_naming_is_left_to_diffusers():
@@ -263,21 +251,3 @@ def test_kohya_naming_is_left_to_diffusers():
         "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight",
         "lora_unet_double_blocks_0_img_attn_proj.alpha"])
     assert P._lora_needs_normalizing(p) is False
-    print("OK test_kohya_naming_is_left_to_diffusers")
-
-
-if __name__ == "__main__":
-    test_alpha_keys_are_folded_and_dropped()
-    test_kohya_naming_is_left_to_diffusers()
-    for fn in (test_detects_the_alternate_dialect, test_normalizes_a_mixed_file,
-               test_edit_loras_sync_the_union_with_the_base_set,
-               test_union_dedupes_on_path_first_weight_wins,
-               test_a_lokr_is_routed_to_the_lora_folder,
-               test_a_loha_is_named_as_such,
-               test_a_real_peft_lora_still_passes,
-               test_a_bf16_lora_still_passes,
-               test_an_fp8_lora_is_refused_and_points_at_bf16,
-               test_an_int8_lora_is_refused_too,
-               test_the_family_check_still_comes_first):
-        fn()
-    print("All LoRA dialect / namespace tests passed.")

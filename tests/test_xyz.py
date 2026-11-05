@@ -333,18 +333,6 @@ def test_lora_suggestions():
         assert "no LoRA found" in ph, ph
 
 
-if __name__ == "__main__":
-    for fn in (test_parse_values, test_match, test_validate, test_schedule_alias_simple,
-               test_build_jobs,
-               test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
-               test_suggestions, test_fill_preserves_user_input,
-               test_cli_apply, test_cli_axis_name_resolution, test_prompt_axis,
-               test_lora_name_validate, test_lora_name_weight_validate,
-               test_lora_name_apply_and_labels, test_lora_name_weight_apply,
-               test_lora_label_truncates_left, test_lora_suggestions):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All xyz tests passed.")
 
 
 # ---- the parser against newlines and csv errors (from the edit-LoRA axis tests) ----

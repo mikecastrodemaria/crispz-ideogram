@@ -283,18 +283,3 @@ def test_request_pause_sets_the_flag_and_reports():
         assert "Pause requested" in msg
     finally:
         cz_ui._QUEUE_PAUSE = saved
-
-
-
-if __name__ == "__main__":
-    # Explicit, not the globals() scan the rest of the suite uses: a test added above and
-    # forgotten in this tuple is defined and never run.
-    # Discovered, like the rest of the suite. This file used to list its tests by hand and
-    # a test added above and forgotten in that tuple was defined and never run -- which
-    # happened twice while this file was being worked on, each time silently.
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} queue tests passed.")

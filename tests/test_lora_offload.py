@@ -122,12 +122,3 @@ def test_restore_offload_only_acts_on_a_pipe_left_on_the_cpu():
         assert cz.restore_offload(FakePipe(hooks=False)) is False
     finally:
         cz.DEVICE, cz._effective_offload = real_dev, real_off
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} LoRA offload tests passed.")

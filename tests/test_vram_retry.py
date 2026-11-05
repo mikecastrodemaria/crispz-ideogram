@@ -6,6 +6,8 @@ import importlib.util
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -142,8 +144,7 @@ def _detail(refine):
 
 def test_detailer_retries_a_pass_that_ran_out_of_vram():
     if not _HAS_CV2:
-        print("SKIP test_detailer_retries_a_pass_that_ran_out_of_vram (no cv2)")
-        return
+        pytest.skip("no cv2")
     tries = []
 
     def refine(pipe, work, denoise, steps, prompt, seed):
@@ -160,8 +161,7 @@ def test_detailer_retries_a_pass_that_ran_out_of_vram():
 
 def test_detailer_skips_the_other_regions_when_still_out_of_vram():
     if not _HAS_CV2:
-        print("SKIP test_detailer_skips_the_other_regions_when_still_out_of_vram (no cv2)")
-        return
+        pytest.skip("no cv2")
     tries = []
 
     def refine(pipe, work, denoise, steps, prompt, seed):
@@ -193,8 +193,7 @@ def _omni(fake_generate_omni):
 def test_ui_omni_retries_after_running_out_of_vram():
     import cz_pipeline
     if not (cz_pipeline.OMNI_MODEL or "").strip():
-        print("SKIP test_ui_omni_retries_after_running_out_of_vram (no omni model)")
-        return
+        pytest.skip("no omni model")
     tries = []
 
     def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
@@ -213,8 +212,7 @@ def test_ui_omni_retries_after_running_out_of_vram():
 def test_ui_omni_reports_what_to_lower_when_the_retry_fails():
     import cz_pipeline
     if not (cz_pipeline.OMNI_MODEL or "").strip():
-        print("SKIP test_ui_omni_reports_what_to_lower_when_the_retry_fails (no omni model)")
-        return
+        pytest.skip("no omni model")
 
     def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
         raise RuntimeError(OOM)
@@ -223,12 +221,3 @@ def test_ui_omni_reports_what_to_lower_when_the_retry_fails():
     assert not gal, gal
     assert "Edit error" in rep and "VRAM full" in rep and "restart" in rep, rep
     assert releases == [True, True], releases
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} VRAM retry tests passed.")

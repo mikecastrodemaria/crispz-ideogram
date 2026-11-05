@@ -123,7 +123,3 @@ class TestDetection(unittest.TestCase):
         self.assertTrue(V.uses_dynamic_syntax('{a|b}'))
         self.assertFalse(V.uses_dynamic_syntax('{prompt} only'))
         self.assertFalse(V.uses_dynamic_syntax('a fox'))
-
-
-if __name__ == '__main__':
-    unittest.main()

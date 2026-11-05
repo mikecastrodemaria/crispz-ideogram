@@ -67,7 +67,6 @@ def test_up_to_date_offers_nothing():
         assert w.assess()["status"] == "uptodate"
     finally:
         w.close()
-    print("OK test_up_to_date_offers_nothing")
 
 
 def test_behind_and_clean_is_safe():
@@ -80,7 +79,6 @@ def test_behind_and_clean_is_safe():
         assert U.main([]) == 10 and U.main(["--guard"]) == 0
     finally:
         w.close()
-    print("OK test_behind_and_clean_is_safe")
 
 
 def test_a_local_change_on_a_touched_file_blocks():
@@ -93,7 +91,6 @@ def test_a_local_change_on_a_touched_file_blocks():
         assert U.main([]) == 11 and U.main(["--guard"]) == 11
     finally:
         w.close()
-    print("OK test_a_local_change_on_a_touched_file_blocks")
 
 
 def test_a_local_change_elsewhere_is_kept():
@@ -106,7 +103,6 @@ def test_a_local_change_elsewhere_is_kept():
         assert st["status"] == "safe" and st["local"] == ["b.txt"], st
     finally:
         w.close()
-    print("OK test_a_local_change_elsewhere_is_kept")
 
 
 def test_an_ignored_file_the_update_adds_blocks():
@@ -120,7 +116,6 @@ def test_an_ignored_file_the_update_adds_blocks():
         assert st["status"] == "blocked" and st["clobber"] == ["tests/test_new.py"], st
     finally:
         w.close()
-    print("OK test_an_ignored_file_the_update_adds_blocks")
 
 
 def test_an_untracked_folder_elsewhere_does_not_block():
@@ -132,7 +127,6 @@ def test_an_untracked_folder_elsewhere_does_not_block():
         assert w.assess()["status"] == "safe"
     finally:
         w.close()
-    print("OK test_an_untracked_folder_elsewhere_does_not_block")
 
 
 def test_a_diverged_branch_blocks():
@@ -145,7 +139,6 @@ def test_a_diverged_branch_blocks():
         assert st["status"] == "blocked" and "diverged" in st["why"], st
     finally:
         w.close()
-    print("OK test_a_diverged_branch_blocks")
 
 
 def test_no_upstream_or_no_repo_offers_nothing():
@@ -162,7 +155,6 @@ def test_no_upstream_or_no_repo_offers_nothing():
         assert U.main([]) == 0
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("OK test_no_upstream_or_no_repo_offers_nothing")
 
 
 def test_the_switch_turns_the_boot_check_off_but_not_the_guard():
@@ -179,11 +171,3 @@ def test_the_switch_turns_the_boot_check_off_but_not_the_guard():
             del os.environ["CRISPZ_NO_UPDATE_CHECK"]
     finally:
         w.close()
-    print("OK test_the_switch_turns_the_boot_check_off_but_not_the_guard")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All update-check tests passed.")

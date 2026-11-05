@@ -152,12 +152,3 @@ def test_setting_the_loras_does_not_wait():
 def test_setting_the_single_file_transformer_does_not_wait():
     """Same reason: a global read by the next _ensure_base, no touch to the loaded pipe."""
     _does_not_wait(P.set_zimage_transformer, "")
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} shared-pipe lock tests passed.")

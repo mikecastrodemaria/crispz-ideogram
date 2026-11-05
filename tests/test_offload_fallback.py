@@ -107,12 +107,3 @@ def test_without_a_card_the_pipe_is_simply_moved():
         assert out is pipe and pipe.tried == [], pipe.tried
     finally:
         P.DEVICE = dev
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} offload fallback tests passed.")

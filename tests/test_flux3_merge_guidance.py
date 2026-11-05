@@ -38,21 +38,18 @@ def test_the_base_repo_stays_at_one():
     """On the base repo, the guidance is inert: proven, so we do not pass it on."""
     assert _guidance(1.0, None) == 1.0
     assert _guidance(4.0, None) == 1.0, "le repo de base ignore la CFG (mesure)"
-    print("OK test_the_base_repo_stays_at_one")
 
 
 def test_an_override_gets_the_slider():
     """On a third-party checkpoint, we do NOT know whether it is distilled: the user decides."""
     assert _guidance(4.0, CKPT) == 4.0
     assert _guidance(1.0, CKPT) == 1.0, "slider at 1.0: nothing changes"
-    print("OK test_an_override_gets_the_slider")
 
 
 def test_an_explicit_guidance_is_never_overridden():
     p = Pipe()
     P._qwen_call(p, prompt="x", guidance_scale=7.5)
     assert p.kw["guidance_scale"] == 7.5
-    print("OK test_an_explicit_guidance_is_never_overridden")
 
 
 
@@ -75,7 +72,6 @@ def test_the_ignored_guidance_is_announced_once():
     assert len(said) == 1, f"{len(said)} guidance lines for the same value"
     assert "4" in said[0] and "distilled" in said[0], said[0]
     P._CFG_IGNORED_SAID.clear()
-    print("OK test_the_ignored_guidance_is_announced_once")
 
 
 def test_a_preset_exists_for_undistilled_checkpoints():
@@ -90,7 +86,6 @@ def test_a_preset_exists_for_undistilled_checkpoints():
     # the radio's fallback must never name a preset that does not exist
     assert cz_ui._valid_performance(None) in cz_ui.PERFORMANCE
     assert cz_ui._valid_performance("Turbo (8 steps)") in cz_ui.PERFORMANCE
-    print("OK test_a_preset_exists_for_undistilled_checkpoints")
 
 
 
@@ -119,7 +114,6 @@ def test_an_undistilled_checkpoint_gets_the_right_profile():
     st, g, why = profile("Klein Something Turbo")
     assert (st, g) == (48, 7.0), (st, g)    # the file-name profile (Ideogram default)
     assert why == ""
-    print("OK test_an_undistilled_checkpoint_gets_the_right_profile")
 
 
 def test_the_civitai_consensus_wins_over_the_filename():
@@ -148,7 +142,6 @@ def test_the_civitai_consensus_wins_over_the_filename():
                    "recommended": {"n": 6, "steps": 20, "guidance": 2.5}}, f)
     st, g, _why = U._profile_for_checkpoint(ck)
     assert (st, g) == (20, 2.5), (st, g)
-    print("OK test_the_civitai_consensus_wins_over_the_filename")
 
 
 def test_the_undistilled_profile_comes_from_the_preset():
@@ -157,16 +150,3 @@ def test_the_undistilled_profile_comes_from_the_preset():
     name, st, g = U._undistilled_profile()
     assert name in U.PERFORMANCE, name
     assert U.PERFORMANCE[name] == (st, g) or list(U.PERFORMANCE[name]) == [st, g]
-    print("OK test_the_undistilled_profile_comes_from_the_preset")
-
-
-if __name__ == "__main__":
-    test_the_base_repo_stays_at_one()
-    test_an_override_gets_the_slider()
-    test_an_explicit_guidance_is_never_overridden()
-    test_the_ignored_guidance_is_announced_once()
-    test_a_preset_exists_for_undistilled_checkpoints()
-    test_an_undistilled_checkpoint_gets_the_right_profile()
-    test_the_civitai_consensus_wins_over_the_filename()
-    test_the_undistilled_profile_comes_from_the_preset()
-    print("ALL OK")

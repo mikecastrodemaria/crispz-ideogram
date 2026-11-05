@@ -5,6 +5,8 @@ import importlib.util
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cz_core
@@ -38,11 +40,9 @@ def _with_find_spec(missing, fn, present=()):
 def test_exported_onnx_is_enough():
     """Without ultralytics but with the .onnx: the feature IS available."""
     if not os.path.isfile(_onnx_path()):
-        print("SKIP test_exported_onnx_is_enough (no exported detector in cache/)")
-        return
+        pytest.skip("no exported detector in cache/")
     assert _with_find_spec({"ultralytics"}, C._hands_available,
                            present={"onnxruntime"}) is True
-    print("OK test_exported_onnx_is_enough")
 
 
 def test_ultralytics_alone_is_enough():
@@ -59,17 +59,8 @@ def test_ultralytics_alone_is_enough():
         assert C._hands_available() is True
     finally:
         importlib.util.find_spec = real
-    print("OK test_ultralytics_alone_is_enough")
 
 
 def test_no_onnxruntime_means_no():
     """onnxruntime is the only dependency that is really indispensable at run time."""
     assert _with_find_spec({"onnxruntime"}, C._hands_available) is False
-    print("OK test_no_onnxruntime_means_no")
-
-
-if __name__ == "__main__":
-    test_exported_onnx_is_enough()
-    test_ultralytics_alone_is_enough()
-    test_no_onnxruntime_means_no()
-    print("ALL OK")

@@ -392,27 +392,6 @@ def test_mxfp8_is_not_caught_by_the_fp4_guard():
 
 
 
-if __name__ == "__main__":
-    for fn in (test_bf16_passthrough, test_fp8_pure_detect_and_dequant,
-               test_fp8_scaled_dequant_math, test_int8_per_row_scale,
-               test_int8_convrot_roundtrip, test_aio_bundle_filtered,
-               test_comfy_prefix_is_stripped, test_unprefixed_keys_left_alone,
-               test_bf16_prefixed_is_detected_and_stripped,
-               test_convert_device_cpu_is_respected,
-               test_dequant_result_always_lands_on_cpu,
-               test_foreign_arch_rejected, test_lora_and_svdq_still_unsupported,
-               test_gguf_arch_and_layout,
-               test_nvfp4_is_refused_by_name,
-               test_a_f4_dtype_is_refused_even_without_metadata,
-               test_mxfp8_is_not_caught_by_the_fp4_guard,
-               test_gguf_layout_beats_a_mislabelled_architecture,
-               test_gguf_foreign_layout_still_rejected,
-               test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2,
-               test_list_checkpoints_reads_a_mislabelled_gguf_by_its_tensors,
-               test_int8_convrot_declared_in_header_metadata):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All quant-format tests passed.")
 
 
 def test_gguf_file_type_reads_llama_cpp_enum_not_the_tensor_types():

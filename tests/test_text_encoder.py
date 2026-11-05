@@ -49,14 +49,12 @@ def test_same_architecture_is_accepted():
         assert P._text_encoder_problem(_folder(QWEN4B)) is None
         # weights in a text_encoder/ subfolder (a copy of a diffusers repo)
         assert P._text_encoder_problem(_folder(QWEN4B, "text_encoder")) is None
-    print("OK test_same_architecture_is_accepted")
 
 
 def test_a_4b_encoder_is_refused_on_the_9b_by_name():
     with _Base(QWEN8B):
         why = P._text_encoder_problem(_folder(QWEN4B))
     assert why and "2560" in why and "4096" in why and "4B" in why, why
-    print("OK test_a_4b_encoder_is_refused_on_the_9b_by_name")
 
 
 def test_other_family_and_layer_count_are_refused():
@@ -66,7 +64,6 @@ def test_other_family_and_layer_count_are_refused():
         assert why and "t5" in why, why
         why = P._text_encoder_problem(_folder({**QWEN4B, "num_hidden_layers": 28}))
         assert why and "28" in why and "36" in why, why
-    print("OK test_other_family_and_layer_count_are_refused")
 
 
 def test_gguf_single_file_and_empty_folder_are_refused_with_the_reason():
@@ -74,7 +71,6 @@ def test_gguf_single_file_and_empty_folder_are_refused_with_the_reason():
         assert "GGUF" in P._text_encoder_problem(r"F:\x\qwen3-4b-q8_0.gguf")
         assert "FOLDER" in P._text_encoder_problem(r"F:\x\qwen3_4b.safetensors")
         assert "config.json" in P._text_encoder_problem(tempfile.mkdtemp())
-    print("OK test_gguf_single_file_and_empty_folder_are_refused_with_the_reason")
 
 
 def test_hf_ids_may_carry_a_subfolder():
@@ -83,7 +79,6 @@ def test_hf_ids_may_carry_a_subfolder():
                            "flux2-klein-4b-uncensored-text-encoder") == (
         "ponpoke/flux2-klein-4b-uncensored-text-encoder",
         "flux2-klein-4b-uncensored-text-encoder")
-    print("OK test_hf_ids_may_carry_a_subfolder")
 
 
 def test_the_class_comes_from_the_base_repo_model_index():
@@ -92,7 +87,6 @@ def test_the_class_comes_from_the_base_repo_model_index():
         json.dump({"text_encoder": ["transformers", "Qwen3ForCausalLM"]}, f)
     cls = P._encoder_class(base)
     assert cls.__name__ == "Qwen3ForCausalLM", cls
-    print("OK test_the_class_comes_from_the_base_repo_model_index")
 
 
 def test_changing_the_encoder_frees_the_pipe_and_the_cache():
@@ -112,7 +106,6 @@ def test_changing_the_encoder_frees_the_pipe_and_the_cache():
     finally:
         P.TEXT_ENCODER, P._BASE_PIPE = old
         P._EMBED_CACHE.clear()
-    print("OK test_changing_the_encoder_frees_the_pipe_and_the_cache")
 
 
 class FakePipe:
@@ -142,7 +135,6 @@ def test_the_embed_key_carries_the_encoder():
     finally:
         P._TEXT_ENCODER_ACTIVE = old
         P._embed_cache_clear()
-    print("OK test_the_embed_key_carries_the_encoder")
 
 
 def test_metadata_names_the_encoder_that_ran_and_never_its_path():
@@ -166,7 +158,6 @@ def test_metadata_names_the_encoder_that_ran_and_never_its_path():
     assert P._encoder_label("owner/repo/sub") == "owner/repo/sub"
     line = cz_imageio._a1111_parameters({"prompt": "p", "text_encoder": "qwen3-4b-abliterated"})
     assert "Text encoder: qwen3-4b-abliterated" in line, line
-    print("OK test_metadata_names_the_encoder_that_ran_and_never_its_path")
 
 
 def test_the_list_finds_encoder_folders():
@@ -181,7 +172,6 @@ def test_the_list_finds_encoder_folders():
         P.TEXT_ENCODERS_DIR = old
     assert d in found, found
     assert not any(f.endswith("empty") for f in found), found
-    print("OK test_the_list_finds_encoder_folders")
 
 
 def test_the_queue_keeps_the_encoder():
@@ -201,7 +191,6 @@ def test_the_queue_keeps_the_encoder():
         assert calls == [], calls
     finally:
         P.TEXT_ENCODER, P.set_text_encoder = old
-    print("OK test_the_queue_keeps_the_encoder")
 
 
 def test_default_picked_in_the_ui_survives_a_restart():
@@ -213,7 +202,6 @@ def test_default_picked_in_the_ui_survives_a_restart():
     assert P._resolve_text_encoder({}, {"text_encoder": r"D:\enc\ui"}, cfg) == r"D:\enc\ui"
     assert P._resolve_text_encoder({"KLEIN_TEXT_ENCODER": r"D:\enc\env"},
                                    {"text_encoder": ""}, cfg) == r"D:\enc\env"
-    print("OK test_default_picked_in_the_ui_survives_a_restart")
 
 
 def test_compatible_encoders_in_the_hf_cache_are_listed():
@@ -262,11 +250,3 @@ def test_compatible_encoders_in_the_hf_cache_are_listed():
         P._hf_cache_dir, P._base_text_encoder_config = old
     assert width == 4096 and sorted(h for h, _w in other) == sorted(got), other
     assert "2560" in hint and "4096" in hint and "huihui" in hint, hint
-    print("OK test_compatible_encoders_in_the_hf_cache_are_listed")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All text-encoder tests passed.")

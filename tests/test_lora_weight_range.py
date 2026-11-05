@@ -61,14 +61,3 @@ def test_negative_weight_survives_set_loras():
     P.set_loras([(p, -1.0)])
     assert P.LORAS == [(p, -1.0)]
     P.LORAS = []
-
-
-if __name__ == "__main__":
-    for fn in (test_default_is_symmetric_and_allows_negatives, test_custom_range_is_honoured,
-               test_ints_and_strings_are_accepted, test_bad_values_fall_back_to_default,
-               test_inverted_or_empty_range_falls_back,
-               test_module_exposes_range_and_clamps_default_weight,
-               test_negative_weight_survives_set_loras):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All lora weight range tests passed.")

@@ -165,12 +165,3 @@ def test_a_schedule_this_build_cannot_make_falls_back_instead_of_breaking():
         assert P._scheduler_accepts_sigmas(sched), "the fallback cannot take custom sigmas"
         # Applied when the build allows it, silently Euler when it does not.
         assert sched.config.use_beta_sigmas in (True, False), sched.config
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} sampler race tests passed.")

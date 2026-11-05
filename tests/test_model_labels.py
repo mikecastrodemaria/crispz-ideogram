@@ -132,12 +132,3 @@ def test_an_unreadable_file_still_gets_a_line():
 def test_a_missing_file_says_nothing_rather_than_raising():
     assert P.model_info("D:/nope/ghost.safetensors") == {}
     assert P.model_label("ghost.safetensors", "D:/nope/ghost.safetensors") == "ghost.safetensors"
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} model label tests passed.")

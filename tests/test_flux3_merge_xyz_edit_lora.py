@@ -37,7 +37,6 @@ def test_the_axis_exists_and_is_calibrated():
     # the LoRA's effect, and 0 serves as the reference with no effect.
     assert "0" in U._XYZ_CALIB["Edit LoRA weight"]
     assert "-" in U._XYZ_CALIB["Edit LoRA weight"]
-    print("OK test_the_axis_exists_and_is_calibrated")
 
 
 def test_on_an_edit_run_the_weights_are_accepted():
@@ -45,7 +44,6 @@ def test_on_an_edit_run_the_weights_are_accepted():
                                      _vals(edit=True), _ms())
     assert err is None, err
     assert vals == [-0.4, 0.0, 0.4], vals
-    print("OK test_on_an_edit_run_the_weights_are_accepted")
 
 
 def test_a_txt2img_grid_is_refused_not_silently_useless():
@@ -54,14 +52,12 @@ def test_a_txt2img_grid_is_refused_not_silently_useless():
     _v, err = U._xyz_validate_axis("Edit LoRA weight", ["0.4"], _vals(edit=False), _ms())
     assert err and "EDIT run" in err, err
     assert U.EDIT_MODE in err and "identical" in err, err
-    print("OK test_a_txt2img_grid_is_refused_not_silently_useless")
 
 
 def test_no_edit_lora_selected_is_refused():
     _v, err = U._xyz_validate_axis("Edit LoRA weight", ["0.4"], _vals(edit=True),
                                    _ms(edit_loras=()))
     assert err and "no active edit LoRA" in err, err
-    print("OK test_no_edit_lora_selected_is_refused")
 
 
 def test_the_edit_loras_checkbox_being_off_is_refused():
@@ -69,7 +65,6 @@ def test_the_edit_loras_checkbox_being_off_is_refused():
     _v, err = U._xyz_validate_axis("Edit LoRA weight", ["0.4"], _vals(edit=True),
                                    _ms(enabled=False))
     assert err and "checkbox" in err, err
-    print("OK test_the_edit_loras_checkbox_being_off_is_refused")
 
 
 def test_applying_a_value_rewrites_only_the_edit_set():
@@ -81,7 +76,6 @@ def test_applying_a_value_rewrites_only_the_edit_set():
     U._xyz_apply("Edit LoRA weight", -0.25, vals, ms)
     assert ms["edit_loras"] == [("/a.safetensors", -0.25), ("/b.safetensors", -0.25)]
     assert ms["loras"] == [("/base.safetensors", 0.9)], ms["loras"]
-    print("OK test_applying_a_value_rewrites_only_the_edit_set")
 
 
 def test_the_base_lora_axis_still_ignores_the_edit_set():
@@ -91,11 +85,3 @@ def test_the_base_lora_axis_still_ignores_the_edit_set():
     U._xyz_apply("LoRA weight", 0.3, _vals(), ms)
     assert ms["loras"] == [("/base.safetensors", 0.3)]
     assert ms["edit_loras"] == [("/x/consistence-edit.safetensors", 0.6)]
-    print("OK test_the_base_lora_axis_still_ignores_the_edit_set")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All XYZ edit-LoRA tests passed.")

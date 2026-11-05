@@ -33,7 +33,6 @@ def test_follows_the_model_profile_by_default():
         assert D._detailer_steps(60) == 48, "Ideogram 4 runs 48 steps"
         assert D._detailer_steps(40) == 40
     _with_model(repo, None, check)
-    print("OK test_follows_the_model_profile_by_default")
 
 
 def test_never_raises_the_slider():
@@ -43,7 +42,6 @@ def test_never_raises_the_slider():
         assert D._detailer_steps(3) == 3
         assert D._detailer_steps(1) == 1
     _with_model(P.engine.DEFAULT_REPO, None, check)
-    print("OK test_never_raises_the_slider")
 
 
 def test_config_overrides():
@@ -55,11 +53,3 @@ def test_config_overrides():
         D.CONFIG["detailer_steps"] = "anything at all"
         assert D._detailer_steps(60) == 48, "an unreadable value falls back on the profile (48)"
     _with_model(P.engine.DEFAULT_REPO, None, check)
-    print("OK test_config_overrides")
-
-
-if __name__ == "__main__":
-    test_follows_the_model_profile_by_default()
-    test_never_raises_the_slider()
-    test_config_overrides()
-    print("ALL OK")

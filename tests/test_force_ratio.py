@@ -81,11 +81,3 @@ def test_ui_radio_mapping():
         assert czp.FORCE_RATIO == ""
     finally:
         czp.FORCE_RATIO, czp.FORCE_RATIO_MODE = old_r, old_m
-
-
-if __name__ == "__main__":
-    for fn in (test_extend_reaches_target_ratio, test_crop_still_crops,
-               test_mode_setter_normalises, test_ui_radio_mapping):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All force-ratio tests passed.")

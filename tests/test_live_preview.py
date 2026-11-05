@@ -110,12 +110,3 @@ def test_with_the_preview_off_the_handler_is_called_directly():
         cz_pipeline.LIVE_PREVIEW_ENABLED = on
     assert out == [RESULT], out                     # a single output, no frame at all
     assert cz_pipeline._PREVIEW["busy"] is False
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} live preview tests passed.")

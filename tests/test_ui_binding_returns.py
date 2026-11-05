@@ -130,8 +130,6 @@ def test_the_detector_catches_every_form_and_only_those():
     # opens the chain and the .then that follows it. Only the second one is guilty.
     assert examined == 12, f"{examined} wirings with no outputs instead of 12"
     assert len(lines) == len(set(lines)), "a wiring reported twice"
-    print(f"OK test_the_detector_catches_every_form_and_only_those ({len(offenders)} known"
-          f" offenders found, {examined - len(offenders)} innocents left alone)")
 
 
 def test_no_handler_returns_into_the_void():
@@ -161,13 +159,3 @@ def test_no_handler_returns_into_the_void():
     assert not offenders, ("wired on no outputs but return a value -> Gradio warns on every "
                            "firing: " + "; ".join(f"cz_ui.py:{l} {n} ({h})"
                                                   for l, n, h in offenders))
-    print(f"OK test_no_handler_returns_into_the_void ({examined} wirings with no outputs "
-          f"checked)")
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-    print("ALL OK")

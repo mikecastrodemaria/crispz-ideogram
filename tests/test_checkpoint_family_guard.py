@@ -40,7 +40,6 @@ def test_hidden_dim_read_from_header():
     p = _ckpt("comfy.safetensors", 4096,
               key="model.diffusion_model.double_stream_modulation_img.lin.weight")
     assert P._flux2_hidden_dim(p) == 4096
-    print("OK test_hidden_dim_read_from_header")
 
 
 def _with_base(repo, dim, fn):
@@ -86,7 +85,6 @@ def test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base(
             # the per-file reason stays SHORT: it is repeated once per discarded file.
             assert len(msg) < 130, f"reason too long ({len(msg)} chars): {msg}"
             assert "NON-COMMERCIAL" not in msg
-    print("OK test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base")
 
 
 def test_summary_names_the_studio_that_runs_the_file_once():
@@ -98,7 +96,6 @@ def test_summary_names_the_studio_that_runs_the_file_once():
     assert "crispz-klein" in line, line
     assert "zimage_model" not in line, "the old name must no longer appear"
     assert "NON-COMMERCIAL" not in line and "switch the base" not in line, line
-    print("OK test_summary_names_the_studio_that_runs_the_file_once")
 
 
 def test_unknown_base_never_discards():
@@ -110,7 +107,6 @@ def test_unknown_base_never_discards():
     assert _with_base("mystere", None, lambda: P._safetensors_unsupported(p)) is None
     assert _with_base("mystere", None,
                       lambda: P._safetensors_unsupported(_ckpt("u9.safetensors", 4096)))
-    print("OK test_unknown_base_never_discards")
 
 
 def test_bogus_shape_is_not_taken_for_a_hidden_dim():
@@ -124,7 +120,6 @@ def test_bogus_shape_is_not_taken_for_a_hidden_dim():
     p = os.path.join(TMP, "single.safetensors")
     save_file({"single_stream_modulation.lin.weight": torch.zeros(9216, 3072)}, p)
     assert P._flux2_hidden_dim(p) == 3072
-    print("OK test_bogus_shape_is_not_taken_for_a_hidden_dim")
 
 
 def test_file_without_signature_is_not_filtered():
@@ -135,7 +130,6 @@ def test_file_without_signature_is_not_filtered():
                "x_embedder.weight": torch.zeros(2, 2)}, p)
     assert P._flux2_hidden_dim(p) is None
     assert _with_base("base-4b", 3072, lambda: P._flux2_variant_mismatch(None)) is None
-    print("OK test_file_without_signature_is_not_filtered")
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +172,6 @@ def test_a_lora_declares_its_variant_through_its_shapes():
     for label, dim in DIMS.items():
         p = _lora(f"lora_{label}.safetensors", dim)
         assert P._flux2_lora_hidden_dim(p) == dim, (label, P._flux2_lora_hidden_dim(p))
-    print("OK test_a_lora_declares_its_variant_through_its_shapes")
 
 
 def test_a_foreign_lora_is_refused_in_one_sentence():
@@ -197,7 +190,6 @@ def test_a_foreign_lora_is_refused_in_one_sentence():
     save_file({"transformer.layers.0.attention.to_q.lora_A.weight": torch.zeros(8, 4608),
                "transformer.layers.0.attention.to_q.lora_B.weight": torch.zeros(4608, 8)}, p)
     assert P._lora_unsupported(p) is None
-    print("OK test_a_foreign_lora_is_refused_in_one_sentence")
 
 
 def test_a_lora_without_a_signature_is_never_filtered():
@@ -208,7 +200,6 @@ def test_a_lora_without_a_signature_is_never_filtered():
                "some.other.arch.lora_B.weight": torch.zeros(999, 8)}, p)
     assert P._flux2_lora_hidden_dim(p) is None
     assert P._lora_unsupported(p) is None
-    print("OK test_a_lora_without_a_signature_is_never_filtered")
 
 
 def test_a_lokr_has_no_lora_signature():
@@ -218,7 +209,6 @@ def test_a_lokr_has_no_lora_signature():
     save_file({f"diffusion_model.double_blocks.{i}.img_attn.proj.lokr_w{j}":
                torch.zeros(4, 4) for i in range(3) for j in (1, 2)}, p)
     assert P._flux2_lora_hidden_dim(p) is None
-    print("OK test_a_lokr_has_no_lora_signature")
 
 
 def test_every_lora_dialect_is_recognised():
@@ -230,7 +220,6 @@ def test_every_lora_dialect_is_recognised():
             p = _lora(f"dialect_{layout}_{label}.safetensors", dim, layout=layout)
             got = P._flux2_lora_hidden_dim(p)
             assert got == dim, (layout, label, got)
-    print("OK test_every_lora_dialect_is_recognised")
 
 
 def test_derived_widths_do_not_fool_the_detector():
@@ -246,20 +235,3 @@ def test_derived_widths_do_not_fool_the_detector():
         "diffusion_model.double_blocks.0.img_mlp.0.lora_B.weight": torch.zeros(16384, 16),
     }, p)
     assert P._flux2_lora_hidden_dim(p) == 4096, P._flux2_lora_hidden_dim(p)
-    print("OK test_derived_widths_do_not_fool_the_detector")
-
-
-if __name__ == "__main__":
-    for fn in (test_hidden_dim_read_from_header,
-               test_foreign_files_are_refused_and_an_ideogram_one_passes_whatever_the_base,
-               test_summary_names_the_studio_that_runs_the_file_once,
-               test_unknown_base_never_discards, test_bogus_shape_is_not_taken_for_a_hidden_dim,
-               test_file_without_signature_is_not_filtered,
-               test_a_lora_declares_its_variant_through_its_shapes,
-               test_a_foreign_lora_is_refused_in_one_sentence,
-               test_a_lora_without_a_signature_is_never_filtered,
-               test_a_lokr_has_no_lora_signature,
-               test_every_lora_dialect_is_recognised,
-               test_derived_widths_do_not_fool_the_detector):
-        fn()
-    print("All 4B/9B variant tests passed.")

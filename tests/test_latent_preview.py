@@ -131,12 +131,3 @@ def test_ideogram_pipe_gets_its_projection_others_do_not():
     assert P._preview_proj_for(None) is None
     img = P.latent_preview_image(_lat(512, 256), 512, 256, proj=P._preview_proj_for(ide))
     assert img is not None and img.width == 2 * img.height
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} latent preview tests passed.")

@@ -160,12 +160,3 @@ def test_picking_a_preset_sets_its_weight_on_the_slider():
             assert applied[-1] == [] and "value" not in slider, (applied, slider)
     finally:
         cz_pipeline.set_edit_loras, cz_edit_loras.is_downloaded, cz_ui._edit_lora_choices = real
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} edit-LoRA preset tests passed.")

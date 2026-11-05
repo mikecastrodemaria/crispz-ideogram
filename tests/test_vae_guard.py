@@ -37,7 +37,6 @@ def test_a_bare_vae_is_refused_by_name():
     why = _refusal(VAE)
     assert why and "VAE" in why, why
     assert "base repo" in why, why
-    print("OK test_a_bare_vae_is_refused_by_name")
 
 
 def test_an_all_in_one_bundle_is_not_taken_for_a_vae():
@@ -52,7 +51,6 @@ def test_an_all_in_one_bundle_is_not_taken_for_a_vae():
                    for i in range(4)})
     why = _refusal(bundle)
     assert not (why and "VAE" in why), why
-    print("OK test_an_all_in_one_bundle_is_not_taken_for_a_vae")
 
 
 def test_a_t5_text_encoder_is_not_called_a_vae():
@@ -61,18 +59,9 @@ def test_a_t5_text_encoder_is_not_called_a_vae():
     t5["shared.weight"] = _t()
     why = _refusal(t5)
     assert not (why and "VAE" in why), why
-    print("OK test_a_t5_text_encoder_is_not_called_a_vae")
 
 
 def test_a_real_transformer_still_passes():
     dit = {f"transformer_blocks.{i}.attn.to_q.weight": _t() for i in range(8)}
     dit["x_embedder.weight"] = _t()
     assert _refusal(dit) is None, _refusal(dit)
-    print("OK test_a_real_transformer_still_passes")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All VAE-guard tests passed.")

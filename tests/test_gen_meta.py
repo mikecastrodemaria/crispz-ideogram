@@ -39,7 +39,6 @@ def test_a_lokr_appears_although_it_is_no_adapter():
     finally:
         _restore(old)
     assert m["loras"] == ["klein_snofs_v1_4.safetensors@1.0"], m.get("loras")
-    print("OK test_a_lokr_appears_although_it_is_no_adapter")
 
 
 def test_a_refused_lora_is_not_claimed_as_applied():
@@ -52,7 +51,6 @@ def test_a_refused_lora_is_not_claimed_as_applied():
         _restore(old)
     assert m["loras"] == ["ok.safetensors@0.8"], m.get("loras")
     assert m["loras_not_applied"] == ["refused.safetensors@0.5"], m.get("loras_not_applied")
-    print("OK test_a_refused_lora_is_not_claimed_as_applied")
 
 
 def test_edit_loras_are_recorded_on_an_edit():
@@ -64,7 +62,6 @@ def test_edit_loras_are_recorded_on_an_edit():
         _restore(old)
     assert m["edit_loras"] == ["consistence-edit.safetensors@0.6"], m.get("edit_loras")
     assert m["edit_speed"] == "Rapid 8-step", m.get("edit_speed")
-    print("OK test_edit_loras_are_recorded_on_an_edit")
 
 
 def test_edit_loras_do_not_leak_into_a_txt2img():
@@ -78,7 +75,6 @@ def test_edit_loras_do_not_leak_into_a_txt2img():
         _restore(old)
     assert "edit_loras" not in m, m
     assert "edit_speed" not in m, m
-    print("OK test_edit_loras_do_not_leak_into_a_txt2img")
 
 
 def test_a_single_file_records_the_base_repo_it_needs():
@@ -89,7 +85,6 @@ def test_a_single_file_records_the_base_repo_it_needs():
         _restore(old)
     assert m["model"] == CKPT, m["model"]
     assert m["base_repo"] == BASE, m.get("base_repo")
-    print("OK test_a_single_file_records_the_base_repo_it_needs")
 
 
 def test_the_base_repo_alone_needs_no_second_line():
@@ -100,7 +95,6 @@ def test_the_base_repo_alone_needs_no_second_line():
         _restore(old)
     assert m["model"] == BASE
     assert "base_repo" not in m, "redundant when the model IS the repo"
-    print("OK test_the_base_repo_alone_needs_no_second_line")
 
 
 def test_the_a1111_chunk_carries_them_too():
@@ -115,7 +109,6 @@ def test_the_a1111_chunk_carries_them_too():
     assert "Loras: style.safetensors@0.8" in line, line
     assert "Edit loras: edit.safetensors@0.6" in line, line
     assert f"Base: {BASE}" in line, line
-    print("OK test_the_a1111_chunk_carries_them_too")
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +144,6 @@ def test_a_path_a_pil_and_an_editor_all_give_the_name():
     # keeps the one of the loaded file -- hence the order in which we try.
     assert P.source_meta({"background": _pil(TMP_UPLOAD),
                           "composite": _pil()}) == {"source": "ma_photo.png"}
-    print("OK test_a_path_a_pil_and_an_editor_all_give_the_name")
 
 
 def test_an_unknown_source_records_nothing():
@@ -159,13 +151,11 @@ def test_an_unknown_source_records_nothing():
     assert P.source_meta(_pil()) == {}
     assert P.source_meta(None) == {}
     assert P.source_meta([None, None]) == {}
-    print("OK test_an_unknown_source_records_nothing")
 
 
 def test_several_references_come_back_as_a_list():
     got = P.source_meta([_pil(TMP_UPLOAD), None, OTHER, None], "ref_images")
     assert got == {"ref_images": ["ma_photo.png", "other.png"]}, got
-    print("OK test_several_references_come_back_as_a_list")
 
 
 def test_full_and_off_are_honoured():
@@ -178,11 +168,3 @@ def test_full_and_off_are_honoured():
         assert P.source_meta(SRC) == {}
     finally:
         P.METADATA_SOURCE = old
-    print("OK test_full_and_off_are_honoured")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All generation-metadata tests passed.")

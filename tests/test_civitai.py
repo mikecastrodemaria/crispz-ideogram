@@ -252,21 +252,3 @@ def test_api_get_falls_back_to_global_key():
     finally:
         cz_civitai.urllib.request.urlopen = old_open
         cz_civitai.API_KEY = old_key
-
-
-if __name__ == "__main__":
-    for fn in (test_compute_sha256_progress, test_model_sha256_reads_sidecar_no_hash,
-               test_fetch_missing_file_no_network, test_has_preview_and_sidecar_load,
-               test_examples_from_reads_meta_prompt, test_examples_from_respects_limit,
-               test_get_version_by_hash_carries_images, test_api_get_falls_back_to_global_key,
-               test_sha256_is_cached_and_reused, test_sha256_cache_invalidated_when_size_changes,
-               test_metadata_sidecar_wins_over_our_cache,
-               test_fetch_sidecar_merge_keeps_hash_cache,
-               test_latest_version_ignores_other_base_models,
-               test_update_flag_not_raised_by_a_new_base_model,
-               test_update_flag_infers_base_from_our_own_version,
-               test_update_flag_when_no_version_shares_our_base,
-               test_update_flag_when_api_omits_base_models):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All civitai tests passed.")

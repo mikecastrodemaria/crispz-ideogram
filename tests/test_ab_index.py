@@ -207,17 +207,3 @@ def test_reindex_and_hook_produce_the_same_entry_shape():
                                encoding="utf-8"))["images"][0]
     assert set(from_reindex) == set(from_hook), \
         f"different keys: {set(from_reindex) ^ set(from_hook)}"
-
-
-if __name__ == "__main__":
-    for fn in (test_second_pass_uses_cache, test_modified_image_is_reread,
-               test_cache_reflects_new_metadata, test_deleted_images_leave_the_cache,
-               test_corrupt_cache_is_ignored_not_fatal,
-               test_per_day_manifests_and_days_index,
-               test_incremental_hook_adds_without_rescan,
-               test_incremental_hook_is_idempotent,
-               test_incremental_hook_never_raises,
-               test_reindex_and_hook_produce_the_same_entry_shape):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All asset-browser index tests passed.")

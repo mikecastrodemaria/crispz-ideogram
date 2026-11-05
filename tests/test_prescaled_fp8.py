@@ -42,7 +42,6 @@ def test_the_detector_separates_the_two_layouts():
     # MX scales (an E8M0 exponent in a uint8): never concerned
     assert not P._stored_at_scale(prescaled.float(), torch.tensor([120], dtype=torch.uint8), E4)
     assert not P._stored_at_scale(prescaled.float(), s, E4, {"format": "mxfp8"})
-    print("OK test_the_detector_separates_the_two_layouts")
 
 
 def _tiny(path, prescaled, both=False):
@@ -68,11 +67,3 @@ def test_the_loader_reads_a_file_mixing_both_layouts():
     for k, w in (("x_embedder.weight", w1), ("context_embedder.weight", w2)):
         rel = ((out[k].float() - w).norm() / w.norm()).item()
         assert rel < 0.1, (k, rel)      # without the fix: ~1.0 on x_embedder
-    print("OK test_the_loader_reads_a_file_mixing_both_layouts")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("All prescaled-FP8 tests passed.")

@@ -31,7 +31,6 @@ def test_the_default_style_is_the_measured_v4():
     # Captionz' dataset caption, kept as a style apart (labelling)
     ds = C.describe_instruction("Dataset paragraph", "Medium")
     assert "aspect ratio" in ds and "era if identifiable" in ds and "about 120 words" in ds, ds
-    print("OK test_the_default_style_is_the_measured_v4")
 
 
 def test_the_old_sample_instruction_is_not_a_customisation():
@@ -51,7 +50,6 @@ def test_the_old_sample_instruction_is_not_a_customisation():
         C.CONFIG.clear()
         C.CONFIG.update(old)
     assert "{prompt}" in C.IMPROVE_INSTRUCTION and "{descriptions}" in C.COMPOSE_INSTRUCTION
-    print("OK test_the_old_sample_instruction_is_not_a_customisation")
 
 
 CLEAN_CASES = [
@@ -72,7 +70,6 @@ def test_clean_description():
     for raw, want in CLEAN_CASES:
         got = O.clean_description(raw)
         assert got == want, f"{raw!r} -> {got!r} (attendu {want!r})"
-    print("OK test_clean_description")
 
 
 def test_gen_opts_cap_context_and_length():
@@ -82,7 +79,6 @@ def test_gen_opts_cap_context_and_length():
     assert p["options"]["num_predict"] == O.OLLAMA_NUM_PREDICT > 0, p
     assert "temperature" not in p["options"], p
     assert O._ollama_gen_opts(0.3)["options"]["temperature"] == 0.3
-    print("OK test_gen_opts_cap_context_and_length")
 
 
 def test_describe_sends_the_chosen_style_and_cleans_the_answer():
@@ -103,7 +99,6 @@ def test_describe_sends_the_chosen_style_and_cleans_the_answer():
     assert p["prompt"] == C.describe_instruction("Photo (technical)", "Short"), p["prompt"]
     assert p["images"] and p["think"] is False, p
     assert p["options"]["temperature"] == float(O.OLLAMA_DESCRIBE_TEMPERATURE), p
-    print("OK test_describe_sends_the_chosen_style_and_cleans_the_answer")
 
 
 def test_describe_style_state():
@@ -114,7 +109,6 @@ def test_describe_style_state():
         assert "Prompt (prose)" in O.describe_style_choices()
     finally:
         O.DESCRIBE_STYLE, O.DESCRIBE_LENGTH = old
-    print("OK test_describe_style_state")
 
 
 class _Inputs(dict):
@@ -154,7 +148,6 @@ def test_caption_model_can_be_an_ollama_model_and_falls_back_to_blip():
         assert F.set_caption_model("BLIP-BASE") == "blip-base"
     finally:
         F._CAPTION_MODEL, F._CAPTIONER, O._ollama_caption, F._load_captioner = old
-    print("OK test_caption_model_can_be_an_ollama_model_and_falls_back_to_blip")
 
 
 def test_describe_falls_back_to_the_caption_model_when_ollama_fails():
@@ -171,7 +164,6 @@ def test_describe_falls_back_to_the_caption_model_when_ollama_fails():
         U._ollama_describe, U._local_caption = old
     assert upd.get("value") == "a local caption", upd
     assert "failed" in status and "caption model" in status, status
-    print("OK test_describe_falls_back_to_the_caption_model_when_ollama_fails")
 
 
 def test_detect_restores_the_remembered_vision_model():
@@ -195,17 +187,3 @@ def test_detect_restores_the_remembered_vision_model():
         assert dd["value"] is None and "not reachable" in status and "blip-large" in cap["choices"]
     finally:
         U._ollama_vision_models, C._load_prefs_raw = old
-    print("OK test_detect_restores_the_remembered_vision_model")
-
-
-if __name__ == "__main__":
-    test_the_default_style_is_the_measured_v4()
-    test_the_old_sample_instruction_is_not_a_customisation()
-    test_clean_description()
-    test_gen_opts_cap_context_and_length()
-    test_describe_sends_the_chosen_style_and_cleans_the_answer()
-    test_describe_style_state()
-    test_caption_model_can_be_an_ollama_model_and_falls_back_to_blip()
-    test_describe_falls_back_to_the_caption_model_when_ollama_fails()
-    test_detect_restores_the_remembered_vision_model()
-    print("All describe-style tests passed.")

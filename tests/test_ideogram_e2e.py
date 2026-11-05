@@ -119,12 +119,3 @@ def test_ideogram_end_to_end():
     with open(report, "w", encoding="utf-8") as f:
         f.write(f"{p.BASE_REPO} offload={p._effective_offload()}\n" + "\n".join(log) + "\n")
     print(f"\ntimings written to {report}")
-
-
-if __name__ == "__main__":
-    why = _why_skip()
-    if why:
-        print(f"SKIP test_ideogram_e2e: {why}")
-        sys.exit(0)
-    test_ideogram_end_to_end()
-    print("ALL OK")

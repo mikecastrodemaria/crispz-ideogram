@@ -1,8 +1,8 @@
-"""Runs the whole tests/test_*.py suite in separate processes and summarises.
+"""Runs the whole tests/test_*.py suite through pytest, one process per file, and summarises.
 
 Separate processes on purpose: the tests manipulate the modules' GLOBAL state
 (CHECKPOINTS_DIR, FORCE_RATIO, the caches...) and would pollute one another in a single
-interpreter. pytest for the FLUX.3 files (tests/test_flux3_*.py), plain scripts for the rest.
+interpreter. One style, pytest (CLAUDE.md, rule 4 bis): no file carries its own runner.
 
 Usage:
     .venv/Scripts/python tools/run_tests.py            # everything
@@ -39,18 +39,11 @@ def main(argv):
         # cp1252 would make the print fail rather than the test itself.
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         path = os.path.join(TESTS, f)
-        # The FLUX.3 test files are written for pytest (fixtures, monkeypatch, skipif) and
-        # have no __main__ runner: run as a script they would import, do nothing and pass.
-        # They go through pytest, which the CI installs; the klein-era files keep their
-        # script runner (the module globals they poke stay isolated per process).
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            uses_pytest = "import pytest" in fh.read()
-        cmd = ([sys.executable, "-m", "pytest", path, "-q", "-p", "no:cacheprovider"]
-               if uses_pytest else [sys.executable, path])
+        cmd = [sys.executable, "-m", "pytest", path, "-q", "-p", "no:cacheprovider"]
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", cwd=ROOT, env=env)
         # pytest exits 5 when every test of a file is skipped (the GPU e2e on a CPU runner)
-        ok = p.returncode == 0 or (uses_pytest and p.returncode == 5)
+        ok = p.returncode in (0, 5)
         print(f"{'PASS' if ok else 'FAIL'}  {f:<34} {time.time() - t0:5.1f}s")
         if not ok:
             failed.append(f)

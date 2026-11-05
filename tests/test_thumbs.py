@@ -109,13 +109,3 @@ def test_rebuild_thumbs_returns_summary_with_kind():
     d = _outputs_dir(3)
     r = AB.rebuild_thumbs("outputs", d, force=True)
     assert r["kind"] == "outputs" and r["made"] == 3
-
-
-if __name__ == "__main__":
-    for fn in (test_force_rebuilds_everything_then_skips, test_progress_is_called_once_per_file,
-               test_parallel_and_serial_give_the_same_result, test_model_jobs_need_a_preview,
-               test_missing_dir_is_not_an_error, test_broken_source_counts_as_failed_not_crash,
-               test_rebuild_thumbs_returns_summary_with_kind):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All thumbnail tests passed.")

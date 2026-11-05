@@ -21,7 +21,6 @@ def test_mxfp8_scale_is_an_exponent():
     # with no metadata, a uint8 can only be an exponent: the same result
     out2 = P._apply_quant_scale(w.clone(), s, "k.weight", "f.safetensors", None)
     assert torch.equal(out, out2)
-    print("OK test_mxfp8_scale_is_an_exponent")
 
 
 def test_groups_run_along_the_input_dimension():
@@ -30,7 +29,6 @@ def test_groups_run_along_the_input_dimension():
     s = torch.tensor([[127 + 1, 127 + 2]], dtype=torch.uint8)   # 2 et 4
     out = P._apply_quant_scale(w, s, "k.weight", "f", {"format": "mxfp8"})
     assert out[0, :32].eq(2).all() and out[0, 32:].eq(4).all(), out[0, ::16]
-    print("OK test_groups_run_along_the_input_dimension")
 
 
 def test_linear_float_scales_are_untouched():
@@ -41,7 +39,6 @@ def test_linear_float_scales_are_untouched():
     per_row = torch.tensor([1.0, 2.0, 3.0])
     got = P._apply_quant_scale(w.clone(), per_row, "k", "f")
     assert torch.equal(got, w * per_row.unsqueeze(1))
-    print("OK test_linear_float_scales_are_untouched")
 
 
 def test_an_unknown_layout_is_named_not_crashed():
@@ -51,14 +48,5 @@ def test_an_unknown_layout_is_named_not_crashed():
                              "lib/f.safetensors")
     except RuntimeError as e:
         assert "f.safetensors" in str(e) and "(6, 8)" in str(e) and "(3, 5)" in str(e), e
-        print("OK test_an_unknown_layout_is_named_not_crashed")
         return
     raise AssertionError("no error raised")
-
-
-if __name__ == "__main__":
-    test_mxfp8_scale_is_an_exponent()
-    test_groups_run_along_the_input_dimension()
-    test_linear_float_scales_are_untouched()
-    test_an_unknown_layout_is_named_not_crashed()
-    print("ALL OK")

@@ -421,12 +421,3 @@ def test_main_caps_reports_instance():
         code, res = _main_capture(["caps", "--remote", url])
     assert code == 0 and res["ok"]
     assert res["instance"]["running"] and res["instance"]["tool"] == "mock-tool"
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} protocol tests passed.")

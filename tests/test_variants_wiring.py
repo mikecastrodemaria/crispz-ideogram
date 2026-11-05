@@ -5,6 +5,8 @@ wildcards, <lora:> tags are read on the expanded text, seed -1 is resolved. No t
 import os
 import re
 import sys
+
+import pytest
 import types
 import random
 import shutil
@@ -330,8 +332,7 @@ def test_ui_omni_resolves_seed_and_expands():
     import cz_ui
     import cz_pipeline
     if not (cz_pipeline.OMNI_MODEL or "").strip():
-        print("SKIP test_ui_omni_resolves_seed_and_expands (no omni model)")
-        return
+        pytest.skip("no omni model")
     got = {}
 
     def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
@@ -358,8 +359,7 @@ def test_ui_omni_chains_the_upscale_when_asked():
     import cz_ui
     import cz_pipeline
     if not (cz_pipeline.OMNI_MODEL or "").strip():
-        print("SKIP test_ui_omni_chains_the_upscale_when_asked (no omni model)")
-        return
+        pytest.skip("no omni model")
     seen = []
 
     def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
@@ -391,8 +391,7 @@ def test_ui_omni_runs_the_batch_and_the_detailer():
     import cz_pipeline
     import cz_detailer
     if not (cz_pipeline.OMNI_MODEL or "").strip():
-        print("SKIP test_ui_omni_runs_the_batch_and_the_detailer (no omni model)")
-        return
+        pytest.skip("no omni model")
     calls, faces, hands = [], [], []
 
     def fake_generate_omni(refs, prompt, negative, width, height, steps, seed, **kw):
@@ -443,12 +442,3 @@ def test_cli_txt2img_resolves_seed_and_expands():
     assert rc in (0, None)
     assert got["prompt"] == "a cat" and got["negative"] == "blurry", got
     assert got["seed"] >= 0
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items())
-             if k.startswith("test_") and callable(v)]
-    for fn in tests:
-        fn()
-        print(f"OK {fn.__name__}")
-    print(f"All {len(tests)} variant wiring tests passed.")

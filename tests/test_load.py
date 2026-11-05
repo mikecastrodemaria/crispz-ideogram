@@ -48,12 +48,3 @@ def test_load_monitor_returns_and_raises():
     except ValueError:
         raised = True
     assert raised, "_load_monitor must re-raise fn's exception"
-
-
-if __name__ == "__main__":
-    for fn in (test_fmt_load_downloading, test_fmt_load_in_vram,
-               test_load_pct_monotone_and_capped, test_load_pct_target_guard,
-               test_load_monitor_returns_and_raises):
-        fn()
-        print(f"OK {fn.__name__}")
-    print("All load tests passed.")

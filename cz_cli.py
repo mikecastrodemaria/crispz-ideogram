@@ -481,9 +481,14 @@ def cli_main(argv=None):
                              "NON-COMMERCIAL licence).")
     parser.add_argument("--ideogram-transformer", "--flux3-transformer", "--klein-transformer",
                         "--zimage-transformer", dest="zimage_transformer",
-                        help="Transformer override from a diffusers repo or folder. Single-file "
-                             "Ideogram 4 transformers are refused with the reason (no "
-                             "converter in diffusers).")
+                        help="Transformer-only source in diffusers format: "
+                             "fal/ideogram-v4-instant (8 steps, no CFG) or a local folder "
+                             "holding transformer/. Checked tensor by tensor before loading. "
+                             "Single-file transformers are refused with the reason.")
+    parser.add_argument("--ideogram-profile", dest="ideogram_profile", default=None,
+                        help="Inference recipe: base (48 steps, guidance schedule) or "
+                             "instant (8 steps, guidance 1). Default: the transformer "
+                             "source's documented profile, else base.")
     parser.add_argument("--save-paths", action="store_true",
                         help="Save --esrgan-dir and --ideogram-model to preferences.json")
     # Reports
@@ -535,6 +540,8 @@ def cli_main(argv=None):
         set_zimage_model(args.zimage_model)
     if args.zimage_transformer:
         set_zimage_transformer(args.zimage_transformer)
+    if getattr(args, "ideogram_profile", None):
+        cz_pipeline.IDEOGRAM_PROFILE = args.ideogram_profile
     set_offload_mode(args.cpu_offload)
     set_guidance(args.guidance)
     if args.sampler:

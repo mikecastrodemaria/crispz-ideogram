@@ -617,6 +617,17 @@ ZIMAGE_BASE_REPOS = [r for r in (CONFIG.get("ideogram_base_repos")
 # choosing it would silently bring back the 4B).
 if cz_pipeline.BASE_REPO and cz_pipeline.BASE_REPO not in ZIMAGE_BASE_REPOS:
     ZIMAGE_BASE_REPOS.append(cz_pipeline.BASE_REPO)
+# Lot 8: the documented transformer sources that load here (fal's Instant), offered in
+# the same menu. Choosing one replaces the TRANSFORMER only: the base repo keeps lending
+# the tokenizer, the text encoder and the VAE (set_zimage_model routes it). Refused
+# sources (fal's Fast, until its FP4 step) are not offered.
+ZIMAGE_TRANSFORMER_SOURCES = [k for k, v in cz_ideogram.TRANSFORMER_SOURCES.items()
+                              if not v.get("refuse")]
+_cur_src = cz_pipeline.ZIMAGE_TRANSFORMER
+if _cur_src and cz_ideogram.is_transformer_source(_cur_src) \
+        and _cur_src not in ZIMAGE_TRANSFORMER_SOURCES:
+    ZIMAGE_TRANSFORMER_SOURCES.append(_cur_src)
+ZIMAGE_BASE_REPOS += [s for s in ZIMAGE_TRANSFORMER_SOURCES if s not in ZIMAGE_BASE_REPOS]
 
 # What you need to know BEFORE launching a run on a base repo, not after 20 GB of
 # download: licence, access, VRAM. Shown on selection.
@@ -634,6 +645,14 @@ _IDEOGRAM_NOTE = ("**Ideogram 4 NON-COMMERCIAL licence**: personal and research 
                   "at 7.0, no negative prompt. nf4 weights about 16 GB on disk; VRAM to be "
                   "measured on the 5090, set CPU offload to `model` below 24 GB.")
 BASE_REPO_NOTES = {cz_ideogram.DEFAULT_REPO: _IDEOGRAM_NOTE.format(repo=cz_ideogram.DEFAULT_REPO)}
+BASE_REPO_NOTES["fal/ideogram-v4-instant"] = (
+    "**Ideogram 4 Instant by fal**: a distilled checkpoint, **8 steps, no CFG** (guidance "
+    "fixed at 1, one transformer), Ideogram 4 **NON-COMMERCIAL** licence like the base "
+    "model. Transformer only, **bf16, 18.6 GB** downloaded the first time; the tokenizer, "
+    "the text encoder and the VAE stay those of the base repo (pinned revision). The repo is "
+    "gated with automatic approval: accept it at https://huggingface.co/fal/ideogram-v4-instant "
+    "with the account of your HF token. Its weights are checked tensor by tensor before "
+    "loading. fal notes that stock diffusers is not bit-exact with their hosted runtime.")
 # The default Performance preset for each official base repo. Empty: profile_for_model()
 # decides from the name (flux-3-image-klein-base -> 50 / 3.5, flux-3-image-klein -> 16 /
 # 1.0, see cz_core) and _perf_update picks the matching preset. NB: do NOT put a preset
@@ -934,13 +953,20 @@ def _apply_checkpoint(name):
         # session to the next, not merely from one run to the next.
         saved = ""
         try:
-            _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY: cz_pipeline.BASE_REPO})
+            # A transformer source is saved as the model: at startup cz_pipeline sees it
+            # is one and keeps the base repo for the components.
+            _src = name in ZIMAGE_TRANSFORMER_SOURCES
+            _save_prefs_keys({cz_pipeline.CFG_MODEL_KEY:
+                              name if _src else cz_pipeline.BASE_REPO})
             saved = " Saved as the startup model."
         except Exception as e:
             saved = f" (could not persist the choice: {e})"
         note = BASE_REPO_NOTES.get(name)
-        return (f"Base model: **{name}** -> {perf or 'auto'} (steps={st}, guidance={g}, "
-                f"full reload on next run: transformers, VAE and text encoder all change)."
+        what = ("transformer replaced, full reload on next run; tokenizer, text encoder "
+                f"and VAE from {cz_pipeline.BASE_REPO}"
+                if name in ZIMAGE_TRANSFORMER_SOURCES else
+                "full reload on next run: transformers, VAE and text encoder all change")
+        return (f"Model: **{name}** -> {perf or 'auto'} (steps={st}, guidance={g}, {what})."
                 f"{saved}"
                 + (f"\n\n{note}" if note else ""),
                 gr.update(value=st), gr.update(value=g), perf_upd,
@@ -3419,7 +3445,9 @@ def _xyz_apply(name, value, vals, ms):
     elif kind == "ms":
         ms[spec["key"]] = value
     elif kind == "checkpoint":
-        if value in ZIMAGE_BASE_REPOS:
+        if value in ZIMAGE_TRANSFORMER_SOURCES:
+            ms["base_repo"], ms["transformer"] = cz_pipeline.DEFAULT_BASE_REPO, value
+        elif value in ZIMAGE_BASE_REPOS:
             ms["base_repo"], ms["transformer"] = value, None
         else:
             ms["transformer"] = resolve_checkpoint(value)

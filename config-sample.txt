@@ -93,8 +93,12 @@
     "ideogram_base_repos": [
         "ideogram-ai/ideogram-4-nf4-diffusers"
     ],
-    "_model_profiles_help": "Auto steps/guidance when a model is selected, matched by substring on the name (FIRST match wins, in order). 'ideogram' covers the official repo and its mirrors.",
+    "_model_profiles_help": "Auto steps/guidance when a model is selected, matched by substring on the name (FIRST match wins, in order). 'ideogram-v4-instant' (fal's distilled Instant, 8 steps, no CFG) must stay BEFORE 'ideogram', which covers the official repo and its mirrors. These only preset the UI: the engine runs the recipe of the model's own profile.",
     "model_profiles": {
+        "ideogram-v4-instant": {
+            "steps": 8,
+            "guidance": 1.0
+        },
         "ideogram": {
             "steps": 48,
             "guidance": 7.0
@@ -278,7 +282,9 @@
     "ideogram_model": "ideogram-ai/ideogram-4-nf4-diffusers",
     "_ideogram_model_help": "Base repo (HF) or a local diffusers folder of Ideogram 4.0. Default ideogram-ai/ideogram-4-nf4-diffusers (nf4, ~16 GB on disk), GATED and NON-COMMERCIAL: accept the licence + set hf_token. Env IDEOGRAM_MODEL. Single-file transformers are not supported (diffusers has no converter for Ideogram 4); FLUX files are refused (they run in crispz-flux3 / crispz-klein).",
     "ideogram_transformer": "",
-    "_ideogram_transformer_help": "Reserved: single-file Ideogram 4 transformers are not supported yet. Leave empty. Env IDEOGRAM_TRANSFORMER.",
+    "_ideogram_transformer_help": "Empty = the base repo's two transformers. Or a transformer-only source in diffusers format: 'fal/ideogram-v4-instant' (fal's distilled Instant, bf16, 18.6 GB, gated with automatic approval: accept it on its page), or a local folder holding transformer/ (config.json + safetensors). Checked tensor by tensor before loading; tokenizer, text encoder and VAE stay the base repo's (pinned revision for the official one). Single .safetensors files are not supported yet. Env IDEOGRAM_TRANSFORMER.",
+    "ideogram_profile": "",
+    "_ideogram_profile_help": "The inference recipe: 'base' (48 steps, guidance schedule 7/3, two transformers) or 'instant' (8 steps, guidance 1, one transformer, mu 0 / std 1.75, fal's card). Empty = the documented profile of the transformer source (fal/ideogram-v4-instant is 'instant'), else 'base'. A local folder without a documented profile needs this key or a crispz_profile.json {\"profile\": \"instant\"} in the folder: the recipe is never guessed from a name. A contradiction (instant on the base weights) is refused. Env IDEOGRAM_PROFILE.",
     "ideogram_precision": "nf4",
     "_ideogram_precision_help": "Build of the official transformers. Only 'nf4' is published (2026-10-31); an fp8 build exists for ComfyUI only. Env IDEOGRAM_PRECISION."
 }

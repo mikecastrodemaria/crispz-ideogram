@@ -113,6 +113,289 @@ MAX_RATIO = 6.0
 
 _log_handler = logging.getLogger("crispz.ideogram")
 
+
+# --- Lot 8: architecture, weights format and inference profile, kept apart -------------
+# Three different questions, three different answers:
+#   - ARCHITECTURE: is this an Ideogram 4 transformer of the published size? Read from its
+#     config.json and checked tensor by tensor (names, shapes, dtypes) before loading;
+#   - WEIGHTS FORMAT: a diffusers `transformer/` folder in bf16 (fal's release). Quantized
+#     exports (ComfyUI int8-convrot, nvfp4) need their own runtime and are refused here;
+#   - INFERENCE PROFILE: steps, guidance, the unconditional branch, mu / std of the
+#     logit-normal schedule. Never guessed from a file name or a precision: it comes from
+#     the documented sources below, a `crispz_profile.json` next to a local folder, or an
+#     explicit setting (`ideogram_profile`, env IDEOGRAM_PROFILE).
+class Profile:
+    """An inference recipe. `guidance` None = the official per-step schedule (the slider
+    is its peak); a number = that constant scale, fixed (distilled checkpoints)."""
+
+    def __init__(self, key, label, steps, guidance, unconditional, mu, std, note=""):
+        self.key, self.label, self.steps = key, label, int(steps)
+        self.guidance, self.unconditional = guidance, bool(unconditional)
+        self.mu, self.std, self.note = float(mu), float(std), note
+
+    @property
+    def distilled(self):
+        return not self.unconditional
+
+    def as_meta(self):
+        return {"profile": self.key, "steps_advised": self.steps,
+                "guidance": "schedule" if self.guidance is None else self.guidance,
+                "unconditional_branch": self.unconditional, "mu": self.mu, "std": self.std}
+
+    def __repr__(self):
+        return f"Profile({self.key})"
+
+
+PROFILES = {
+    # Ideogram4Pipeline's own defaults: 48 steps, 7.0 x 45 + 3.0 x 3, mu 0, std 1.5.
+    "base": Profile("base", "Ideogram 4.0 (48 steps)", 48, None, True, 0.0, 1.5),
+    # fal's model card (fal/ideogram-v4-instant, read 2026-11-05): 8 steps, ONE
+    # conditional transformer, guidance_scale 1.0, guidance_schedule None, mu 0.0,
+    # std 1.75. fal says stock diffusers is not bit-exact with their runtime (terminal
+    # timestep and frequency-table corrections, not published).
+    "instant": Profile("instant", "Ideogram 4 Instant by fal (8 steps)", 8, 1.0, False,
+                       0.0, 1.75, note="distilled, no runtime CFG"),
+}
+DEFAULT_PROFILE = "base"
+
+# The published Ideogram 4 transformer (read from the nf4 repo's transformer/config.json,
+# public mirror cocktailpeanut/ideogram-4-nf4, 2026-11-05). A transformer source must
+# match it field by field: any other size is not this model.
+ARCH = {"_class_name": "Ideogram4Transformer2DModel", "in_channels": 128, "num_layers": 34,
+        "num_attention_heads": 18, "attention_head_dim": 256, "intermediate_size": 12288,
+        "adaln_dim": 512, "llm_features_dim": 53248, "mrope_section": [24, 20, 20],
+        "rope_theta": 5000000, "norm_eps": 1e-05}
+
+# Shared components (tokenizer, text encoder, VAE, scheduler) for a transformer-only
+# source, at the revision fal's card pins. Neither nf4 transformer is downloaded.
+COMPONENTS_REPO = DEFAULT_REPO
+COMPONENTS_REVISION = "1874bc70267ba2c823a7239e1d70dd308c8d64dc"
+
+# Documented transformer sources. `refuse` = known, not loadable here yet, with why.
+TRANSFORMER_SOURCES = {
+    "fal/ideogram-v4-instant": {"profile": "instant", "format": "diffusers", "dtype": "BF16",
+                                "size_gb": 18.6},
+    "fal/ideogram-v4-fast": {"refuse": (
+        "fal/ideogram-v4-fast is trained with quantization-aware distillation for an "
+        "NVFP4 runtime; fal states FP4 is required for its intended quality, and its "
+        "BF16 tensors are pre-pack weights, not a BF16 release. It needs its own step "
+        "(an FP4 runtime and quality tests), not a plain BF16 load.")},
+}
+PROFILE_SIDECAR = "crispz_profile.json"
+
+# A diffusers checkpoint dtype tag -> fine for a bf16 load. Anything else (F8_E4M3, I8,
+# U8, F4...) is a quantized export that needs its own runtime: refused before loading.
+_FLOAT_DTYPES = {"BF16", "F16", "F32"}
+
+
+class SourceError(ValueError):
+    """A transformer source that cannot be used, with the reason in the message."""
+
+
+def profile(key):
+    k = str(key or "").strip().lower()
+    if k not in PROFILES:
+        raise SourceError(f"unknown Ideogram profile '{key}' "
+                          f"(known: {', '.join(PROFILES)})")
+    return PROFILES[k]
+
+
+def is_transformer_source(src):
+    """True for a transformer-only source: a documented repo id, or a local folder holding
+    transformer/config.json and no model_index.json (a full pipeline is a base repo)."""
+    s = str(src or "").strip()
+    if not s:
+        return False
+    if s in TRANSFORMER_SOURCES:
+        return True
+    return (os.path.isfile(os.path.join(s, "transformer", "config.json"))
+            and not os.path.isfile(os.path.join(s, "model_index.json")))
+
+
+def resolve_profile(src, explicit=None):
+    """The profile for a transformer source (None = the base pipeline). Order: the
+    documented sources, then a crispz_profile.json in a local folder, then the explicit
+    setting. An explicit setting that contradicts a documented one is refused; a source
+    with no profile at all is refused (a recipe is never guessed)."""
+    import json
+    if not src:
+        p = profile(explicit or DEFAULT_PROFILE)
+        if p.distilled:
+            raise SourceError(f"profile '{p.key}' is a distilled recipe: it needs the "
+                              "matching distilled transformer, never the base weights "
+                              "(their unconditional branch would be dropped).")
+        return p
+    s = str(src).strip()
+    info = TRANSFORMER_SOURCES.get(s)
+    if info and info.get("refuse"):
+        raise SourceError(info["refuse"])
+    documented = info.get("profile") if info else None
+    side = os.path.join(s, PROFILE_SIDECAR)
+    if documented is None and os.path.isfile(side):
+        try:
+            with open(side, encoding="utf-8") as f:
+                documented = json.load(f).get("profile")
+        except Exception as e:
+            raise SourceError(f"{side}: unreadable ({e})")
+    if explicit and documented and str(explicit).lower() != documented:
+        raise SourceError(f"{s} is documented as the '{documented}' profile; "
+                          f"'{explicit}' was asked. Remove the setting or fix it.")
+    key = documented or explicit
+    if not key:
+        raise SourceError(
+            f"{s}: no inference profile. Name it: ideogram_profile = "
+            f"{' / '.join(PROFILES)} (config or env IDEOGRAM_PROFILE), or a "
+            f"{PROFILE_SIDECAR} {{\"profile\": \"...\"}} in the folder.")
+    p = profile(key)
+    if p.unconditional:
+        raise SourceError(f"{s}: profile '{p.key}' needs the unconditional transformer, "
+                          "which a transformer-only source does not carry.")
+    return p
+
+
+def check_architecture(cfg, expected=None):
+    """Raises SourceError naming every field of `cfg` (a transformer config dict) that
+    differs from the published architecture."""
+    exp = ARCH if expected is None else expected
+    bad = []
+    for k, v in exp.items():
+        got = cfg.get(k)
+        if isinstance(v, (list, tuple)):
+            same = isinstance(got, (list, tuple)) and list(got) == list(v)
+        elif isinstance(v, float):
+            same = isinstance(got, (int, float)) and abs(float(got) - v) <= 1e-12
+        else:
+            same = got == v
+        if not same:
+            bad.append(f"{k}={got!r} (expected {v!r})")
+    if bad:
+        raise SourceError("not the Ideogram 4 transformer: " + ", ".join(bad))
+
+
+def _expected_tensors(cfg):
+    """{name: shape} the model built from `cfg` holds, without allocating it."""
+    from diffusers import Ideogram4Transformer2DModel
+    keep = {k: v for k, v in cfg.items() if not k.startswith("_")
+            and k != "quantization_config"}
+    with torch.device("meta"):
+        model = Ideogram4Transformer2DModel.from_config(keep)
+    return {k: tuple(t.shape) for k, t in model.state_dict().items()}
+
+
+def _safetensors_header(path):
+    import json
+    import struct
+    with open(path, "rb") as f:
+        n = struct.unpack("<Q", f.read(8))[0]
+        return json.loads(f.read(n))
+
+
+def check_tensors(folder, cfg, want_dtype="BF16"):
+    """Strict pre-load check of a diffusers transformer folder: every tensor the model
+    needs is there once, with its shape, in a float dtype; nothing unknown is present.
+    Returns a summary dict; raises SourceError with the first problems listed."""
+    import glob
+    files = sorted(glob.glob(os.path.join(folder, "*.safetensors")))
+    if not files:
+        raise SourceError(f"{folder}: no .safetensors file")
+    seen, dtypes, dup = {}, {}, []
+    for fp in files:
+        for name, meta in _safetensors_header(fp).items():
+            if name == "__metadata__":
+                continue
+            if name in seen:
+                dup.append(name)
+            seen[name] = tuple(meta.get("shape") or ())
+            dtypes[meta.get("dtype")] = dtypes.get(meta.get("dtype"), 0) + 1
+    want = _expected_tensors(cfg)
+    missing = sorted(set(want) - set(seen))
+    unknown = sorted(set(seen) - set(want))
+    shapes = sorted(k for k in set(want) & set(seen) if want[k] != seen[k])
+    quant = sorted(d for d in dtypes if d not in _FLOAT_DTYPES)
+    probs = []
+    for label, items in (("missing", missing), ("unknown", unknown),
+                         ("duplicated", sorted(set(dup))),
+                         ("shape mismatch", [f"{k} {seen[k]} vs {want[k]}" for k in shapes])):
+        if items:
+            more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
+            probs.append(f"{len(items)} {label}: {', '.join(items[:3])}{more}")
+    if quant:
+        probs.append(f"quantized tensors ({', '.join(quant)}): a quantized export needs its "
+                     "own runtime, it is not loaded as bf16")
+    if probs:
+        raise SourceError(f"{folder}: " + "; ".join(probs))
+    odd = sorted(d for d in dtypes if d != want_dtype)
+    return {"tensors": len(seen), "files": len(files), "dtypes": dtypes,
+            "note": (f"dtypes {odd} besides {want_dtype}: cast to bf16 at load") if odd
+            else ""}
+
+
+def fetch_source(src, token=None):
+    """Local folder of a transformer source (its transformer/ downloaded once for a repo
+    id, nothing else). Returns the path of the folder holding transformer/."""
+    s = str(src)
+    if os.path.isdir(s):
+        return s
+    from huggingface_hub import snapshot_download
+    kw = {"allow_patterns": ["transformer/*", PROFILE_SIDECAR]}
+    if token:
+        kw["token"] = token
+    return snapshot_download(s, **kw)
+
+
+class ZeroUnconditionalTransformer(torch.nn.Module):
+    """The unconditional branch of a distilled (single-branch) checkpoint: no parameter,
+    returns zeros. With guidance 1.0 the pipeline's blend is 1.0 * cond + 0.0 * this, i.e.
+    exactly the conditional velocity (fal's own wiring for diffusers). Never a second
+    9B transformer in memory, and the call costs one zeros_like."""
+
+    def __init__(self, dtype=torch.bfloat16):
+        super().__init__()
+        self.register_buffer("_dtype_anchor", torch.empty(0, dtype=dtype), persistent=False)
+
+    @property
+    def dtype(self):
+        return self._dtype_anchor.dtype
+
+    @property
+    def device(self):
+        # DiffusionPipeline.device / _execution_device read `.device` of every module.
+        return self._dtype_anchor.device
+
+    def forward(self, *, hidden_states, **kwargs):
+        return (torch.zeros_like(hidden_states),)
+
+
+class LoadedSource:
+    """A transformer loaded from a source, with the profile it runs under."""
+
+    def __init__(self, transformer, profile, source, info):
+        self.transformer, self.profile, self.source, self.info = transformer, profile, source, info
+
+
+def load_source(src, dtype=torch.bfloat16, explicit_profile=None, token=None, expected=None):
+    """Loads a transformer-only source after the full check: profile first (no download
+    for a refused or unprofiled source), then architecture, then tensors, then the load."""
+    import json
+    prof = resolve_profile(src, explicit_profile)
+    root = fetch_source(src, token=token)
+    tdir = os.path.join(root, "transformer")
+    with open(os.path.join(tdir, "config.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+    check_architecture(cfg, expected)
+    if cfg.get("quantization_config"):
+        raise SourceError(f"{src}: the config declares a quantization "
+                          f"({cfg['quantization_config'].get('quant_method')}); this route "
+                          "loads bf16 transformers only")
+    info = check_tensors(tdir, cfg)
+    if info["note"]:
+        _log(f"{src}: {info['note']}")
+    from diffusers import Ideogram4Transformer2DModel
+    tr = Ideogram4Transformer2DModel.from_pretrained(tdir, torch_dtype=dtype)
+    _log(f"transformer {src}: {info['tensors']} tensors checked in {info['files']} file(s), "
+         f"profile '{prof.key}' ({prof.label})")
+    return LoadedSource(tr, prof, str(src), info)
+
 # --- Attention: no padding, no mask when there is nothing to mask ----------------------
 # Measured on the 5090 (2026-10-31, nf4, offload none): 1.7 s/step at 1024 and a VRAM
 # saturation at the first 2048 step. Two causes, both in how the raw pipeline is called:
@@ -386,11 +669,14 @@ class IdeogramPipe:
     enable_model_cpu_offload, maybe_free_model_hooks...)."""
 
     _OWN = {"_pipe", "repo", "variant", "_said", "_cfg", "_all_hooks", "_tr_pre",
-            "_te_on_gpu", "_offload_device", "_vl_processor", "released"}
+            "_te_on_gpu", "_offload_device", "_vl_processor", "released", "profile",
+            "source"}
 
-    def __init__(self, pipe, repo=DEFAULT_REPO):
+    def __init__(self, pipe, repo=DEFAULT_REPO, profile=None, source=None):
         object.__setattr__(self, "_pipe", pipe)
         object.__setattr__(self, "repo", repo)
+        object.__setattr__(self, "profile", profile or PROFILES[DEFAULT_PROFILE])
+        object.__setattr__(self, "source", source)
         object.__setattr__(self, "variant", "ideogram")
         object.__setattr__(self, "_said", set())
         object.__setattr__(self, "_cfg", {"is_distilled": False})
@@ -684,7 +970,8 @@ class IdeogramPipe:
         p = self._pipe
         dev = self._offload_device or p._execution_device
         s = 1.0 if strength is None else float(min(max(float(strength), 0.0), 1.0))
-        full = _logit_normal_sigmas(steps, _resolution_aware_mu(h, w, PIPE_MU), std=PIPE_STD)
+        prof = self.profile
+        full = _logit_normal_sigmas(steps, _resolution_aware_mu(h, w, prof.mu), std=prof.std)
         start = min(int(max(steps - steps * s, 0)), steps - 1)
         sigma0 = float(full[start])
         npp = int(kw.get("num_images_per_prompt") or 1)
@@ -693,7 +980,8 @@ class IdeogramPipe:
         noise = torch.randn(x0.shape, generator=g, dtype=torch.float32,
                             device=g.device if g is not None else "cpu").to(x0.device)
         kw["latents"] = (1.0 - sigma0) * x0 + sigma0 * noise
-        kw["guidance_schedule"] = list(sched[start:]) + list(sched[:start])
+        if sched is not None:
+            kw["guidance_schedule"] = list(sched[start:]) + list(sched[:start])
         sch = p.scheduler
         real_set = sch.set_timesteps
 
@@ -766,7 +1054,12 @@ class IdeogramPipe:
         if prompt_embeds is not None and prompt is None:
             raise ValueError("Ideogram 4: pass the prompt as text (embeddings depend on the "
                              "image grid and are rebuilt by the pipeline).")
-        steps = int(num_inference_steps or DEFAULTS["ideogram"]["steps"])
+        prof = self.profile
+        steps = int(num_inference_steps or prof.steps)
+        if prof.distilled and steps != prof.steps:
+            self._say_once(("steps", steps),
+                           f"{prof.label}: {steps} steps asked, the published recipe is "
+                           f"{prof.steps}; run as asked, outside the recipe")
         if emulated:
             # Output size = the asked one, else the image's own (on Ideogram's grid).
             width = width or init.size[0]
@@ -776,12 +1069,24 @@ class IdeogramPipe:
             self._say_once(("size", int(width), int(height)),
                            f"size {width}x{height} -> {w}x{h} (Ideogram 4: multiples of 16, "
                            f"{MIN_SIDE} to {MAX_SIDE} a side, ratio up to 6:1)")
-        sched = guidance_schedule(steps, guidance_scale)
         kw = {"prompt": prompt if prompt is not None else "", "width": w, "height": h,
-              "num_inference_steps": steps, "guidance_schedule": sched,
+              "num_inference_steps": steps, "mu": prof.mu, "std": prof.std,
               "num_images_per_prompt": int(num_images_per_prompt or 1),
               "generator": generator, "output_type": output_type,
               "prompt_upsampling": bool(prompt_upsampling)}
+        if prof.guidance is None:
+            sched = guidance_schedule(steps, guidance_scale)
+            kw["guidance_schedule"] = sched
+        else:
+            # A distilled checkpoint has no CFG: its scale is part of the recipe. Another
+            # value is refused here, never applied (with the zero unconditional branch,
+            # g * cond would just scale the velocity: a burnt, noisy image).
+            if guidance_scale is not None and abs(float(guidance_scale) - prof.guidance) > 1e-9:
+                raise ValueError(f"{prof.label} runs at guidance {prof.guidance:g} (no CFG, "
+                                 f"distilled); {float(guidance_scale):g} was asked")
+            sched = None
+            kw["guidance_scale"] = prof.guidance
+            kw["guidance_schedule"] = None
         if FAST_ATTENTION:
             if not prompt_upsampling:
                 # (prompt_upsampling reuses max_sequence_length as its max_new_tokens.)
@@ -818,19 +1123,43 @@ def load(repo=DEFAULT_REPO, dtype=torch.bfloat16, precision="nf4", transformer=N
     """A ready IdeogramPipe on the CPU (the caller places it). The nf4 repo carries its
     own quantization config; `precision` is accepted for symmetry with cz_flux3.
     `prompt_enhancer=True` also loads the head that turns the text encoder into the
-    local magic prompt (lot 2)."""
+    local magic prompt (lot 2).
+
+    `transformer` a LoadedSource (lot 8, a distilled single-branch checkpoint): the
+    shared components come from `repo` (pinned to COMPONENTS_REVISION when it is the
+    official repo), neither nf4 transformer is downloaded or loaded, and the
+    unconditional branch is ZeroUnconditionalTransformer."""
     from diffusers import Ideogram4Pipeline
     kw = {"torch_dtype": dtype}
     if token:
         kw["token"] = token
-    if transformer is not None:
+    prof, source = None, None
+    if isinstance(transformer, LoadedSource):
+        prof, source = transformer.profile, transformer.source
+        kw["transformer"] = transformer.transformer
+        kw["unconditional_transformer"] = None
+        if repo == COMPONENTS_REPO:
+            kw["revision"] = COMPONENTS_REVISION
+    elif transformer is not None:
         kw["transformer"] = transformer
     if prompt_enhancer:
         from diffusers import Ideogram4PromptEnhancerHead
         kw["prompt_enhancer_head"] = Ideogram4PromptEnhancerHead.from_pretrained(
             "diffusers/qwen3-vl-8b-instruct-lm-head", torch_dtype=dtype)
     pipe = Ideogram4Pipeline.from_pretrained(repo, **kw)
-    return IdeogramPipe(pipe, repo=repo)
+    if prof is not None:
+        pipe.register_modules(unconditional_transformer=ZeroUnconditionalTransformer(dtype))
+    return IdeogramPipe(pipe, repo=repo, profile=prof, source=source)
+
+
+def wrap_distilled(pipe, loaded):
+    """An Ideogram4Pipeline whose transformer is `loaded` (a LoadedSource) and whose
+    unconditional branch is the zero module; for tests and tools building from parts."""
+    pipe.register_modules(transformer=loaded.transformer,
+                          unconditional_transformer=ZeroUnconditionalTransformer(
+                              loaded.transformer.dtype))
+    return IdeogramPipe(pipe, repo=getattr(pipe, "name_or_path", "parts"),
+                        profile=loaded.profile, source=loaded.source)
 
 
 def load_transformer(repo, dtype, precision="nf4", single_file=None, token=None):

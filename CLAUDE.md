@@ -745,6 +745,55 @@ libre (`nvidia-smi`, 0 à 5 % d'utilisation) avant toute mesure.
   `APP_VERSION` passe à 1.0.0, l'entrée du CHANGELOG est renommée, tag `v1.0.0` posé sur
   `main`, release GitHub créée à la main par Mike à partir des notes fournies.
 
+### Lot 8a (05/11/2026) : Ideogram 4 Instant de fal, branche `lot8-instant`
+
+Ordre décidé par Mike : Instant officiel d'abord ; ensuite les fichiers ComfyUI BF16
+(validés contre fal), puis Fast avec un runtime FP4, puis le lot Layout (éditeur de
+mise en page, page autonome ouverte depuis un onglet, recomposition finale avec l'image
+d'origine, test dédié de la correction d'un calque texte).
+- **Fiche fal lue** (`fal/ideogram-v4-instant`, publique) : 8 steps, `guidance_scale`
+  1.0, `guidance_schedule` None, `mu` 0.0, `std` 1.75 ; composants du dépôt nf4 à la
+  révision `1874bc70267ba2c823a7239e1d70dd308c8d64dc`, aucun de ses transformers chargé ;
+  branche non conditionnelle remplacée par un module sans paramètre qui rend des zéros.
+  fal prévient : diffusers n'applique pas leurs corrections de « terminal timestep » et de
+  « frequency table » (non publiées), donc pas d'identité avec leur API. Fast : « FP4 is
+  required for intended quality », poids pré-empaquetage, pas une version BF16.
+- **Séparation** dans `cz_ideogram` : architecture (`ARCH`, lue sur le config du dépôt
+  nf4, vérifiée champ par champ), format des poids (dossier diffusers `transformer/`
+  bf16), profil d'inférence (`PROFILES` base / instant : steps, guidance, branche non
+  conditionnelle, mu, std). Le profil vient de `TRANSFORMER_SOURCES` (sources
+  documentées), d'un `crispz_profile.json` dans un dossier local, ou du réglage explicite
+  `ideogram_profile` (env `IDEOGRAM_PROFILE`, CLI `--ideogram-profile`) ; jamais d'un nom.
+  Contradiction (instant sur les poids de base, base sur une source distillée) refusée.
+- **Contrôle strict avant chargement** (`check_tensors`) : noms attendus (modèle construit
+  sur `meta` depuis le config), manquants, inconnus, doublons entre fichiers, formes,
+  dtypes quantifiés (F8, I8, U8...) refusés avec la raison. Une source refusée (Fast)
+  l'est avant tout téléchargement.
+- **Branche non conditionnelle** : `ZeroUnconditionalTransformer` ; test d'équivalence :
+  mêmes latents exacts (torch.equal) avec le vrai second transformer à guidance 1 et sans.
+- **Guidance** : le moteur refuse une valeur différente de la recette ; l'app n'applique
+  pas le curseur, le dit une fois, et les métadonnées portent la valeur appliquée
+  (`guidance` 1.0, `guidance_not_applied`, `ideogram_profile`, `components_revision`).
+- **img2img / inpaint émulés** : sigmas recalculés avec mu / std du profil (1,75), pas de
+  rotation de planning de guidance sans planning.
+- **App** : Instant dans le menu des modèles (note licence, 18,6 Go, 8 steps sans CFG),
+  sauvé comme modèle de démarrage, profil UI 8 / 1,0 (`model_profiles`, avant
+  `ideogram`), changement de source = rechargement complet (branche et profil changent),
+  VRAM estimée 22,6 Go (un seul transformer bf16), axe XYZ « Checkpoint » corrigé pour
+  une source (le dépôt de base reste).
+- **Refusé** : le checkpoint communautaire `Winnougan/Ideogram_Instant_NSFW` (fine-tune
+  « NSFW Adult Style ») n'est ni intégré ni testé ni documenté : la licence Ideogram
+  interdit de « circumvent, remove, alter, deactivate, degrade or thwart » les mesures de
+  sécurité, filtres de contenu compris. La voie générique des fichiers ComfyUI BF16 reste
+  prévue, validée sur `Hippotes/Ideogram4-Fal-ComfyUI` contre les tenseurs de fal.
+- **Code expérimental de Mike** (`cz_ideogram_instant.py`...) : sur son disque, pas sur
+  GitHub ; à pousser sur une branche à part pour revue avant l'étape ComfyUI.
+- Tests : `tests/test_ideogram_instant.py` (17) et `tests/test_ideogram_instant_wiring.py`
+  (10). Suite : 688 passent, 0 échec, 1 skip ; CI locale 70/70 ; smoke 22/22.
+- **À lancer chez Mike** : accepter la licence de `fal/ideogram-v4-instant`, puis
+  `tools\gpu_lot8_check.py` (carte libre) : chargement, première génération et suivantes,
+  3 légendes x 3 seeds en Instant puis en Base, planche contact `bench/lot8/sheet.jpg`.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

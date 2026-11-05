@@ -85,6 +85,27 @@ Windows, torch 2.11 cu128, bitsandbytes 0.50.2, nf4, offload `auto` (encoder onl
 | Vectorize a logo / a 768 px photo (CPU) | 0.05 s, 3 paths / 3 s, about 2,000 paths |
 | Remove BG (CPU, after the first call) | 1.1 s |
 
+## Ideogram 4 Instant (fal), experimental
+
+[`fal/ideogram-v4-instant`](https://huggingface.co/fal/ideogram-v4-instant) is a
+distilled Ideogram 4 released by fal: **8 steps, no CFG** (one transformer, guidance
+fixed at 1), same **non-commercial** licence. Pick it in the model menu (or
+`"ideogram_model": "fal/ideogram-v4-instant"`, or `--ideogram-transformer` on the CLI).
+
+- Only its transformer is downloaded (bf16, 18.6 GB); the tokenizer, the text encoder
+  and the VAE stay the base repo's, at the revision fal's card pins.
+- Accept its licence on its page first (gated, automatic approval), with the account of
+  your HF token.
+- The recipe comes from its documented profile, never from a file name: 8 steps,
+  guidance 1, mu 0 / std 1.75. The guidance slider is not applied (said in the log and
+  recorded as such in the image metadata).
+- Its weights are checked before loading: architecture, every tensor name and shape,
+  no duplicate, no quantized dtype.
+- fal states that stock diffusers is not bit-exact with their hosted runtime.
+- **Not measured on the GPU yet**: `tools/gpu_lot8_check.py` compares it with the base
+  model (3 captions x 3 seeds, load, first and later renders, VRAM).
+- `fal/ideogram-v4-fast` is refused for now: its weights target an FP4 runtime.
+
 ## Getting good text
 
 - **Use JSON captions.** Plain text works, but the model was trained on JSON: put every

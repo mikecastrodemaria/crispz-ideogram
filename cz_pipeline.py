@@ -125,7 +125,16 @@ def _cfg_first(*keys, env=()):
 
 _zmodel = _cfg_first(CFG_MODEL_KEY, env=("IDEOGRAM_MODEL",)) or DEFAULT_BASE_REPO
 ZIMAGE_TRANSFORMER = _cfg_first(CFG_TRANSFORMER_KEY, env=("IDEOGRAM_TRANSFORMER",))
-if _is_single_file(_zmodel):
+# Lot 8: the inference profile, explicit (engine.PROFILES). Empty = the documented one of
+# the transformer source, or 'base' without a source. Never derived from a file name.
+CFG_PROFILE_KEY = "ideogram_profile"
+IDEOGRAM_PROFILE = _cfg_first(CFG_PROFILE_KEY, env=("IDEOGRAM_PROFILE",)) or None
+if engine.is_transformer_source(_zmodel):
+    # A transformer-only source (fal/ideogram-v4-instant, a diffusers transformer folder)
+    # named as the model: it replaces the transformer, the components stay the base's.
+    ZIMAGE_TRANSFORMER = _zmodel
+    BASE_REPO = DEFAULT_BASE_REPO
+elif _is_single_file(_zmodel):
     ZIMAGE_TRANSFORMER = _zmodel
     BASE_REPO = DEFAULT_BASE_REPO
 else:
@@ -642,7 +651,18 @@ def _qwen_call(pipe, **kw):
         # Ideogram 4: the slider is the PEAK of the per-step schedule (7.0 = the official
         # 7.0 x 45 + 3.0 x 3 at 48 steps); the adapter keeps the schedule's shape for any
         # step count. Asymmetric CFG always runs (two transformers), whatever the value.
-        kw["guidance_scale"] = float(GUIDANCE)
+        # A distilled profile (lot 8) has no CFG: its scale is part of the recipe, the
+        # slider is not applied and that is said once per value.
+        prof = getattr(pipe, "profile", None)
+        if prof is not None and prof.guidance is not None:
+            want = float(GUIDANCE)
+            if abs(want - prof.guidance) > 1e-9 and (prof.key, want) not in _CFG_IGNORED_SAID:
+                _CFG_IGNORED_SAID.add((prof.key, want))
+                _log(f"guidance {want:g} not applied: {prof.label} runs at "
+                     f"{prof.guidance:g} (distilled, no CFG)")
+            kw["guidance_scale"] = prof.guidance
+        else:
+            kw["guidance_scale"] = float(GUIDANCE)
     if "guidance_scale" not in kw and isinstance(pipe, cz_flux3.Flux3Pipe):
         # FLUX.3: the distilled checkpoint is a FLOW MAP (each step also tells the
         # transformer which timestep it jumps to): there is no unconditional branch to
@@ -1041,7 +1061,7 @@ def set_zimage_model(repo_or_path):
     global BASE_REPO, ZIMAGE_TRANSFORMER
     if not repo_or_path:
         return
-    if _is_single_file(repo_or_path):
+    if _is_single_file(repo_or_path) or engine.is_transformer_source(repo_or_path):
         # A transformer-only change: NO free_vram -> _ensure_base will swap the
         # transformer alone (VAE + text encoder kept in VRAM).
         if repo_or_path != ZIMAGE_TRANSFORMER:
@@ -3674,6 +3694,10 @@ def _base_vram_need_gb(base=None):
     t = ZIMAGE_TRANSFORMER
     if not t:
         return _FLUX3_REST_GB + _FLUX3_TRANSFORMER_GB.get(PRECISION, 9.7)
+    if engine.is_transformer_source(t):
+        # ONE bf16 transformer (no second branch): fal's 18.6 GB of files = 17.3 GiB.
+        info = engine.TRANSFORMER_SOURCES.get(str(t)) or {}
+        return _FLUX3_REST_GB + float(info.get("size_gb") or 18.6) * 1e9 / 1024 ** 3
     if _is_gguf_path(t) or engine._bfl_quant_of(t):
         try:
             return _FLUX3_REST_GB + os.path.getsize(t) / 1024 ** 3
@@ -3871,9 +3895,24 @@ def _load_transformer(path=None, base=None):
     # crispz-ideogram: the base repo's conditional transformer, or a named refusal for a
     # single file (no diffusers converter for Ideogram 4). The FLUX.3 path below stays for
     # merges from crispz-flux3 and is not reached.
+    if path and engine.is_transformer_source(path):
+        try:
+            return _load_monitor(f"transformer {path} (bf16, checked)",
+                                 lambda: engine.load_source(path, dtype=DTYPE,
+                                                            explicit_profile=IDEOGRAM_PROFILE,
+                                                            token=_hf_token()))
+        except engine.SourceError:
+            raise
+        except Exception as e:
+            hint = _hf_access_hint(path, e)
+            if hint:
+                raise RuntimeError(hint) from e
+            raise
     if path and _is_single_file(path):
         raise RuntimeError(f"{os.path.basename(path)}: "
                            f"{_flux3_file_refusal(path) or 'not loadable here'}")
+    if IDEOGRAM_PROFILE:
+        engine.resolve_profile(None, IDEOGRAM_PROFILE)   # 'instant' on the base weights: refused
     return _load_monitor(f"transformer {base} ({PRECISION})",
                          lambda: engine.load_transformer(base, DTYPE, precision=PRECISION,
                                                          token=_hf_token()))
@@ -4513,8 +4552,13 @@ def _ensure_base():
     elif _BASE_PIPE is not None:
         # Only the transformer changes (same base repo + same offload)? -> reload the
         # transformer ONLY and keep VAE + text encoder in VRAM.
-        if (_LOADED_KEY and _LOADED_KEY[0] == BASE_REPO and _LOADED_KEY[2] == OFFLOAD_MODE
-                and _swap_transformer(_BASE_PIPE)):
+        crosses = any(engine.is_transformer_source(t) for t in
+                      ((_LOADED_KEY or (None, None))[1], ZIMAGE_TRANSFORMER))
+        if crosses:
+            _log("model change involves a distilled transformer source: the "
+                 "unconditional branch and the inference profile change too -> full reload")
+        if (not crosses and _LOADED_KEY and _LOADED_KEY[0] == BASE_REPO
+                and _LOADED_KEY[2] == OFFLOAD_MODE and _swap_transformer(_BASE_PIPE)):
             _LOADED_KEY = key
             return _BASE_PIPE
         _dbg("base pipeline: key changed -> free + reload")
@@ -4523,6 +4567,8 @@ def _ensure_base():
     tr = None
     if ZIMAGE_TRANSFORMER:
         tr = _load_transformer()
+    elif IDEOGRAM_PROFILE:
+        engine.resolve_profile(None, IDEOGRAM_PROFILE)   # refused before any download
     # A replacement text encoder is not supported: Ideogram 4 reads 13 hidden states of
     # its Qwen3-VL-8B. The setting is kept (prefs stay valid) but not applied, and said.
     _TEXT_ENCODER_ACTIVE = ""
@@ -4606,9 +4652,10 @@ def _ensure_base():
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
     _LOADED_KEY = key
-    _log(f"{engine.MODEL_LABEL} ready in {time.time() - t0:.1f}s "
-         f"({engine.DEFAULTS[_variant]['steps']} steps and "
-         f"{engine.DEFAULTS[_variant]['size']} px advised)")
+    _prof = getattr(pipe, "profile", None) or engine.PROFILES[engine.DEFAULT_PROFILE]
+    _log(f"{engine.MODEL_LABEL} ready in {time.time() - t0:.1f}s: profile "
+         f"'{_prof.key}' ({_prof.label}), {_prof.steps} steps and "
+         f"{engine.DEFAULTS[_variant]['size']} px advised")
     return pipe
 
 
@@ -5546,6 +5593,18 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
     # Without it, the image is not reproducible.
     if ZIMAGE_TRANSFORMER:
         m["base_repo"] = BASE_REPO
+    # Lot 8: the recipe that REALLY ran. A distilled profile runs at its own guidance,
+    # whatever the slider said: the metadata carries the applied value, not the asked one.
+    prof = getattr(_BASE_PIPE, "profile", None)
+    if prof is not None:
+        m["ideogram_profile"] = prof.as_meta()
+        if engine.is_transformer_source(ZIMAGE_TRANSFORMER):
+            m["components_revision"] = (engine.COMPONENTS_REVISION
+                                        if BASE_REPO == engine.COMPONENTS_REPO else None)
+        if prof.guidance is not None and guidance is not None:
+            m["guidance"] = float(prof.guidance)
+            if abs(float(guidance) - prof.guidance) > 1e-9:
+                m["guidance_not_applied"] = float(guidance)
     # A replacement encoder: the one that REALLY ran, by its folder name. Requested
     # but dropped at load time = the image comes from the base repo's encoder, and the one
     # that did not serve is named separately.

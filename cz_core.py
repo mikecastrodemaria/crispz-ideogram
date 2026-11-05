@@ -115,6 +115,10 @@ DEFAULT_OUTPUT_FORMAT = CONFIG.get("default_output_format", DEFAULT_OUTPUT_FORMA
 # official settings of Ideogram4Pipeline). The FLUX.3 entries stay for the family files
 # a shared models folder may hold; they never apply to the Ideogram base repo.
 MODEL_PROFILES = CONFIG.get("model_profiles") or {
+    # fal's distilled Instant (lot 8): 8 steps, no CFG. Before 'ideogram', which its
+    # name also contains (first match wins). The engine applies the recipe from the
+    # source's documented profile; this entry only sets the UI's steps / guidance.
+    "ideogram-v4-instant": {"steps": 8, "guidance": 1.0},
     "ideogram": {"steps": 48, "guidance": 7.0},
     "flux-3-image-klein-base": {"steps": 50, "guidance": 3.5},
     "flux-3-image-klein": {"steps": 16, "guidance": 1.0},

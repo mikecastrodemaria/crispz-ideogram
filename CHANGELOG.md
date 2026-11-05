@@ -5,6 +5,20 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased (lot8-instant)
+
+- **Ideogram 4 Instant by fal** (`fal/ideogram-v4-instant`, distilled, 8 steps, no CFG),
+  as a transformer-only source: components from the base repo at a pinned revision, the
+  unconditional branch replaced by a zero module (exactly the same latents at guidance 1,
+  tested), the recipe carried by an explicit profile (`ideogram_profile`, base / instant)
+  and never guessed from a name. Strict check before loading (architecture, tensor names,
+  shapes, duplicates, quantized dtypes). A guidance other than the recipe's is refused by
+  the engine; in the app the slider is not applied, said, and the metadata records the
+  applied value. The emulated img2img / inpaint follow the profile's schedule (std 1.75).
+  Offered in the model menu; `--ideogram-profile` on the CLI. `fal/ideogram-v4-fast`
+  refused with its reason (FP4 runtime needed). GPU measures pending
+  (`tools/gpu_lot8_check.py`).
+
 ## 1.0.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
 
 The details, measurements and decisions of every lot are in CLAUDE.md section 8.

@@ -188,10 +188,13 @@ _LIVE_PREVIEW_POLL = 0.25
 # FLUX.3: the distilled checkpoint is a 16-step flow map (BFL's recipe, no CFG); 8 steps is
 # a draft mode to be measured on the 5090; the undistilled -base checkpoint wants 50 steps
 # and a real CFG of 3.5 (model card). The same three live in config-sample.txt.
+# crispz-ideogram: the official 48 steps (guidance schedule peaking at 7.0) and a draft;
+# the same two live in config-sample.txt. (The FLUX.3 list that stood here until
+# 2026-11-07 was masked by the sample's and only showed up when a config.txt named no
+# presets at all.)
 PERFORMANCE = {
-    "Distilled (16 steps)": (16, 1.0),
-    "Fast (8 steps)":       (8, 1.0),
-    "Base (50 steps, CFG 3.5)": (50, 3.5),
+    "Ideogram (48 steps)": (48, 7.0),
+    "Draft (24 steps)": (24, 7.0),
 }
 # Styles. Fooocus format: name -> {"prompt": a template with {prompt} (or None),
 # "negative_prompt": str}. The real library is loaded from styles/*.json (see _load_styles
@@ -300,13 +303,45 @@ import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 # [steps, guidance] or [steps, guidance, lora_filename] to tie a LoRA to the preset, e.g.
 # Lightning 8-step).
 PERFORMANCE_LORA = {}
-if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_presets"]:
+_BUILT_IN_PERFORMANCE = dict(PERFORMANCE)
+_BUILT_IN_PERFORMANCE_LORA = dict(PERFORMANCE_LORA)
+
+
+def _performance_from_config(cfg):
+    """(PERFORMANCE, PERFORMANCE_LORA, note) from a config's `performance_presets`.
+    The config's entries come first and win on a name; the app's own presets the config
+    does not name are APPENDED (a config.txt copied from an older sample used to hide
+    every preset added since: seen on crispz-moss, 2026-11-07, ported here).
+    `performance_presets_merge: false` keeps the config's list alone. note says what was
+    appended, or None."""
+    raw = cfg.get("performance_presets")
+    if not (isinstance(raw, dict) and raw):
+        return dict(_BUILT_IN_PERFORMANCE), dict(_BUILT_IN_PERFORMANCE_LORA), None
     try:
-        PERFORMANCE = {k: (int(v[0]), float(v[1])) for k, v in CONFIG["performance_presets"].items()}
-        PERFORMANCE_LORA = {k: str(v[2]) for k, v in CONFIG["performance_presets"].items()
-                            if isinstance(v, (list, tuple)) and len(v) > 2 and v[2]}
-    except Exception:
-        pass
+        perf = {k: (int(v[0]), float(v[1])) for k, v in raw.items()}
+        lora = {k: str(v[2]) for k, v in raw.items()
+                if isinstance(v, (list, tuple)) and len(v) > 2 and v[2]}
+    except Exception as e:
+        return (dict(_BUILT_IN_PERFORMANCE), dict(_BUILT_IN_PERFORMANCE_LORA),
+                f"performance_presets in config.txt unreadable ({e}): the app's own presets are used")
+    if cfg.get("performance_presets_merge", True) is False:
+        return perf, lora, None
+    added = [k for k in _BUILT_IN_PERFORMANCE if k not in perf]
+    for k in added:
+        perf[k] = _BUILT_IN_PERFORMANCE[k]
+        if k in _BUILT_IN_PERFORMANCE_LORA:
+            lora[k] = _BUILT_IN_PERFORMANCE_LORA[k]
+    note = None
+    if added:
+        note = ("performance_presets in config.txt names " + str(len(raw)) + " preset(s); the app's "
+                + ", ".join(f"'{k}'" for k in added) + " added after them (performance_presets_merge: "
+                "false in config.txt keeps only yours)")
+    return perf, lora, note
+
+
+PERFORMANCE, PERFORMANCE_LORA, _perf_note = _performance_from_config(CONFIG)
+if _perf_note:
+    _log(_perf_note)
 
 # MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
 

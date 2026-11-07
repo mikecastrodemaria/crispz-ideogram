@@ -788,6 +788,24 @@ Les 44 échecs FLUX.3 traités un par un, aucun désactivé, aucun xfail :
   la famille (commentaires, CHANGELOG, README_CLI...), à retirer au lot 6 ;
   `third_party/ideogram4` est repris tel quel et n'est pas touché.
 
+### Presets et config.txt (07/11/2026, porté depuis crispz-moss, sur `main` à la demande de Mike)
+
+Sur crispz-moss, le `config.txt` de Mike avait copié `performance_presets` au lot 1 et
+cette clé remplaçait la liste entière de l'app : les presets ajoutés depuis (Draft 12,
+DMD, Turbo) n'apparaissaient jamais. Le même bloc vit ici (et dans crispz-flux3 et
+crispz-klein, non touchés : à porter quand ils seront ouverts).
+- `cz_ui._performance_from_config` : les entrées de la config en tête (elles gagnent
+  sur un nom), les presets de l'app qu'elle ne nomme pas ajoutés à la suite avec leur
+  LoRA, dit dans le log au démarrage ; `performance_presets_merge: false` garde la liste
+  de la config seule ; une liste illisible retombe sur celle de l'app, dit.
+- Au passage : la liste intégrée de `cz_ui.PERFORMANCE` était encore celle de FLUX.3
+  (Distilled 16 / Fast 8 / Base 50), masquée par `config-sample.txt` ; elle devient
+  celle d'Ideogram (48 / 7,0 et Draft 24 / 7,0), avec un test d'égalité au sample
+  (`test_the_ui_presets_mirror_the_sample` rendu strict). Le `config.txt` de Mike porte
+  déjà la liste Ideogram : rien à changer chez lui.
+- Tests : `test_a_config_preset_list_keeps_the_apps_newer_presets` ; config-sample
+  (`performance_presets_merge` + aide) ; CHANGELOG « Unreleased ».
+
 ## 9. Sources
 
 - diffusers 0.42.1 : `pipelines/ideogram4/pipeline_ideogram4.py`, `prompt_enhancer.py`

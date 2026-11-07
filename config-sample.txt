@@ -63,6 +63,8 @@
     "caption_model": "blip-large",
     "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
     "_performance_presets_help": "name -> [steps, guidance] or [steps, guidance, lora_file]. Ideogram 4.0: 48 steps and a guidance schedule peaking at 7.0 (the official 7.0 x 45 + 3.0 x 3); the slider sets the PEAK, the schedule keeps its shape at any step count. Draft (24 steps) is a quick look, to be measured on the 5090.",
+    "_performance_presets_merge_help": "true (default): the app's own presets missing from your performance_presets are added after yours, so a config.txt copied from an older sample keeps showing the presets added since (said in the log). false: your list is the whole list.",
+    "performance_presets_merge": true,
     "performance_presets": {
         "Ideogram (48 steps)": [
             48,

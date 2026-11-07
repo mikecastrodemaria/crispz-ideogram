@@ -5,6 +5,16 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased
+
+- **Performance presets and config.txt** (2026-11-07, ported from crispz-moss): a
+  `performance_presets` list copied into config.txt used to replace the app's list
+  entirely, hiding every preset added since. Now the config's entries come first (they
+  win on a name) and the app's missing presets are appended, said in the log at start;
+  `performance_presets_merge: false` keeps the config's list alone. The built-in list in
+  `cz_ui.py` was still the FLUX.3 one (Distilled / Fast / Base), masked by the sample:
+  it is now the Ideogram one (48 steps, Draft 24), with a test that it mirrors the sample.
+
 ## 1.0.0 (2026-11-03, crispz-ideogram) : crispz-flux3 ported to Ideogram 4.0
 
 The details, measurements and decisions of every lot are in CLAUDE.md section 8.

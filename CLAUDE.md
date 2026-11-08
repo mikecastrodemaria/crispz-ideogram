@@ -847,6 +847,21 @@ Lecture sur la planche contact (`bench/lot8/sheet.jpg`) :
   le pic (débruitage). Si le débruitage seul dépasse ~30 Go, la piste suivante est le
   transformer Instant en nf4 au chargement (qualité à mesurer).
 
+### Instant à 2048 remesuré avec le garage (08/11/2026, Mike) : réglé
+
+`--size 2048 --skip-base --seeds 11`, 3 légendes, carte libre :
+
+| | avant le garage | avec le garage |
+|---|---|---|
+| premier rendu | 64,9 s puis débordement | 47,0 s (5,9 s/step, noyaux à froid) |
+| rendus suivants | 8,2 s/step (mémoire partagée) | **39,2 s (4,9 s/step), stables** |
+| pic réservé | 32,37 Go sur 31,84 | **26,6 Go** (marge 5,2 Go) |
+
+Contre Base à 2048 (394 s, lot 1) : x 10. Le coût du garage (un aller-retour du
+transformer par image) est inclus dans les 39 s. Images à 2048 à juger par Mike (texte
+dense au double de la taille de distillation). Prochaine étape dans l'ordre de Mike : les
+fichiers ComfyUI BF16, validés contre les tenseurs de fal.
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

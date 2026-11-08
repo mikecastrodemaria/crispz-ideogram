@@ -102,8 +102,10 @@ fixed at 1), same **non-commercial** licence. Pick it in the model menu (or
 - Its weights are checked before loading: architecture, every tensor name and shape,
   no duplicate, no quantized dtype.
 - fal states that stock diffusers is not bit-exact with their hosted runtime.
-- **Not measured on the GPU yet**: `tools/gpu_lot8_check.py` compares it with the base
-  model (3 captions x 3 seeds, load, first and later renders, VRAM).
+- Measured on the RTX 5090: 1024 in **6.8 s** (base model 63 s), 25.2 GB peak; 2048 in
+  **39 s** (base model 394 s), 26.6 GB peak, the transformer waiting in RAM while the text
+  encoder runs above 1.5 Mpx. Texts as exact as the base model on our test captions;
+  less variety from one seed to the next.
 - `fal/ideogram-v4-fast` is refused for now: its weights target an FP4 runtime.
 
 ## Getting good text

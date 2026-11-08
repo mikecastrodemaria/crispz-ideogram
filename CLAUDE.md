@@ -862,6 +862,44 @@ transformer par image) est inclus dans les 39 s. Images à 2048 à juger par Mik
 dense au double de la taille de distillation). Prochaine étape dans l'ordre de Mike : les
 fichiers ComfyUI BF16, validés contre les tenseurs de fal.
 
+### Lot 8b (08/11/2026) : fichiers ComfyUI BF16, branche `lot8b-comfyui` (depuis `lot8-instant`)
+
+- **En-tête de `Hippotes/Ideogram4-Fal-ComfyUI` `Ideogram4-instant_bf16` lu** (requêtes
+  HTTP Range, rien téléchargé) : 458 tenseurs BF16, noms diffusers SAUF
+  `layers.N.attention.qkv.weight` [13824, 4608] (fusionné) et `layers.N.attention.o.weight`
+  (= `to_out.0`) ; métadonnées `modelspec.architecture: ideogram-4`, 1024x1024.
+- **Ordre du qkv tranché par le code de référence** (ideogram-oss/ideogram4,
+  `modeling_ideogram4.py`) : `qkv.view(B, L, 3, heads, head_dim)`, donc [Wq; Wk; Wv] en
+  blocs, `chunk(3, dim=0)`.
+- `cz_ideogram` : `single_file_plan` (en-tête seul : préfixes `model.diffusion_model.`,
+  `diffusion_model.`, `transformer.` retirés, qkv scindé, o renommé, manquants, inconnus,
+  doublons, formes, dtypes quantifiés et blobs `comfy_quant` / `weight_scale` refusés
+  avec la raison) ; sur l'en-tête réel de Hippotes : 458 tenseurs, 526 destinations,
+  34 qkv, couverture complète. `resolve_file_profile` (`<fichier>.crispz.json` ou
+  `ideogram_profile`, jamais le nom ; base refusé). `load_single_file` (profil d'abord,
+  puis en-tête, puis lecture ; paramètres sur meta, tampons réels ; aucun tenseur laissé
+  vide, sinon refus nommé). `compare_single_file` (un tenseur à la fois contre un dossier
+  diffusers).
+- **Bug trouvé en route** : construit sur `meta`, le tampon `rotary_emb.inv_freq` (non
+  persistant, absent de tout fichier) restait vide et la passe divergeait de 1e-4 ;
+  corrigé (`init_empty_weights(include_buffers=False)`) et vérifié par le test.
+- `cz_pipeline` : fichier Ideogram listé et chargé (refus GGUF nommé), sélection refusée
+  sans profil (`single_file_profile_refusal`), rechargement complet en entrant ou sortant
+  d'un transformer distillé (`_is_distilled_transformer`), VRAM = taille du fichier,
+  métadonnées avec la révision des composants. `cz_ui` : steps et guidance pris du
+  profil du fichier.
+- Tests : `tests/test_ideogram_single_file.py` (13 : poids identiques au bit, tampons,
+  passe identique, ordre qkv, préfixes, refus quantifiés, manquants / inconnus / doublons,
+  profil, aucune lecture avant les contrôles, app, UI, comparaison et qkv inversé
+  détecté). Quatre anciens tests attendaient le refus global des fichiers uniques :
+  mis à jour (même intention, le refus nommé du nouveau contrôle). Suite : 703 passent,
+  0 échec, 1 skip ; CI locale 71/71 ; smoke 22/22.
+- `tools/check_comfy_vs_fal.py` : comparaison bit à bit avec `fal/ideogram-v4-instant`
+  (télécharge le fichier Hippotes, 18,6 Go, une fois), `--render` : même légende, même
+  seed, fal puis le fichier, écart en pixels (0 attendu si les poids sont identiques).
+  Répété à blanc sur CPU. **À lancer chez Mike.**
+- Le checkpoint communautaire NSFW reste hors périmètre (licence, lot 8a).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

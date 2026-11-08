@@ -83,7 +83,8 @@ def test_refusal_names_the_reason_and_the_studio_that_runs_the_file():
 
     def check(_saved):
         why = P.checkpoint_refusal("ideo.safetensors")
-        assert why and "single-file Ideogram 4" in why, why
+        # lot 8b: Ideogram single files load when complete; this stub is not, and says why
+        assert why and "not an Ideogram 4 transformer of the published size" in why, why
         why = P.checkpoint_refusal("flux3.safetensors")
         assert why and "FLUX.3" in why and "crispz-flux3" in why, why
         why = P.checkpoint_refusal("klein2.safetensors")
@@ -107,7 +108,7 @@ def test_apply_checkpoint_refuses_a_single_file():
 
     def check(_saved):
         for name, needle in (("flux3.safetensors", "crispz-flux3"),
-                             ("ideo.safetensors", "single-file Ideogram 4")):
+                             ("ideo.safetensors", "of the published size")):
             msg = U._apply_checkpoint(name)[0]
             assert not P.ZIMAGE_TRANSFORMER, f"{name} was applied"
             assert P.BASE_REPO == U.FLUX3_DISTILLED

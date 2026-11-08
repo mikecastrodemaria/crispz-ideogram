@@ -284,8 +284,8 @@ def test_gguf_qwen_diffusers_layout_is_not_mistaken_for_flux2():
 
 def test_list_checkpoints_reads_a_mislabelled_gguf_by_its_tensors():
     """End to end: a mislabelled Ideogram GGUF is recognised by its TENSORS (not its 'wan'
-    label) and then skipped for the right reason: single-file Ideogram 4 transformers
-    have no diffusers converter yet. The Qwen-Image and sd.cpp ones are skipped as other
+    label) and then skipped for the right reason: there is no GGUF runtime for Ideogram 4
+    here (lot 8b loads BF16 .safetensors single files only). The Qwen-Image and sd.cpp ones are skipped as other
     families. Nothing is listed, and every skip is logged with its reason."""
     import tempfile
     d = tempfile.mkdtemp(prefix="cz_ckpt_")
@@ -309,7 +309,7 @@ def test_list_checkpoints_reads_a_mislabelled_gguf_by_its_tensors():
         cz_pipeline._log = old_log
     assert got == [], got
     said = {m.rsplit(": ", 1)[-1]: m for m in logs if "checkpoint skipped" in m}
-    assert "single-file Ideogram 4" in said["hyphoria_like.gguf"]
+    assert "an Ideogram 4 GGUF" in said["hyphoria_like.gguf"]
     assert "no Ideogram 4 transformer tensor" in said["qwen_like.gguf"]
 
 

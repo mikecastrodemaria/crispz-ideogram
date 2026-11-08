@@ -295,7 +295,9 @@ def test_extra_checkpoint_folder_and_subfolders_are_scanned(tmp_path, monkeypatc
     listed = P.list_checkpoints()
     assert listed == []
     said = [m for m in logs if "ideogram4_fp8Scaled.safetensors" in m]
-    assert said and "single-file Ideogram 4" in said[0], logs
+    # found in the sub-folder, read, and skipped for ITS reason (lot 8b: a 2-tensor stub
+    # is not the published transformer), never silently
+    assert said and "not an Ideogram 4 transformer of the published size" in said[0], logs
     assert P.resolve_checkpoint("ideogram4_fp8Scaled.safetensors").endswith(
         os.path.join("ideogram", "comfy", "ideogram4_fp8Scaled.safetensors"))
 

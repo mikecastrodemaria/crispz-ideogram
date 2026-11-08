@@ -5,6 +5,21 @@ are crispz-flux3's history, and below its 0.1.0 crispz-klein's, kept as is.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased (lot8b-comfyui)
+
+- **Single-file Ideogram 4 transformers** in the original / ComfyUI layout (BF16): an
+  exporter prefix removed, the fused `attention.qkv` split in [q; k; v] blocks (the
+  reference code's `view(B, L, 3, heads, head_dim)`), `attention.o` renamed, and a
+  strict header check (names, shapes, duplicates, quantized dtypes or blobs) before any
+  weight is read. The profile comes from `<file>.crispz.json` or `ideogram_profile`,
+  never from the name; a base profile is refused (one file, one transformer). Listed,
+  selectable and loadable in the app; the UI takes its steps from the profile.
+  `tools/check_comfy_vs_fal.py` compares a file with fal's release tensor by tensor and
+  renders both. Fixed on the way: the rotary `inv_freq` buffer (in no checkpoint) is
+  computed at load, never left on `meta`.
+- The Instant transformer waits in RAM while the text encoder runs above 1.5 Mpx
+  (2048: 32.4 GB peak and a spill before, 26.6 GB and 39 s after).
+
 ## Unreleased (lot8-instant)
 
 - **Ideogram 4 Instant by fal** (`fal/ideogram-v4-instant`, distilled, 8 steps, no CFG),

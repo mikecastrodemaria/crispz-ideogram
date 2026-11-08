@@ -746,6 +746,14 @@ def _profile_for_checkpoint(path):
     white ("undistilled - use with Turbo Lora") and we have it on the disk already, in the
     sidecar downloaded with the preview. So it is read.
 """
+    # Lot 8b: an Ideogram 4 single file runs the recipe of its profile (its
+    # <file>.crispz.json or ideogram_profile), never what its name or CivitAI suggest.
+    try:
+        prof = cz_ideogram.resolve_file_profile(path, cz_pipeline.IDEOGRAM_PROFILE)
+        return (prof.steps, float(prof.guidance if prof.guidance is not None else 7.0),
+                f" Profile '{prof.key}' ({prof.label}): its own recipe, guidance fixed.")
+    except Exception:
+        pass
     base = os.path.basename(path)
     try:
         import cz_civitai

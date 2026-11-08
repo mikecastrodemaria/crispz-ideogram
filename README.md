@@ -107,6 +107,14 @@ fixed at 1), same **non-commercial** licence. Pick it in the model menu (or
   encoder runs above 1.5 Mpx. Texts as exact as the base model on our test captions;
   less variety from one seed to the next.
 - `fal/ideogram-v4-fast` is refused for now: its weights target an FP4 runtime.
+- **Single files in the original / ComfyUI layout** (BF16 `.safetensors`, for example
+  `Hippotes/Ideogram4-Fal-ComfyUI`'s `Ideogram4-instant_bf16`) load from the checkpoints
+  folder: the fused `qkv` is split, every tensor is checked against the published
+  architecture before anything is read. A file says nothing reliable about how it was
+  distilled, so it needs a profile: `"ideogram_profile": "instant"` or a
+  `<file>.crispz.json` containing `{"profile": "instant"}` next to it. Quantized
+  exports (int8 ConvRot, nvfp4) and GGUF are refused with the reason.
+  `tools/check_comfy_vs_fal.py` compares such a file with fal's release bit for bit.
 
 ## Getting good text
 

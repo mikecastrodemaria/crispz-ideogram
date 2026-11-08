@@ -157,6 +157,17 @@ if PRECISION not in engine.PRECISIONS:
     PRECISION = engine.PRECISIONS[0]
 
 
+def _is_distilled_transformer(t):
+    """A transformer that replaces the pipeline's two (lot 8): a transformer-only repo or
+    folder, or an Ideogram 4 single file. Changing to or from one reloads everything (the
+    unconditional branch and the profile change too)."""
+    if not t:
+        return False
+    if engine.is_transformer_source(t):
+        return True
+    return bool(_is_single_file(t)) and not _is_gguf_path(t)
+
+
 def _hf_token():
     """The HF token for the gated Ideogram 4 repo: env HF_TOKEN, else config `hf_token`."""
     return (os.environ.get("HF_TOKEN") or CONFIG.get("hf_token") or _prefs.get("hf_token")
@@ -2478,10 +2489,17 @@ def _flux3_file_refusal(path):
     if fam != engine.FAMILY:
         return ("no Ideogram 4 transformer tensor in it (a VAE, a text encoder, or "
                 "another model family); crispz-ideogram only runs Ideogram 4.0")
-    # An Ideogram 4 transformer in ONE file: diffusers 0.42.1 has no single-file
-    # converter for it. Said in the listing rather than at load time.
-    return ("single-file Ideogram 4 transformers are not supported yet (diffusers has no "
-            "converter for them); use a diffusers folder as the base model")
+    # An Ideogram 4 transformer in ONE file (lot 8b): the original / ComfyUI layout is
+    # converted by cz_ideogram. The header decides (names, shapes, no quantized export);
+    # the profile is checked at selection and at load (single_file_profile_refusal).
+    if _is_gguf_path(path):
+        return ("an Ideogram 4 GGUF: no GGUF runtime for Ideogram 4 here; take the BF16 "
+                ".safetensors of the same page")
+    try:
+        engine.single_file_plan(path)
+    except engine.SourceError as e:
+        return str(e)
+    return None
     if not _is_gguf_path(path):
         # A comfy-quant format with no dequant here (w6a8_int8 = 6-bit weights with group
         # scales, the "INT6" builds of CivitAI's FLUX.3 pages): said in the listing, with
@@ -2537,6 +2555,16 @@ def list_checkpoints():
     return sorted(out)
 
 
+def single_file_profile_refusal(path):
+    """A reason when an Ideogram 4 single file has no usable inference profile (no
+    <file>.crispz.json and no ideogram_profile), else None."""
+    try:
+        engine.resolve_file_profile(path, IDEOGRAM_PROFILE)
+    except engine.SourceError as e:
+        return str(e)
+    return None
+
+
 def checkpoint_refusal(name):
     """A reason (str) why THIS checkpoint is not selectable, otherwise None (an HF repo /
     diffusers folder is never refused here)."""
@@ -2548,7 +2576,7 @@ def checkpoint_refusal(name):
     if not os.path.isfile(path):
         return (f"no such file in the checkpoint folder(s) "
                 f"({', '.join(_checkpoint_dirs())})")
-    return _flux3_file_refusal(path)
+    return _flux3_file_refusal(path) or single_file_profile_refusal(path)
 
 
 def resolve_checkpoint(name):
@@ -3694,6 +3722,11 @@ def _base_vram_need_gb(base=None):
     t = ZIMAGE_TRANSFORMER
     if not t:
         return _FLUX3_REST_GB + _FLUX3_TRANSFORMER_GB.get(PRECISION, 9.7)
+    if _is_single_file(t) and not _is_gguf_path(t):
+        try:          # one transformer, its file's size (bf16 on disk = bf16 resident)
+            return _FLUX3_REST_GB + os.path.getsize(t) / 1024 ** 3
+        except OSError:
+            pass
     if engine.is_transformer_source(t):
         # ONE bf16 transformer (no second branch): fal's 18.6 GB of files = 17.3 GiB.
         info = engine.TRANSFORMER_SOURCES.get(str(t)) or {}
@@ -3909,8 +3942,12 @@ def _load_transformer(path=None, base=None):
                 raise RuntimeError(hint) from e
             raise
     if path and _is_single_file(path):
-        raise RuntimeError(f"{os.path.basename(path)}: "
-                           f"{_flux3_file_refusal(path) or 'not loadable here'}")
+        why = _flux3_file_refusal(path)
+        if why:
+            raise RuntimeError(f"{os.path.basename(path)}: {why}")
+        return _load_monitor(f"transformer {os.path.basename(path)} (single file, checked)",
+                             lambda: engine.load_single_file(
+                                 path, dtype=DTYPE, explicit_profile=IDEOGRAM_PROFILE))
     if IDEOGRAM_PROFILE:
         engine.resolve_profile(None, IDEOGRAM_PROFILE)   # 'instant' on the base weights: refused
     return _load_monitor(f"transformer {base} ({PRECISION})",
@@ -4552,7 +4589,7 @@ def _ensure_base():
     elif _BASE_PIPE is not None:
         # Only the transformer changes (same base repo + same offload)? -> reload the
         # transformer ONLY and keep VAE + text encoder in VRAM.
-        crosses = any(engine.is_transformer_source(t) for t in
+        crosses = any(_is_distilled_transformer(t) for t in
                       ((_LOADED_KEY or (None, None))[1], ZIMAGE_TRANSFORMER))
         if crosses:
             _log("model change involves a distilled transformer source: the "
@@ -5598,7 +5635,7 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
     prof = getattr(_BASE_PIPE, "profile", None)
     if prof is not None:
         m["ideogram_profile"] = prof.as_meta()
-        if engine.is_transformer_source(ZIMAGE_TRANSFORMER):
+        if _is_distilled_transformer(ZIMAGE_TRANSFORMER):
             m["components_revision"] = (engine.COMPONENTS_REVISION
                                         if BASE_REPO == engine.COMPONENTS_REPO else None)
         if prof.guidance is not None and guidance is not None:

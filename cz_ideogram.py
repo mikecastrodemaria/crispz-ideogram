@@ -292,8 +292,20 @@ def check_architecture(cfg, expected=None):
         raise SourceError("not the Ideogram 4 transformer: " + ", ".join(bad))
 
 
+_EXPECTED_CACHE = {}
+
+
 def _expected_tensors(cfg):
-    """{name: shape} the model built from `cfg` holds, without allocating it."""
+    """{name: shape} the model built from `cfg` holds, without allocating it (cached: the
+    checkpoint listing checks every file against the same architecture)."""
+    import json
+    key = json.dumps(cfg, sort_keys=True, default=str)
+    if key not in _EXPECTED_CACHE:
+        _EXPECTED_CACHE[key] = _expected_tensors_uncached(cfg)
+    return dict(_EXPECTED_CACHE[key])
+
+
+def _expected_tensors_uncached(cfg):
     from diffusers import Ideogram4Transformer2DModel
     keep = {k: v for k, v in cfg.items() if not k.startswith("_")
             and k != "quantization_config"}
@@ -361,6 +373,197 @@ def fetch_source(src, token=None):
     if token:
         kw["token"] = token
     return snapshot_download(s, **kw)
+
+
+# --- Lot 8b: single .safetensors in the original / ComfyUI layout ------------------------
+# The same Ideogram 4 transformer, saved with the reference code's module names
+# (ideogram-oss/ideogram4, modeling_ideogram4.py) instead of diffusers' ones. Read on
+# Hippotes/Ideogram4-Fal-ComfyUI (header, 2026-11-08): 458 BF16 tensors, two differences:
+#   - `layers.N.attention.qkv.weight` [13824, 4608]: ONE fused projection. The reference
+#     forward does qkv.view(B, L, 3, heads, head_dim), so the rows are [Wq; Wk; Wv] in
+#     blocks: chunk(3, dim=0) gives diffusers' to_q / to_k / to_v exactly;
+#   - `layers.N.attention.o.weight` = diffusers' `attention.to_out.0.weight`.
+# Everything else has diffusers' names already. A prefix some exporters add
+# (model.diffusion_model., diffusion_model., transformer.) is removed. The profile is
+# never read from the file name: a <file>.crispz.json {"profile": ...} next to it, or
+# the explicit setting. Quantized exports (int8 ConvRot, nvfp4: comfy_quant blobs, I8 /
+# U8 / F8 tensors, weight_scale) need their own runtime and are refused by the header.
+SINGLE_FILE_PREFIXES = ("model.diffusion_model.", "diffusion_model.", "transformer.")
+SINGLE_FILE_SIDECAR = ".crispz.json"
+_QUANT_MARKERS = ("weight_scale", "comfy_quant", "input_scale", ".scale_weight",
+                  "weight_scale_2")
+
+
+def _single_file_destinations(name, shape):
+    """[(diffusers name, row slice or None)] for one tensor of a single file."""
+    for pre in SINGLE_FILE_PREFIXES:
+        if name.startswith(pre):
+            name = name[len(pre):]
+            break
+    if name.endswith(".attention.qkv.weight"):
+        if len(shape) != 2 or shape[0] % 3:
+            return [(name, None)]                  # left as is: reported as unknown
+        n = shape[0] // 3
+        base = name[: -len("qkv.weight")]
+        return [(base + f"to_{p}.weight", (i * n, (i + 1) * n)) for i, p in enumerate("qkv")]
+    if name.endswith(".attention.o.weight"):
+        return [(name[: -len("o.weight")] + "to_out.0.weight", None)]
+    return [(name, None)]
+
+
+def single_file_plan(path, expected_arch=None):
+    """Strict check of a single-file transformer from its header alone (no weight read):
+    every diffusers tensor covered once with its shape, nothing unknown, float dtypes, no
+    quantization blob. Returns {source name: [(dest, rows)]}; raises SourceError."""
+    if not os.path.isfile(str(path)):
+        raise SourceError(f"{path}: file not found")
+    hdr = _safetensors_header(path)
+    hdr.pop("__metadata__", None)
+    quant = sorted({str(v.get("dtype")) for v in hdr.values()} - _FLOAT_DTYPES)
+    blobs = sorted(k for k in hdr if any(m in k for m in _QUANT_MARKERS))
+    if quant or blobs:
+        what = ", ".join(quant + ([f"{len(blobs)} quantization blobs ({blobs[0]}...)"]
+                                  if blobs else []))
+        raise SourceError(f"{os.path.basename(str(path))}: a quantized export ({what}). "
+                          "int8 ConvRot and nvfp4 files need their own runtime; take the "
+                          "BF16 file of the same page.")
+    cfg = dict(ARCH if expected_arch is None else expected_arch)
+    want = _expected_tensors(cfg)
+    plan, seen, dup, unknown, shapes = {}, set(), [], [], []
+    for name, meta in hdr.items():
+        shape = tuple(meta.get("shape") or ())
+        dests = _single_file_destinations(name, shape)
+        for dest, rows in dests:
+            got = shape if rows is None else (rows[1] - rows[0],) + shape[1:]
+            if dest in seen:
+                dup.append(dest)
+            elif dest not in want:
+                unknown.append(name)
+            elif want[dest] != got:
+                shapes.append(f"{name} {shape} -> {dest} {got} vs {want[dest]}")
+            seen.add(dest)
+        plan[name] = dests
+    missing = sorted(set(want) - seen)
+    probs = []
+    for label, items in (("missing", missing), ("unknown", sorted(set(unknown))),
+                         ("duplicated", sorted(set(dup))), ("shape mismatch", shapes)):
+        if items:
+            more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
+            probs.append(f"{len(items)} {label}: {', '.join(items[:3])}{more}")
+    if probs:
+        raise SourceError(f"{os.path.basename(str(path))}: not an Ideogram 4 transformer of "
+                          "the published size: " + "; ".join(probs))
+    return plan
+
+
+def resolve_file_profile(path, explicit=None):
+    """The profile of a single file: <file>.crispz.json, else the explicit setting; never
+    the name. A base profile is refused: one file holds one transformer, the base recipe
+    needs two."""
+    import json
+    side = str(path) + SINGLE_FILE_SIDECAR
+    documented = None
+    if os.path.isfile(side):
+        try:
+            with open(side, encoding="utf-8") as f:
+                documented = json.load(f).get("profile")
+        except Exception as e:
+            raise SourceError(f"{side}: unreadable ({e})")
+    if explicit and documented and str(explicit).lower() != str(documented).lower():
+        raise SourceError(f"{os.path.basename(str(path))} is documented as '{documented}' "
+                          f"({side}); '{explicit}' was asked.")
+    key = documented or explicit
+    if not key:
+        raise SourceError(
+            f"{os.path.basename(str(path))}: no inference profile. A single file says nothing "
+            f"reliable about how it was distilled: name it with ideogram_profile = "
+            f"{' / '.join(k for k, p in PROFILES.items() if p.distilled)} (config, env "
+            f"IDEOGRAM_PROFILE), or a {os.path.basename(side)} {{\"profile\": \"...\"}} "
+            "next to the file.")
+    prof = profile(key)
+    if prof.unconditional:
+        raise SourceError(f"{os.path.basename(str(path))}: profile '{prof.key}' needs the "
+                          "unconditional transformer, which a single file does not carry.")
+    return prof
+
+
+def load_single_file(path, dtype=torch.bfloat16, explicit_profile=None, expected_arch=None):
+    """A single-file transformer, checked from its header (profile first, then every
+    tensor), converted to diffusers' layout and loaded with strict coverage. Returns a
+    LoadedSource the pipeline wires like a transformer-only repo."""
+    from diffusers import Ideogram4Transformer2DModel
+    from safetensors import safe_open
+    prof = resolve_file_profile(path, explicit_profile)
+    plan = single_file_plan(path, expected_arch)
+    cfg = {k: v for k, v in dict(ARCH if expected_arch is None else expected_arch).items()
+           if not k.startswith("_")}
+    # Parameters on meta (no 18 GB allocated twice), but REAL buffers: the rotary
+    # inv_freq is not in any checkpoint (non-persistent) and must be computed here.
+    from accelerate import init_empty_weights
+    with init_empty_weights(include_buffers=False):
+        model = Ideogram4Transformer2DModel.from_config(cfg)
+    state = {}
+    with safe_open(str(path), framework="pt", device="cpu") as f:
+        for name, dests in plan.items():
+            t = f.get_tensor(name)
+            if t.dtype != dtype:
+                t = t.to(dtype)
+            for dest, rows in dests:
+                state[dest] = t if rows is None else t[rows[0]:rows[1]].clone()
+    model.load_state_dict(state, strict=True, assign=True)
+    left = [n for n, t in list(model.named_parameters()) + list(model.named_buffers())
+            if t.is_meta]
+    if left:
+        raise SourceError(f"{os.path.basename(str(path))}: {len(left)} tensors never "
+                          f"filled ({', '.join(left[:3])})")
+    model.eval()
+    fused = sum(1 for d in plan.values() if len(d) == 3)
+    _log(f"transformer {os.path.basename(str(path))}: single file, {len(plan)} tensors "
+         f"checked, {fused} fused qkv split, profile '{prof.key}' ({prof.label})")
+    return LoadedSource(model, prof, str(path), {"tensors": len(plan), "fused_qkv": fused,
+                                                 "files": 1})
+
+
+def compare_single_file(path, transformer_dir, expected_arch=None):
+    """Tensor by tensor, the single file converted to diffusers' layout against a diffusers
+    transformer folder (fal's release): one tensor in memory at a time. Returns
+    {"equal": n, "different": [(name, max abs diff)], "missing": [...]}."""
+    import glob
+    from safetensors import safe_open
+    plan = single_file_plan(path, expected_arch)
+    where = {}
+    for fp in sorted(glob.glob(os.path.join(transformer_dir, "*.safetensors"))):
+        for name in _safetensors_header(fp):
+            if name != "__metadata__":
+                where[name] = fp
+    out = {"equal": 0, "different": [], "missing": []}
+    handles = {}
+    try:
+        with safe_open(str(path), framework="pt", device="cpu") as f:
+            for name, dests in plan.items():
+                t = f.get_tensor(name)
+                for dest, rows in dests:
+                    part = t if rows is None else t[rows[0]:rows[1]]
+                    fp = where.get(dest)
+                    if fp is None:
+                        out["missing"].append(dest)
+                        continue
+                    if fp not in handles:
+                        handles[fp] = safe_open(fp, framework="pt", device="cpu").__enter__()
+                    ref = handles[fp].get_tensor(dest)
+                    if part.dtype == ref.dtype and torch.equal(part, ref):
+                        out["equal"] += 1
+                    else:
+                        diff = (part.float() - ref.float()).abs().max().item() \
+                            if part.shape == ref.shape else float("inf")
+                        out["different"].append((dest, diff))
+    finally:
+        for h in handles.values():
+            try:
+                h.__exit__(None, None, None)
+            except Exception:
+                pass
+    return out
 
 
 class ZeroUnconditionalTransformer(torch.nn.Module):

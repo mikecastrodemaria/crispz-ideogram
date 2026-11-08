@@ -173,8 +173,11 @@ def test_shipped_defaults_are_ideogram_not_flux3():
     import cz_ui
     assert all(max(v) <= cz_ideogram.MAX_SIDE for v in cz_ui.ASPECT_RATIOS.values())
     assert "2K  2048 x 2048  (1:1)" in cz_ui.ASPECT_RATIOS
+    # The steps slider reaches 48 (FLUX.3 capped it at 40): since 2026-11-07 its bounds
+    # are the GEN_STEPS_BOUNDS constant, shared with the CivitAI consensus guard.
+    assert cz_ui.GEN_STEPS_BOUNDS == (2, 80)
     src = open(os.path.join(here, "cz_ui.py"), encoding="utf-8").read()
-    assert "gen_steps = gr.Slider(2, 80," in src
+    assert "gen_steps = gr.Slider(*GEN_STEPS_BOUNDS," in src
 
 
 def test_vram_downgrade_frees_the_old_pipe_before_reloading():

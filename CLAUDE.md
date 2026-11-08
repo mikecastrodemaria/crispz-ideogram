@@ -794,6 +794,38 @@ d'origine, test dédié de la correction d'un calque texte).
   `tools\gpu_lot8_check.py` (carte libre) : chargement, première génération et suivantes,
   3 légendes x 3 seeds en Instant puis en Base, planche contact `bench/lot8/sheet.jpg`.
 
+### Passage GPU du lot 8a (08/11/2026, Mike) : Instant mesuré et lu sur images
+
+`tools/gpu_lot8_check.py`, carte libre, offload 'auto' -> 'model' encodeur seul, 1024,
+3 légendes x 3 seeds (11, 22, 33), Instant 8 steps puis Base 48 steps, 12 minutes :
+
+| | Instant (fal, bf16, 8 steps) | Base (nf4, 48 steps) |
+|---|---|---|
+| chargement depuis le cache (révision figée présente) | 26,4 s | 14,4 s (rechargement) |
+| VRAM au repos (torch / pilote) | 17,45 / 24,98 Go | 9,93 / 17,17 Go |
+| premier rendu | 17,9 s (noyaux à froid, encodeur) | 63,2 s |
+| rendus suivants | **6,8 s (0,85 s/step)** | 63,3 s (1,32 s/step) |
+| pic réservé | **25,2 Go** | 17,5 Go |
+| cartes « blocked » | 0 / 9 | 0 / 9 |
+
+Lecture sur la planche contact (`bench/lot8/sheet.jpg`) :
+- **Texte** : Instant 9 / 9 exacts, y compris le paragraphe de l'affiche (« Live
+  quartet, free entry before 22:00. Le Caveau, 12 rue des Arts, Lyon ») ; Base 8 / 9,
+  un « Lc c » parasite devant « Le Caveau » au seed 22.
+- **Composition** : mêmes mises en page aux mêmes seeds ; Base plus riche en détails
+  et en matière (librairie peinte), Instant plus plat et plus sombre.
+- **Diversité** : faible chez Instant (logos presque identiques d'un seed à l'autre),
+  attendu d'un modèle distillé.
+- Le cercle rouge sort en ellipse dans les deux modèles : la boîte de la légende de test
+  est plus large que haute (340 x 500 sur 1000), défaut de la légende, pas du modèle.
+- **Gain** : x 9,3 en régime établi (6,8 s contre 63,3 s).
+- **VRAM** : le pic à 25,2 Go à 1024 vient du transformer bf16 résident (17,3 Go) plus
+  l'encodeur nf4 monté pour le texte. Marge de 6,6 Go sur 31,8 ; 2048 non mesuré
+  (Base y montait à 23,4 Go avec des poids de 9,9 Go : Instant risque d'y déborder).
+  Pistes : garer le transformer en RAM pendant l'encodage (fait dans crispz-moss au lot
+  3b, ~1 s par sens par prompt neuf), ou le nf4 au chargement (qualité à mesurer).
+- En attente : verdict de Mike, mesure à 2048 (`--size 2048 --skip-base --seeds 11`).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

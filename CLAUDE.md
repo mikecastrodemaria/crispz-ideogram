@@ -824,7 +824,9 @@ Lecture sur la planche contact (`bench/lot8/sheet.jpg`) :
   (Base y montait à 23,4 Go avec des poids de 9,9 Go : Instant risque d'y déborder).
   Pistes : garer le transformer en RAM pendant l'encodage (fait dans crispz-moss au lot
   3b, ~1 s par sens par prompt neuf), ou le nf4 au chargement (qualité à mesurer).
-- En attente : verdict de Mike, mesure à 2048 (`--size 2048 --skip-base --seeds 11`).
+- **Lot 8a VALIDÉ par Mike le 08/11/2026.** Mesure à 2048 en cours chez lui
+  (`--size 2048 --skip-base --seeds 11`) : au-delà de 30 Go de pic, garer le
+  transformer en RAM pendant l'encodage avant l'étape ComfyUI.
 
 ### CI GitHub (31/10/2026)
 

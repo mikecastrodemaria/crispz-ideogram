@@ -828,6 +828,25 @@ Lecture sur la planche contact (`bench/lot8/sheet.jpg`) :
   (`--size 2048 --skip-base --seeds 11`) : au-delà de 30 Go de pic, garer le
   transformer en RAM pendant l'encodage avant l'étape ComfyUI.
 
+### Instant à 2048 (08/11/2026) : débordement mesuré, transformer garé pendant le texte
+
+- `--size 2048 --skip-base --seeds 11` : premier rendu 64,9 s (4,9 s/step au début),
+  **pic 32,37 Go sur 31,84** ; au rendu suivant 8,2 s/step : la carte déborde en mémoire
+  partagée. Run arrêté. Cause : transformer bf16 résident (17,3 Go) + encodeur nf4 et
+  ses temporaires pendant le texte, + l'allocateur.
+- Correctif (`cz_ideogram`) : au-dessus de `PARK_ABOVE_PX` (1,5 Mpx, env
+  `IDEOGRAM_PARK_ABOVE_MPX`), un transformer non quantifié est garé en RAM pendant que
+  l'encodeur tourne, cache vidé, puis il remonte (pré-hook du premier forward, ou fin
+  d'appel, Stop et erreur compris). 1024 n'est pas touché (6,8 s gardés) ; les
+  transformers nf4 de Base ne bougent jamais. Ligne `vram: after the text:` à chaque
+  appel sur CUDA (réservé et pic), pour séparer le texte du débruitage.
+- Tests : ordre exact des déplacements (sortie, encodeur, retour, une fois par image),
+  jamais de forward garé, mêmes latents qu'au rendu sans garage ; jamais de garage sous
+  le seuil ni pour un transformer quantifié. Suite verte ; smoke 22/22.
+- À remesurer : `--size 2048 --skip-base --seeds 11`, lire la ligne `vram:` (texte) et
+  le pic (débruitage). Si le débruitage seul dépasse ~30 Go, la piste suivante est le
+  transformer Instant en nf4 au chargement (qualité à mesurer).
+
 ### CI GitHub (31/10/2026)
 
 - Job `check` : vert depuis 5846309 (`ideogram_base_repos` manquait à

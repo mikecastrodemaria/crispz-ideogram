@@ -329,3 +329,62 @@ def test_stop_returns_the_partial_image():
     out = pipe(prompt="x", width=256, height=256, generator=_gen(),
                callback_on_step_end=stop).images[0]
     assert out.size == (256, 256)
+
+
+# --- 5. Big sizes: the transformer waits in RAM while the text encoder runs -------------
+def _moves(pipe):
+    """Records every .to() of the transformer and the text encoder, in order."""
+    log = []
+    for name in ("transformer", "text_encoder"):
+        mod = getattr(pipe._pipe, name)
+        real = mod.to
+
+        def to(*a, _real=real, _name=name, **k):
+            dev = a[0] if a else k.get("device")
+            log.append((_name, str(dev)))
+            return _real(*a, **k)
+        mod.to = to
+    return log
+
+
+def test_above_the_threshold_the_transformer_is_parked_during_the_text(monkeypatch):
+    pipe = _distilled_pipe()
+    pipe.enable_model_cpu_offload(device="cpu")       # CPU stands in for the card
+    monkeypatch.setattr(E, "PARK_ABOVE_PX", 300 * 300)
+    log = _moves(pipe)
+    order = []
+    h = pipe._pipe.transformer.register_forward_pre_hook(
+        lambda m, a: order.append(("forward", pipe._parked)))
+    try:
+        out = pipe(prompt="x", width=320, height=320, num_inference_steps=2,
+                   generator=_gen(1), output_type="latent").images
+    finally:
+        h.remove()
+    names = [n for n, _ in log]
+    # transformer out, encoder in, encoder out, transformer back: once per image
+    assert names[:4] == ["transformer", "text_encoder", "text_encoder", "transformer"]
+    assert names.count("transformer") == 2
+    assert order and all(not parked for _, parked in order), "never runs while parked"
+    assert pipe._park_now is False and pipe._parked is False
+    # same latents as without parking
+    monkeypatch.setattr(E, "PARK_ABOVE_PX", 10 ** 9)
+    log.clear()
+    ref = pipe(prompt="x", width=320, height=320, num_inference_steps=2,
+               generator=_gen(1), output_type="latent").images
+    assert "transformer" not in [n for n, _ in log]
+    assert torch.equal(out, ref)
+
+
+def test_a_quantized_or_small_render_is_never_parked(monkeypatch):
+    pipe = _distilled_pipe()
+    pipe.enable_model_cpu_offload(device="cpu")
+    assert pipe._should_park(256, 256) is False                  # under 1.5 Mpx
+    assert pipe._should_park(2048, 2048) is True
+    from torch import nn
+
+    class Params4bit(nn.Parameter):
+        pass
+    p0 = next(pipe._pipe.transformer.parameters())
+    monkeypatch.setattr(type(pipe._pipe.transformer), "parameters",
+                        lambda self, recurse=True: iter([Params4bit(p0.data)]))
+    assert pipe._should_park(2048, 2048) is False

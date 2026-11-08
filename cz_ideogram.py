@@ -111,6 +111,26 @@ MIN_SIDE, MAX_SIDE, GRID = 256, 2048, 16
 PIPE_MU, PIPE_STD = 0.0, 1.5
 MAX_RATIO = 6.0
 
+# Above this many pixels, a non-quantized transformer is parked in RAM while the text
+# encoder runs (see IdeogramPipe._encoder_in). 1.5 Mpx: 1024 (1.05) keeps its 6.8 s,
+# 2048 (4.2) no longer spills. Env IDEOGRAM_PARK_ABOVE_MPX (0 = always, big = never).
+PARK_ABOVE_PX = int(float(os.environ.get("IDEOGRAM_PARK_ABOVE_MPX", "1.5")) * 1e6)
+
+
+def _empty_cache():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _vram_note(where):
+    """One `vram:` line (reserved now and peak so far) on CUDA, nothing elsewhere."""
+    if torch.cuda.is_available():
+        try:
+            _log(f"vram: {where}: {torch.cuda.memory_reserved() / 1024 ** 3:.1f} GB reserved, "
+                 f"peak {torch.cuda.max_memory_reserved() / 1024 ** 3:.1f} GB")
+        except Exception:
+            pass
+
 _log_handler = logging.getLogger("crispz.ideogram")
 
 
@@ -670,7 +690,7 @@ class IdeogramPipe:
 
     _OWN = {"_pipe", "repo", "variant", "_said", "_cfg", "_all_hooks", "_tr_pre",
             "_te_on_gpu", "_offload_device", "_vl_processor", "released", "profile",
-            "source"}
+            "source", "_park_now", "_parked"}
 
     def __init__(self, pipe, repo=DEFAULT_REPO, profile=None, source=None):
         object.__setattr__(self, "_pipe", pipe)
@@ -685,6 +705,8 @@ class IdeogramPipe:
         object.__setattr__(self, "_all_hooks", [])
         object.__setattr__(self, "_te_on_gpu", False)
         object.__setattr__(self, "released", False)
+        object.__setattr__(self, "_park_now", False)
+        object.__setattr__(self, "_parked", False)
 
     def release(self):
         """Lets go of the real pipeline, so that a reference to THIS wrapper kept by some
@@ -769,8 +791,22 @@ class IdeogramPipe:
                 handles.append(m.register_forward_pre_hook(tr_pre))
         object.__setattr__(self, "_tr_pre", handles)
 
+    # Lot 8a, measured on the 5090 (2026-11-08): Instant's bf16 transformer (17.3 GB) stays
+    # on the card, and the text encoder (5.1 GB nf4 + its temporaries) joins it for the
+    # text. At 1024 the peak is 25.2 GB; at 2048 it reached 32.4 GB of 31.8 and the card
+    # spilled into shared memory (4.9 -> 8.2 s/step). Above PARK_ABOVE_PX, the
+    # transformer is PARKED in RAM while the encoder runs, then comes back: the two never
+    # share the card. Cost: one round trip of the transformer per image, so it is kept for
+    # the big sizes only (at 1024 the 6.8 s render would pay it for nothing). Only a
+    # non-quantized transformer is parked (bitsandbytes modules are not moved around).
     def _encoder_in(self):
         if self._offload_device is not None and not self._te_on_gpu:
+            if self._park_now and not self._parked:
+                tr = getattr(self._pipe, "transformer", None)
+                if tr is not None:
+                    tr.to("cpu")
+                    object.__setattr__(self, "_parked", True)
+                    _empty_cache()
             self._pipe.text_encoder.to(self._offload_device)
             object.__setattr__(self, "_te_on_gpu", True)
 
@@ -778,6 +814,11 @@ class IdeogramPipe:
         if self._te_on_gpu:
             self._pipe.text_encoder.to("cpu")
             object.__setattr__(self, "_te_on_gpu", False)
+            _vram_note("after the text")
+        if self._parked:
+            _empty_cache()
+            self._pipe.transformer.to(self._offload_device)
+            object.__setattr__(self, "_parked", False)
 
     def remove_all_hooks(self):
         for h in list(self._tr_pre or []):
@@ -1028,6 +1069,18 @@ class IdeogramPipe:
             return cb_kwargs
         return blend, restore
 
+    def _should_park(self, w, h):
+        if self._offload_device is None or int(w) * int(h) <= PARK_ABOVE_PX:
+            return False
+        tr = getattr(self._pipe, "transformer", None)
+        if tr is None:
+            return False
+        for prm in tr.parameters():
+            # bitsandbytes 4-bit weights (Params4bit, uint8 storage) stay where they are
+            return prm.dtype in (torch.bfloat16, torch.float16, torch.float32) \
+                and type(prm).__name__ == "Parameter"
+        return False
+
     def _say_once(self, key, msg):
         if key not in self._said:
             self._said.add(key)
@@ -1106,11 +1159,18 @@ class IdeogramPipe:
             kw["callback_on_step_end"] = callback_on_step_end
             kw["callback_on_step_end_tensor_inputs"] = ["latents"]
         self._keep_encoder_offload()
+        object.__setattr__(self, "_park_now", self._should_park(w, h))
+        if self._park_now:
+            self._say_once(("park", w, h),
+                           f"{prof.label} at {w}x{h}: the transformer waits in RAM while "
+                           "the text encoder runs (the two do not fit the card together "
+                           "at this size); one round trip per image")
         self._encoder_in()
         try:
             out = self._pipe(**kw)
         finally:
             self._encoder_out()        # stopped before the first transformer, or an error
+            object.__setattr__(self, "_park_now", False)
             if restore is not None:
                 restore()
         images = out.images if hasattr(out, "images") else out[0]

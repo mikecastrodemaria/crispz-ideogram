@@ -5,7 +5,7 @@
 # exact versions of an environment really resolved and imported (`import app`,
 # the FLUX.3 modular blocks) on Windows, Python 3.13, CUDA 12.8 wheels, on
 # 2026-10-28, to reinstall it identically. The GPU validation on the RTX 5090
-# (tests/test_flux3_e2e.py) is Mike's, see CLAUDE.md section 7.
+# (tests/test_flux3_e2e.py) is Mike's.
 #
 # HOW TO USE IT (an ISOLATED venv, without --system-site-packages)
 #   py -3.13 -m venv .venv
@@ -67,7 +67,7 @@ outlines-core==0.2.14
 
 # UI / service. gradio stays on 5.50 on purpose: the <6 bound of requirements.txt (the
 # Brotli/h11 bug of gradio 6 that spams the console on an interrupted response); the
-# gradio Dependabot alerts (< 6.16) are therefore OPEN and known, see CLAUDE.md lot D.
+# gradio Dependabot alerts (< 6.16) are therefore OPEN and known.
 gradio==5.50.0
 fastapi==0.162.0
 uvicorn==0.54.0

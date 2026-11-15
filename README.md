@@ -167,4 +167,4 @@ measure each part on the card.
 diffusers (Apache-2.0) for `Ideogram4Pipeline`; Ideogram's open caption verifier and
 magic prompt (Apache-2.0, `third_party/ideogram4/`); vtracer (MIT); rembg (MIT); the
 crispz family (crispz-klein, crispz-flux3) this studio is forked from. How and why:
-[FORK.md](FORK.md); the full work log: [CLAUDE.md](CLAUDE.md).
+[FORK.md](FORK.md).

@@ -3,9 +3,7 @@
 - Base : crispz-flux3 0.1.0 (`main` 8117fb2), historique complet importé.
 - Remotes : `origin` = crispz-ideogram, `flux3` = crispz-flux3.
 - Notes des forks précédents : [FORK-flux3.md](FORK-flux3.md),
-  [FORK-flux3-CLAUDE.md](FORK-flux3-CLAUDE.md) (pièges d'environnement, à lire avant tout
-  test GPU), [FORK-klein.md](FORK-klein.md).
-- Journal complet, lot par lot, avec les mesures : [CLAUDE.md](CLAUDE.md) §8.
+  [FORK-klein.md](FORK-klein.md).
 
 ## Pourquoi crispz-flux3 comme base
 

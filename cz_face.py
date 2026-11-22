@@ -566,9 +566,52 @@ def _onnx_providers():
     onnxruntime is unavailable (the callers then fall back to the default)."""
     try:
         import onnxruntime as ort
-        return [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
+        provs = [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
     except Exception:
         return None
+    if "CUDAExecutionProvider" in provs and not _onnx_cuda_loads():
+        provs = [p for p in provs if p != "CUDAExecutionProvider"]
+    return provs
+
+
+_ONNX_CUDA_OK = None
+
+
+def _onnx_cuda_loads():
+    """Whether onnxruntime's CUDA provider can really be loaded here. onnxruntime-gpu lists
+    it as available even when its library cannot find the CUDA runtime it was built for
+    (a CUDA 13 build next to a CUDA 12 torch): every session then prints a page of errors
+    and runs on the CPU anyway. Probed once by loading the provider library itself; when
+    it fails the CPU is asked for directly, and the reason is logged once."""
+    global _ONNX_CUDA_OK
+    if _ONNX_CUDA_OK is not None:
+        return _ONNX_CUDA_OK
+    _ONNX_CUDA_OK = True
+    try:
+        import ctypes
+        import glob
+        import os
+        import onnxruntime as ort
+        capi = os.path.join(os.path.dirname(ort.__file__), "capi")
+        libs = (glob.glob(os.path.join(capi, "onnxruntime_providers_cuda.dll"))
+                or glob.glob(os.path.join(capi, "libonnxruntime_providers_cuda.so")))
+        if libs:
+            try:
+                if os.name == "nt":
+                    # the library's own folder + the folders torch registered
+                    ctypes.WinDLL(libs[0], winmode=0x00000100 | 0x00001000)
+                else:
+                    ctypes.CDLL(libs[0])
+            except OSError:
+                _ONNX_CUDA_OK = False
+                built = getattr(ort, "cuda_version", "") or "another version"
+                _log(f"onnxruntime {ort.__version__}: the CUDA provider cannot be loaded "
+                     f"(built for CUDA {built}, not the CUDA runtime installed with "
+                     "torch). Face / hand detection, Face Swap and Remove BG run on the "
+                     "CPU (slower, same result).")
+    except Exception:
+        pass
+    return _ONNX_CUDA_OK
 
 
 def _remove_bg(image):

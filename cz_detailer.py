@@ -161,8 +161,11 @@ def _ensure_hand_session():
         raise RuntimeError(
             "hand detailer needs 'onnxruntime' (already required by Face Swap): "
             "pip install onnxruntime-gpu")
-    providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
-                 if _HAND_DEVICE == "cuda" else ["CPUExecutionProvider"])
+    providers = ["CPUExecutionProvider"]
+    if _HAND_DEVICE == "cuda":
+        import cz_face
+        if cz_face._onnx_cuda_loads():   # a CUDA build that cannot load: CPU, said once
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     _hand_model = onnxruntime.InferenceSession(_ensure_hand_onnx(),
                                                providers=providers)
     return _hand_model

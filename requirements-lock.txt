@@ -37,7 +37,7 @@ diffusers==0.42.1
 # the torch base (deliberately outside requirements.txt, indispensable here). 2.11 is
 # the newest build on the cu128 index on 2026-10-28; Dependabot's torch alerts (< 2.13)
 # wait for a cu128 build of 2.13, the CPU wheels of PyPI are not an option on a 5090.
-torch==2.11.0+cu128
+torch==2.13.0
 torchvision==0.26.0+cu128
 torchaudio==2.11.0+cu128
 

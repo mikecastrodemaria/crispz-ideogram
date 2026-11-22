@@ -173,6 +173,14 @@ REMBG_PIN="rembg==2.0.86"
 echo "Installing $REMBG_PIN (after Pillow 13: rembg wants pillow>=12.1, gradio <12)..."
 $RUNPY -m pip install "$REMBG_PIN" \
     || echo "[WARN] rembg install failed -> the Remove BG tab stays off."
+# rembg has just pulled the CPU onnxruntime (latest) on top of onnxruntime-gpu: same
+# module name, mixed files. Drop it and put the GPU build back at the lock pin (1.26.0,
+# the last one built for CUDA 12.8, the CUDA of torch cu128).
+if [ "$REQFILE" = "requirements-lock.txt" ]; then
+    $RUNPY -m pip uninstall -y onnxruntime >/dev/null 2>&1
+    $RUNPY -m pip install --force-reinstall --no-deps "onnxruntime-gpu==1.26.0" \
+        || echo "[WARN] onnxruntime-gpu reinstall failed -> face detection, Face Swap and Remove BG may run on the CPU."
+fi
 echo
 
 # 6) Check that diffusers exposes the model family (FLUX.3 modular blocks)

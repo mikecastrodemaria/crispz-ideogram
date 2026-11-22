@@ -101,8 +101,12 @@ psutil==7.2.2
 # so that Dependabot sees it.
 rembg==2.0.86
 insightface==2.1
-onnxruntime==1.31.1
-onnxruntime-gpu==1.31.1
+# onnxruntime-gpu stays on 1.26.x: from 1.27 on, the PyPI wheel is built for CUDA 13 and
+# cannot load next to torch cu128 (CUDA 12.8), so every session fell back to the CPU.
+# 1.26.0 is the last one built for CUDA 12.8 (measured 2026-11-22: face detection 6 ms
+# on the card). To raise it, move torch to a CUDA 13 build first.
+onnxruntime==1.26.0
+onnxruntime-gpu==1.26.0
 
 # AI provenance (EU AI Act art. 50): reads the C2PA manifests + the invisible
 # TrustMark watermark, in PNG Info and through --provenance. CPU only (~0.1 s per

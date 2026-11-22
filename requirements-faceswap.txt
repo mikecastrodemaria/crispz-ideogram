@@ -3,5 +3,6 @@
 # You also need an inswapper model (inswapper_128.onnx): drop it in the 'faceswap'
 # folder, or set faceswap_model_path / faceswap_model_url in config.txt.
 insightface>=0.7
-onnxruntime-gpu
+# below 1.27: later PyPI wheels are built for CUDA 13 and do not load with torch cu128
+onnxruntime-gpu>=1.21,<1.27
 # CPU-only machines: use onnxruntime instead of onnxruntime-gpu
